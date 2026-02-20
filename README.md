@@ -48,9 +48,6 @@ engine/
 └── window/          GLFW window abstraction
 
 common/              Shared types, math utilities, key codes, frustum culling
-assets/
-├── models/          glTF model assets
-└── shaders/         WGSL shader source files
 ```
 
 ---
