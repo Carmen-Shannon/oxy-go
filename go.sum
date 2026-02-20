@@ -1,0 +1,6 @@
+github.com/Carmen-Shannon/automation v1.1.1 h1:RqPPVd7IN7HJ2H6rpGYrSyZLZzaAMkpqZxZD494yuzE=
+github.com/Carmen-Shannon/automation v1.1.1/go.mod h1:qZyK8fdCeAuuWcAc05pmczHuvRAjGdZAevEGktF5K4o=
+github.com/cogentcore/webgpu v0.23.0 h1:hrjnnuDZAPSRsqBjQAsJOyg2COGztIkBbxL87r0Q9KE=
+github.com/cogentcore/webgpu v0.23.0/go.mod h1:ciqaxChrmRRMU1SnI5OE12Cn3QWvOKO+e5nSy+N9S1o=
+github.com/go-gl/glfw/v3.3/glfw v0.0.0-20250301202403-da16c1255728 h1:RkGhqHxEVAvPM0/R+8g7XRwQnHatO0KAuVcwHo8q9W8=
+github.com/go-gl/glfw/v3.3/glfw v0.0.0-20250301202403-da16c1255728/go.mod h1:SyRD8YfuKk+ZXlDqYiqe1qMSqjNgtHzBTG810KUagMc=

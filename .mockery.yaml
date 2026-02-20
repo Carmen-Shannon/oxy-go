@@ -1,0 +1,17 @@
+with-expecter: true
+dir: "tests/mocks/{{.PackageName}}"
+mockname: "Mock{{.InterfaceName}}"
+filename: "mock_{{.InterfaceName | snakecase}}.go"
+outpkg: "mocks"
+resolve-type-alias: false
+disable-version-string: true
+issue-845-fix: true
+packages:
+  github.com/Carmen-Shannon/oxy-go/common:
+    config:
+      all: true
+      recursive: true
+  github.com/Carmen-Shannon/oxy-go/engine:
+    config:
+      all: true
+      recursive: true
