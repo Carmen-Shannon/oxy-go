@@ -498,7 +498,7 @@ func setupLitCubeBenchInput(eng engine.Engine, cam camera.Camera, sun light.Ligh
 //   - []uint32: 36 indices forming 12 triangles
 func buildLitCubeGroundPlane(half float32) ([]model.GPUVertex, []uint32) {
 	color := [4]float32{0.35, 0.35, 0.35, 1.0}
-	thickness := float32(20.0)
+	thickness := float32(0.5)
 
 	v := func(px, py, pz, nx, ny, nz, u, vt, tx, ty, tz, tw float32) model.GPUVertex {
 		return model.GPUVertex{

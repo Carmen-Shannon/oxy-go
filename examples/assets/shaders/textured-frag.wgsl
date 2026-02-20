@@ -3,7 +3,7 @@
 // Samples a diffuse texture using interpolated UV coordinates from the vertex
 // stage. The bind group for the texture and sampler is at @group(2) so it does
 // not conflict with the camera (@group(0)) or instance (@group(1)) groups in
-// the vertex shader. Per-binding @oxy:provider annotations declare each
+// the vertex shader. Per-binding provider annotations declare each
 // binding's role so the Loader can wire material textures from Declarations.
 
 // ── Fragment input (from vertex shader) ────────────────────────────
