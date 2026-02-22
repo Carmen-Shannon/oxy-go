@@ -2,10 +2,12 @@ package engine
 
 import (
 	"log"
+	"maps"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/profiler"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	"github.com/Carmen-Shannon/oxy-go/engine/window"
@@ -14,6 +16,8 @@ import (
 // engine implements the Engine interface.
 // Coordinates engine, render, and window threads.
 type engine struct {
+	common.DelegateImpl[Engine]
+
 	tickRateChannel chan time.Duration // Channel for dynamic tick rate updates
 
 	running bool
@@ -39,14 +43,7 @@ type engine struct {
 // Engine is the main entry point for the engine.
 // It orchestrates the engine loop, render loop, and window management.
 type Engine interface {
-	// Init initializes the window with the provided options.
-	//
-	// Parameters:
-	//   - options: functional options for window configuration
-	//
-	// Returns:
-	//   - error: error if initialization fails
-	// Init(options ...window.WindowBuilderOption) error
+	common.Delegate[Engine]
 
 	// Window returns the underlying window.
 	//
@@ -164,7 +161,7 @@ func NewEngine(options ...EngineBuilderOption) Engine {
 			}
 		})
 	}
-
+	e.Delegate = e
 	return e
 }
 
@@ -195,6 +192,7 @@ func (e *engine) signalQuit() {
 // handle launches the engine, render, and quit goroutines.
 // Each goroutine is tracked by the engine's WaitGroup.
 func (e *engine) handle() {
+	e.running = true
 	e.wg.Add(3)
 	go e.handleEngine()
 	go e.handleRender()
@@ -403,8 +401,6 @@ func (e *engine) Scene(key int) scene.Scene {
 
 func (e *engine) Scenes() map[int]scene.Scene {
 	cp := make(map[int]scene.Scene, len(e.scenes))
-	for k, v := range e.scenes {
-		cp[k] = v
-	}
+	maps.Copy(cp, e.scenes)
 	return cp
 }

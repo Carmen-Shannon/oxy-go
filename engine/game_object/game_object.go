@@ -3,12 +3,15 @@ package game_object
 import (
 	"sync/atomic"
 
+	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/light"
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/animator"
 )
 
 type gameObject struct {
+	common.DelegateImpl[GameObject]
+
 	id                 uint64
 	enabled            atomic.Bool
 	ephemeral          bool
@@ -28,6 +31,8 @@ type gameObject struct {
 // Position, rotation, and scale are derived from the Animator's internal arrays
 // via the animatorInstanceID, eliminating per-object data duplication.
 type GameObject interface {
+	common.Delegate[GameObject]
+
 	// ID returns the object's unique identifier.
 	//
 	// Returns:
@@ -188,6 +193,7 @@ func NewGameObject(options ...GameObjectBuilderOption) GameObject {
 	for _, option := range options {
 		option(obj)
 	}
+	obj.Delegate = obj
 	return obj
 }
 

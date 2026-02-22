@@ -2,7 +2,6 @@ package loader
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -19,7 +18,6 @@ var (
 	errInvalidGLBMagic    = errors.New("invalid GLB magic number")
 	errInvalidGLBVersion  = errors.New("invalid GLB version: must be 2")
 	errMissingJSONChunk   = errors.New("GLB file missing JSON chunk")
-	errInvalidBufferURI   = errors.New("invalid buffer URI")
 	errBufferSizeMismatch = errors.New("buffer size mismatch")
 )
 
@@ -331,27 +329,10 @@ func (p *gltfParserImpl) loadBufferURI(uri string) ([]byte, error) {
 	return data, nil
 }
 
-// loadDataURI decodes a base64 data URI.
-// Format: data:[<mediatype>][;base64],<data>
+// loadDataURI decodes a base64 data URI by delegating to the shared gltfDecodeDataURI helper.
 func (p *gltfParserImpl) loadDataURI(uri string) ([]byte, error) {
-	commaIdx := strings.Index(uri, ",")
-	if commaIdx < 0 {
-		return nil, errInvalidBufferURI
-	}
-
-	header := uri[5:commaIdx]
-	dataStr := uri[commaIdx+1:]
-
-	if !strings.Contains(header, "base64") {
-		return nil, fmt.Errorf("unsupported data URI encoding: %s", header)
-	}
-
-	data, err := base64.StdEncoding.DecodeString(dataStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode base64: %w", err)
-	}
-
-	return data, nil
+	data, _, err := gltfDecodeDataURI(uri)
+	return data, err
 }
 
 // --- Accessor Data Reading ---
@@ -593,9 +574,9 @@ func (p *gltfParserImpl) ReadJointsAccessor(accessorIndex int) ([][4]uint32, err
 // gltfComponentTypeSize returns the byte size of a component type.
 func gltfComponentTypeSize(componentType int) int {
 	switch componentType {
-	case gltfComponentTypeByte, gltfComponentTypeUnsignedByte:
+	case gltfComponentTypeUnsignedByte:
 		return 1
-	case gltfComponentTypeShort, gltfComponentTypeUnsignedShort:
+	case gltfComponentTypeUnsignedShort:
 		return 2
 	case gltfComponentTypeUnsignedInt, gltfComponentTypeFloat:
 		return 4
@@ -615,10 +596,6 @@ func gltfAccessorTypeComponentCount(accessorType string) int {
 		return 3
 	case gltfAccessorTypeVec4:
 		return 4
-	case gltfAccessorTypeMat2:
-		return 4
-	case gltfAccessorTypeMat3:
-		return 9
 	case gltfAccessorTypeMat4:
 		return 16
 	default:

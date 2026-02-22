@@ -13,6 +13,8 @@ import (
 
 // renderer is the implementation of the Renderer interface.
 type renderer struct {
+	common.DelegateImpl[Renderer]
+
 	mu *sync.Mutex
 
 	pipelineCache map[string]pipeline.Pipeline
@@ -32,6 +34,8 @@ type renderer struct {
 // The Renderer manages a cache of shaders and pipelines, allowing for easy retrieval and management of these resources.
 // The Renderer also implements a backend which allows for multiple backend API implementations to exist.
 type Renderer interface {
+	common.Delegate[Renderer]
+
 	// Pipeline retrieves the cached Pipeline associated with the given key.
 	// If the Pipeline does not exist, this will return nil.
 	//
@@ -329,6 +333,7 @@ func NewRenderer(backendType RendererBackendType, window window.Window, options 
 	}
 
 	r.backend.ConfigureSurface(window.Width(), window.Height())
+	r.Delegate = r
 	return r
 }
 

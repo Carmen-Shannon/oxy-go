@@ -9,9 +9,11 @@ issue-845-fix: true
 packages:
   github.com/Carmen-Shannon/oxy-go/common:
     config:
-      all: true
       recursive: true
+      include-regex: "^[A-Z]"
+      exclude-regex: "Option$"
   github.com/Carmen-Shannon/oxy-go/engine:
     config:
-      all: true
       recursive: true
+      include-regex: "^[A-Z]"
+      exclude-regex: "Option$"

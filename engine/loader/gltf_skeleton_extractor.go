@@ -15,16 +15,6 @@ type gltfSkeletonExtractorImpl struct {
 // gltfSkeletonExtractor defines the interface for extracting skeleton/bone data from a parsed glTF document.
 // It converts glTF skin definitions into engine-ready Skeleton structs with topologically sorted bones.
 type gltfSkeletonExtractor interface {
-	// ExtractSkeleton extracts a skeleton from a skin by index.
-	//
-	// Parameters:
-	//   - skinIndex: the index of the skin to extract
-	//
-	// Returns:
-	//   - *model.Skeleton: the extracted skeleton with topologically sorted bones
-	//   - error: error if extraction fails
-	ExtractSkeleton(skinIndex int) (*model.Skeleton, error)
-
 	// ExtractSkeletonWithMapping extracts a skeleton and returns the old-to-new bone index mapping.
 	// This mapping is needed to remap mesh bone indices after topological sorting.
 	//
@@ -36,13 +26,6 @@ type gltfSkeletonExtractor interface {
 	//   - map[int32]int32: mapping from old bone index to new bone index
 	//   - error: error if extraction fails
 	ExtractSkeletonWithMapping(skinIndex int) (*model.Skeleton, map[int32]int32, error)
-
-	// ExtractAllSkeletons extracts all skeletons from the document.
-	//
-	// Returns:
-	//   - []*model.Skeleton: all skeletons
-	//   - error: error if extraction fails
-	ExtractAllSkeletons() ([]*model.Skeleton, error)
 
 	// FindSkeletonForMesh finds which skeleton (skin) is associated with a mesh.
 	// Returns -1 if no skeleton is found.
@@ -68,31 +51,8 @@ func newGLTFSkeletonExtractor(parser gltfParser) gltfSkeletonExtractor {
 	return &gltfSkeletonExtractorImpl{parser: parser}
 }
 
-func (e *gltfSkeletonExtractorImpl) ExtractSkeleton(skinIndex int) (*model.Skeleton, error) {
-	skeleton, _, err := e.extractSkeletonInternal(skinIndex)
-	return skeleton, err
-}
-
 func (e *gltfSkeletonExtractorImpl) ExtractSkeletonWithMapping(skinIndex int) (*model.Skeleton, map[int32]int32, error) {
 	return e.extractSkeletonInternal(skinIndex)
-}
-
-func (e *gltfSkeletonExtractorImpl) ExtractAllSkeletons() ([]*model.Skeleton, error) {
-	doc := e.parser.Document()
-	if doc == nil {
-		return nil, fmt.Errorf("no document loaded")
-	}
-
-	skeletons := make([]*model.Skeleton, len(doc.Skins))
-	for i := range doc.Skins {
-		skeleton, err := e.ExtractSkeleton(i)
-		if err != nil {
-			return nil, fmt.Errorf("skin %d: %w", i, err)
-		}
-		skeletons[i] = skeleton
-	}
-
-	return skeletons, nil
 }
 
 func (e *gltfSkeletonExtractorImpl) FindSkeletonForMesh(meshIndex int) int {

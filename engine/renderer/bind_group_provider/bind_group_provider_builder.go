@@ -57,3 +57,96 @@ func WithBuffers(buffers map[int]*wgpu.Buffer) BindGroupProviderOption {
 		p.buffers = buffers
 	}
 }
+
+// WithTextureView sets a texture view for a specific binding index.
+//
+// Parameters:
+//   - binding: the binding index for this texture view
+//   - tv: the texture view to associate with this binding
+//
+// Returns:
+//   - BindGroupProviderOption: a function that sets the texture view for the specified binding
+func WithTextureView(binding int, tv *wgpu.TextureView) BindGroupProviderOption {
+	return func(p *bindGroupProvider) {
+		p.textureViews[binding] = tv
+	}
+}
+
+// WithTextureViews sets multiple texture views for this provider using a map of binding indices to texture views.
+//
+// Parameters:
+//   - textureViews: a map of binding indices to texture views to associate with this provider
+//
+// Returns:
+//   - BindGroupProviderOption: a function that sets multiple texture views for this provider
+func WithTextureViews(textureViews map[int]*wgpu.TextureView) BindGroupProviderOption {
+	return func(p *bindGroupProvider) {
+		p.textureViews = textureViews
+	}
+}
+
+// WithSampler sets a sampler for a specific binding index.
+//
+// Parameters:
+//   - binding: the binding index for this sampler
+//   - s: the sampler to associate with this binding
+//
+// Returns:
+//   - BindGroupProviderOption: a function that sets the sampler for the specified binding
+func WithSampler(binding int, s *wgpu.Sampler) BindGroupProviderOption {
+	return func(p *bindGroupProvider) {
+		p.samplers[binding] = s
+	}
+}
+
+// WithSamplers sets multiple samplers for this provider using a map of binding indices to samplers.
+//
+// Parameters:
+//   - samplers: a map of binding indices to samplers to associate with this provider
+//
+// Returns:
+//   - BindGroupProviderOption: a function that sets multiple samplers for this provider
+func WithSamplers(samplers map[int]*wgpu.Sampler) BindGroupProviderOption {
+	return func(p *bindGroupProvider) {
+		p.samplers = samplers
+	}
+}
+
+// WithVertexBuffer sets the vertex buffer for this provider.
+//
+// Parameters:
+//   - buf: the vertex buffer to set for this provider
+//
+// Returns:
+//   - BindGroupProviderOption: a function that sets the vertex buffer for this provider
+func WithVertexBuffer(buf *wgpu.Buffer) BindGroupProviderOption {
+	return func(p *bindGroupProvider) {
+		p.vertexBuffer = buf
+	}
+}
+
+// WithIndexBuffer sets the index buffer for this provider.
+//
+// Parameters:
+//   - buf: the index buffer to set for this provider
+//
+// Returns:
+//   - BindGroupProviderOption: a function that sets the index buffer for this provider
+func WithIndexBuffer(buf *wgpu.Buffer) BindGroupProviderOption {
+	return func(p *bindGroupProvider) {
+		p.indexBuffer = buf
+	}
+}
+
+// WithIndexCount sets the index count for draw calls on this provider.
+//
+// Parameters:
+//   - count: the number of indices for draw calls
+//
+// Returns:
+//   - BindGroupProviderOption: a function that sets the index count for this provider
+func WithIndexCount(count int) BindGroupProviderOption {
+	return func(p *bindGroupProvider) {
+		p.indexCount = count
+	}
+}

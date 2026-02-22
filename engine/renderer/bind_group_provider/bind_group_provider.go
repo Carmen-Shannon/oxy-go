@@ -1,11 +1,14 @@
 package bind_group_provider
 
 import (
+	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/cogentcore/webgpu/wgpu"
 )
 
 // bindGroupProvider is the unexported implementation of BindGroupProvider.
 type bindGroupProvider struct {
+	common.DelegateImpl[BindGroupProvider]
+
 	// label is a debug label added for convenience.
 	label string
 
@@ -44,6 +47,8 @@ type bindGroupProvider struct {
 //  4. Scene/Renderer calls Renderer.WriteBindGroup(provider, data) to update uniforms
 //  5. Component accesses BindGroup() for draw calls
 type BindGroupProvider interface {
+	common.Delegate[BindGroupProvider]
+
 	// Release releases any GPU resources held by this provider.
 	// It will clean up all buffers and bind groups, and remove them from the map or slice they belonged to.
 	Release()
@@ -216,6 +221,7 @@ var _ BindGroupProvider = &bindGroupProvider{}
 //   - BindGroupProvider: a new instance of BindGroupProvider configured with the provided options
 func NewBindGroupProvider(label string, options ...BindGroupProviderOption) BindGroupProvider {
 	p := &bindGroupProvider{
+		label:        label,
 		buffers:      make(map[int]*wgpu.Buffer),
 		textureViews: make(map[int]*wgpu.TextureView),
 		samplers:     make(map[int]*wgpu.Sampler),
@@ -223,6 +229,7 @@ func NewBindGroupProvider(label string, options ...BindGroupProviderOption) Bind
 	for _, opt := range options {
 		opt(p)
 	}
+	p.Delegate = p
 	return p
 }
 

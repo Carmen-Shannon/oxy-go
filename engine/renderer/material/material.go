@@ -7,6 +7,8 @@ import (
 
 // material is the implementation of the Material interface.
 type material struct {
+	common.DelegateImpl[Material]
+
 	name                     string
 	baseColor                [4]float32
 	metallic                 float32
@@ -26,6 +28,8 @@ type material struct {
 // (pipeline key, bind group provider) are mutable so they can be configured after
 // construction during the Loader GPU-init phase.
 type Material interface {
+	common.Delegate[Material]
+
 	// Name retrieves the material identifier.
 	//
 	// Returns:
@@ -113,6 +117,7 @@ func NewMaterial(options ...MaterialBuilderOption) Material {
 	for _, opt := range options {
 		opt(m)
 	}
+	m.Delegate = m
 	return m
 }
 

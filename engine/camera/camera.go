@@ -14,6 +14,8 @@ import (
 var cameraCount atomic.Uint64
 
 type cameraImpl struct {
+	common.DelegateImpl[Camera]
+
 	mu *sync.Mutex
 
 	up [3]float32
@@ -36,6 +38,8 @@ type cameraImpl struct {
 // The camera holds perspective settings and computes view/projection matrices
 // from an attached CameraController each frame via Update().
 type Camera interface {
+	common.Delegate[Camera]
+
 	// Up returns the camera's up vector.
 	//
 	// Returns:
@@ -187,6 +191,7 @@ func NewCamera(options ...CameraBuilderOption) Camera {
 		c.updateMatrices()
 	}
 	cameraCount.Add(1)
+	c.Delegate = c
 	return c
 }
 
