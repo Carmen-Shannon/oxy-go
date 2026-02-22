@@ -27,6 +27,8 @@ const (
 
 // loader is the implementation of the Loader interface.
 type loader struct {
+	common.DelegateImpl[Loader]
+
 	mu sync.RWMutex
 
 	renderer renderer.Renderer
@@ -40,6 +42,8 @@ type loader struct {
 // It abstracts the file format (glTF, GLB, etc.) behind a generic backend and
 // manages a cache of previously loaded models.
 type Loader interface {
+	common.Delegate[Loader]
+
 	// Load imports a model file and caches the result.
 	// If the model is already cached (by file path), the cached version is returned.
 	// The backend is selected based on the file extension (.gltf/.glb → glTF backend).
@@ -138,6 +142,7 @@ func NewLoader(backendType LoaderBackendType, options ...LoaderBuilderOption) Lo
 	for _, option := range options {
 		option(l)
 	}
+	l.Delegate = l
 	return l
 }
 

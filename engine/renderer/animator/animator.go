@@ -1,6 +1,7 @@
 package animator
 
 import (
+	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/cogentcore/webgpu/wgpu"
@@ -8,6 +9,8 @@ import (
 
 // animator is the implementation of the Animator interface.
 type animator struct {
+	common.DelegateImpl[Animator]
+
 	backendType AnimatorBackendType
 	backend     AnimatorBackend
 	model       model.Model
@@ -25,6 +28,8 @@ type animator struct {
 // PlayAnimation, BlendToAnimation, SetAnimationTime, SetAnimationSpeed, IsBlending,
 // BlendProgress, CancelBlend) no-op on simple backends.
 type Animator interface {
+	common.Delegate[Animator]
+
 	// MaxInstances returns the maximum number of instances this animator can manage.
 	//
 	// Returns:
@@ -369,6 +374,7 @@ func NewAnimator(backendType AnimatorBackendType, options ...AnimatorBuilderOpti
 	for _, opt := range options {
 		opt(a)
 	}
+	a.Delegate = a
 	return a
 }
 

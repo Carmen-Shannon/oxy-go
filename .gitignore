@@ -1,2 +1,5 @@
-.github/
+.github/*
+!.github/workflows/
 *.exe
+tests/mocks/
+*.out

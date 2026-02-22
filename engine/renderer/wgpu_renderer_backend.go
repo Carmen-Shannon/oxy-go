@@ -48,17 +48,6 @@ type wgpuRendererBackendImpl struct {
 }
 
 type wgpuRendererBackend interface {
-	Device() *wgpu.Device
-	Queue() *wgpu.Queue
-	Instance() *wgpu.Instance
-	Adapter() *wgpu.Adapter
-	Surface() *wgpu.Surface
-	SetDevice(device *wgpu.Device)
-	SetQueue(queue *wgpu.Queue)
-	SetInstance(instance *wgpu.Instance)
-	SetAdapter(adapter *wgpu.Adapter)
-	SetSurface(surface *wgpu.Surface)
-
 	// ConfigureSurface is a wrapper for boilerplate logic required when calling ConfigureSurface on a surface.
 	// This is required when the surface size changes, such as when the window is resized.
 	//
@@ -290,7 +279,7 @@ func newWGPURendererBackend(surfaceDescriptor *wgpu.SurfaceDescriptor, forceFall
 		presentMode: wgpu.PresentModeImmediate,
 		sampleCount: sampleCount,
 	}
-	w.SetSurface(w.instance.CreateSurface(surfaceDescriptor))
+	w.surface = w.instance.CreateSurface(surfaceDescriptor)
 
 	a, err := w.instance.RequestAdapter(&wgpu.RequestAdapterOptions{
 		ForceFallbackAdapter: forceFallbackAdapter,
@@ -299,7 +288,7 @@ func newWGPURendererBackend(surfaceDescriptor *wgpu.SurfaceDescriptor, forceFall
 	if err != nil {
 		panic(err)
 	}
-	w.SetAdapter(a)
+	w.adapter = a
 
 	// Start from the WebGPU spec default limits and raise MaxBindGroups to 8
 	// so the lit fragment shader's 6 bind groups (0–5) are allowed.
@@ -315,8 +304,8 @@ func newWGPURendererBackend(surfaceDescriptor *wgpu.SurfaceDescriptor, forceFall
 	if err != nil {
 		panic(err)
 	}
-	w.SetDevice(d)
-	w.SetQueue(d.GetQueue())
+	w.device = d
+	w.queue = d.GetQueue()
 
 	return w
 }
@@ -1020,46 +1009,6 @@ func (b *wgpuRendererBackendImpl) Present() {
 		b.frameSurface.Release()
 		b.frameSurface = nil
 	}
-}
-
-func (b *wgpuRendererBackendImpl) Device() *wgpu.Device {
-	return b.device
-}
-
-func (b *wgpuRendererBackendImpl) Queue() *wgpu.Queue {
-	return b.queue
-}
-
-func (b *wgpuRendererBackendImpl) Instance() *wgpu.Instance {
-	return b.instance
-}
-
-func (b *wgpuRendererBackendImpl) Adapter() *wgpu.Adapter {
-	return b.adapter
-}
-
-func (b *wgpuRendererBackendImpl) Surface() *wgpu.Surface {
-	return b.surface
-}
-
-func (b *wgpuRendererBackendImpl) SetDevice(device *wgpu.Device) {
-	b.device = device
-}
-
-func (b *wgpuRendererBackendImpl) SetQueue(queue *wgpu.Queue) {
-	b.queue = queue
-}
-
-func (b *wgpuRendererBackendImpl) SetInstance(instance *wgpu.Instance) {
-	b.instance = instance
-}
-
-func (b *wgpuRendererBackendImpl) SetAdapter(adapter *wgpu.Adapter) {
-	b.adapter = adapter
-}
-
-func (b *wgpuRendererBackendImpl) SetSurface(surface *wgpu.Surface) {
-	b.surface = surface
 }
 
 func (b *wgpuRendererBackendImpl) CreateShadowDepthTexture(width, height int) (*wgpu.TextureView, *wgpu.Texture, error) {

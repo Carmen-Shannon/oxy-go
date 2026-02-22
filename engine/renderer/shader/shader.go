@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/cogentcore/webgpu/wgpu"
 )
 
@@ -24,6 +25,8 @@ const (
 // shader is the implementation of the Shader interface.
 // It holds all of the persistent shader data required for pipeline creation and material binding.
 type shader struct {
+	common.DelegateImpl[Shader]
+
 	key                        string
 	source                     string
 	shaderType                 ShaderType
@@ -41,6 +44,8 @@ type shader struct {
 // unique key, source code, entry point, bind group layout descriptors, vertex buffer layouts,
 // workgroup size, and pre-processor declarations needed for pipeline creation and resource wiring.
 type Shader interface {
+	common.Delegate[Shader]
+
 	// Key retrieves the unique identifier for this shader, used for caching and lookups.
 	//
 	// Returns:
@@ -174,6 +179,7 @@ func NewShader(key string, shaderType ShaderType, sourcePath string) Shader {
 		pp:                         NewPreProcessor(),
 	}
 	s.parseSourceFromPath(sourcePath)
+	s.Delegate = s
 	return s
 }
 

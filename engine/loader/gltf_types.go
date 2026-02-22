@@ -204,9 +204,7 @@ type gltfAccessor struct {
 
 // ComponentType constants
 const (
-	gltfComponentTypeByte          = 5120
 	gltfComponentTypeUnsignedByte  = 5121
-	gltfComponentTypeShort         = 5122
 	gltfComponentTypeUnsignedShort = 5123
 	gltfComponentTypeUnsignedInt   = 5125
 	gltfComponentTypeFloat         = 5126
@@ -218,8 +216,6 @@ const (
 	gltfAccessorTypeVec2   = "VEC2"
 	gltfAccessorTypeVec3   = "VEC3"
 	gltfAccessorTypeVec4   = "VEC4"
-	gltfAccessorTypeMat2   = "MAT2"
-	gltfAccessorTypeMat3   = "MAT3"
 	gltfAccessorTypeMat4   = "MAT4"
 )
 

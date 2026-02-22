@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 	"github.com/cogentcore/webgpu/wgpu"
 )
@@ -19,6 +20,8 @@ const (
 // pipeline is the implementation of the Pipeline interface.
 // It holds the underlying WebGPU pipeline objects and related data for both render and compute pipelines.
 type pipeline struct {
+	common.DelegateImpl[Pipeline]
+
 	// pipelineType indicates the type of pipeline this is; compute or render
 	pipelineType PipelineType
 	// pipelineKey is the unique identifier for this pipeline, used for caching and lookups
@@ -52,6 +55,8 @@ type pipeline struct {
 // (vertex + fragment shaders) or a compute pipeline (compute shader). It holds all configuration
 // state required for pipeline creation including depth, blend, cull, and topology settings.
 type Pipeline interface {
+	common.Delegate[Pipeline]
+
 	// Type returns the type of the pipeline
 	//
 	// Returns:
@@ -191,6 +196,7 @@ func NewPipeline(pipelineKey string, pipelineType PipelineType, opts ...Pipeline
 	for _, opt := range opts {
 		opt(p)
 	}
+	p.Delegate = p
 	return p
 }
 

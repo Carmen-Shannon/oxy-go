@@ -22,6 +22,64 @@ import (
 	"github.com/cogentcore/webgpu/wgpu"
 )
 
+type scene struct {
+	common.DelegateImpl[Scene]
+
+	mu *sync.RWMutex
+
+	name   string
+	active bool
+
+	animatorPool map[model.Model][]animator.Animator
+	registry     map[uint64]game_object.GameObject // non-ephemeral objects by ID
+	nextID       uint64
+
+	cam camera.Camera
+	r   renderer.Renderer
+
+	cullingDisabled bool // when true, skips frustum plane distribution to animators
+
+	// Lighting state.
+	lights       []light.Light
+	lightObjects []game_object.GameObject // objects with attached lights (ephemeral and non-ephemeral)
+	ambientColor [3]float32
+	lightsBGP    bind_group_provider.BindGroupProvider
+
+	// Shadow mapping state.
+	shadowDepthTexture     *wgpu.Texture
+	shadowDepthTextureView *wgpu.TextureView
+	shadowComparisonSamp   *wgpu.Sampler
+	shadowDataBGP          bind_group_provider.BindGroupProvider // used during the shadow depth pass
+	shadowLitBGP           bind_group_provider.BindGroupProvider // used during the lit pass (texture + sampler + uniform)
+	shadowPipelineKey      string                                // pipeline key for static models
+	shadowSkinnedPipeKey   string                                // pipeline key for skinned models
+	shadowHalfExtent       float32
+	shadowNear             float32
+	shadowFar              float32
+	shadowBias             float32
+	shadowNormalBiasScale  float32
+	shadowMapResolution    int
+
+	// Forward+ light culling state.
+	lightCullBGP         bind_group_provider.BindGroupProvider // compute shader BGP
+	tileLitBGP           bind_group_provider.BindGroupProvider // fragment shader BGP (@group(5))
+	lightCullPipelineKey string
+	tileCountX           uint32
+	tileCountY           uint32
+	screenWidth          int
+	screenHeight         int
+
+	// Pre-allocated slices reused each frame to avoid per-frame allocations.
+	writePool          []bind_group_provider.BufferWrite       // reusable coalesced buffer write slice
+	drawBindGroupsPool []bind_group_provider.BindGroupProvider // reusable bind group slice for DrawCalls
+
+	// computePool manages a bounded set of reusable goroutines for the parallel
+	// CPU prep phase of PrepareCompute. Workers persist across frames, avoiding
+	// per-frame goroutine spawn/teardown overhead.
+	computePool    worker.DynamicWorkerPool
+	computeWorkers int // stored so we can log/inspect the configured count
+}
+
 // Scene manages a collection of Animators (registered implicitly via Add) and an
 // optional registry of non-ephemeral GameObjects, with a Camera and Renderer for
 // rendering. Rendering is driven entirely by the registered Animator list — each
@@ -29,6 +87,8 @@ import (
 // Scenes can be hot-swapped via the Active flag to switch between different views or levels.
 // Thread-safe for concurrent access.
 type Scene interface {
+	common.Delegate[Scene]
+
 	// Name returns the scene's identifier.
 	Name() string
 
@@ -283,62 +343,6 @@ type Scene interface {
 	InitLighting(litFragShader, shadowVertShader, shadowSkinnedVertShader, cullComputeShader shader.Shader, screenWidth, screenHeight int)
 }
 
-type scene struct {
-	mu *sync.RWMutex
-
-	name   string
-	active bool
-
-	animatorPool map[model.Model][]animator.Animator
-	registry     map[uint64]game_object.GameObject // non-ephemeral objects by ID
-	nextID       uint64
-
-	cam camera.Camera
-	r   renderer.Renderer
-
-	cullingDisabled bool // when true, skips frustum plane distribution to animators
-
-	// Lighting state.
-	lights       []light.Light
-	lightObjects []game_object.GameObject // objects with attached lights (ephemeral and non-ephemeral)
-	ambientColor [3]float32
-	lightsBGP    bind_group_provider.BindGroupProvider
-
-	// Shadow mapping state.
-	shadowDepthTexture     *wgpu.Texture
-	shadowDepthTextureView *wgpu.TextureView
-	shadowComparisonSamp   *wgpu.Sampler
-	shadowDataBGP          bind_group_provider.BindGroupProvider // used during the shadow depth pass
-	shadowLitBGP           bind_group_provider.BindGroupProvider // used during the lit pass (texture + sampler + uniform)
-	shadowPipelineKey      string                                // pipeline key for static models
-	shadowSkinnedPipeKey   string                                // pipeline key for skinned models
-	shadowHalfExtent       float32
-	shadowNear             float32
-	shadowFar              float32
-	shadowBias             float32
-	shadowNormalBiasScale  float32
-	shadowMapResolution    int
-
-	// Forward+ light culling state.
-	lightCullBGP         bind_group_provider.BindGroupProvider // compute shader BGP
-	tileLitBGP           bind_group_provider.BindGroupProvider // fragment shader BGP (@group(5))
-	lightCullPipelineKey string
-	tileCountX           uint32
-	tileCountY           uint32
-	screenWidth          int
-	screenHeight         int
-
-	// Pre-allocated slices reused each frame to avoid per-frame allocations.
-	writePool          []bind_group_provider.BufferWrite       // reusable coalesced buffer write slice
-	drawBindGroupsPool []bind_group_provider.BindGroupProvider // reusable bind group slice for DrawCalls
-
-	// computePool manages a bounded set of reusable goroutines for the parallel
-	// CPU prep phase of PrepareCompute. Workers persist across frames, avoiding
-	// per-frame goroutine spawn/teardown overhead.
-	computePool    worker.DynamicWorkerPool
-	computeWorkers int // stored so we can log/inspect the configured count
-}
-
 // Ensure scene implements Scene interface.
 var _ Scene = &scene{}
 
@@ -411,6 +415,7 @@ func NewScene(name string, cam camera.Camera, r renderer.Renderer, vertexShader 
 		}
 	}
 
+	s.Delegate = s
 	return s
 }
 

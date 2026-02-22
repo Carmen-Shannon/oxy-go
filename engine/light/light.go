@@ -1,5 +1,7 @@
 package light
 
+import "github.com/Carmen-Shannon/oxy-go/common"
+
 // LightType identifies the kind of light source.
 type LightType int
 
@@ -22,6 +24,8 @@ const (
 
 // lightImpl is the implementation of the Light interface.
 type lightImpl struct {
+	common.DelegateImpl[Light]
+
 	lightType    LightType
 	position     [3]float32
 	direction    [3]float32
@@ -45,6 +49,8 @@ type lightImpl struct {
 // Lights are managed by the scene and marshaled into a GPU storage buffer
 // each frame via the gpu_types helpers.
 type Light interface {
+	common.Delegate[Light]
+
 	// Type returns the kind of light source.
 	//
 	// Returns:
@@ -210,6 +216,7 @@ func NewLight(lightType LightType, opts ...LightBuilderOption) Light {
 	for _, opt := range opts {
 		opt(l)
 	}
+	l.Delegate = l
 	return l
 }
 

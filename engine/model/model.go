@@ -8,6 +8,8 @@ import (
 
 // model is the implementation of the Model interface.
 type model struct {
+	common.DelegateImpl[Model]
+
 	name                  string
 	skinned               bool
 	skeleton              *Skeleton
@@ -27,6 +29,8 @@ type model struct {
 // skeleton hierarchy, animation clips, and material properties.
 // It is produced by the Loader after importing and processing a model file.
 type Model interface {
+	common.Delegate[Model]
+
 	// Name retrieves the model identifier.
 	//
 	// Returns:
@@ -183,6 +187,7 @@ func NewModel(options ...ModelBuilderOption) Model {
 	for _, opt := range options {
 		opt(m)
 	}
+	m.Delegate = m
 	return m
 }
 

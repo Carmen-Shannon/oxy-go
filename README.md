@@ -3,6 +3,7 @@
 A 3D game engine written in pure Go, powered by WebGPU via [cogentcore/webgpu](https://github.com/cogentcore/webgpu).
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/Carmen-Shannon/oxy-go.svg)](https://pkg.go.dev/github.com/Carmen-Shannon/oxy-go)
+[![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Carmen-Shannon/ee61b5b222c6fcd2db9a71c9e75374c9/raw/oxy-go-coverage.json)](https://github.com/Carmen-Shannon/oxy-go/actions/workflows/coverage.yml)
 
 ```
 go get github.com/Carmen-Shannon/oxy-go
@@ -141,6 +142,42 @@ WGSL shaders use `@oxy:` annotations to declare their resource requirements dire
 
 ---
 
+## Testing
+
+### Running Tests
+
+Run the full test suite with coverage across the `common` and `engine` packages:
+
+```bash
+go test ./tests/... -coverpkg="github.com/Carmen-Shannon/oxy-go/common/...,github.com/Carmen-Shannon/oxy-go/engine/..." -coverprofile="coverage.out"
+```
+
+Then view the per-function coverage report:
+
+```bash
+go tool cover -func="coverage.out"
+```
+
+### Generating Mocks
+
+Test mocks are generated with [vektra/mockery](https://github.com/vektra/mockery) (v2.53.5+). The configuration lives in [.mockery.yaml](.mockery.yaml) at the project root.
+
+Install mockery:
+
+```bash
+go install github.com/vektra/mockery/v2@v2.53.5
+```
+
+Then regenerate all mocks from the project root:
+
+```bash
+mockery
+```
+
+Mockery reads `.mockery.yaml` automatically and writes generated mocks to `tests/mocks/`.
+
+---
+
 ## Documentation
 
 The [`engine`](README_ENGINE.md) package is the **main entrypoint** of oxy-go. It represents the highest-level instance of the engine itself — the single object that owns the window, manages scenes by z-index, and drives all render and game logic through its concurrent tick and render loops.
@@ -166,4 +203,4 @@ The [`engine`](README_ENGINE.md) package is the **main entrypoint** of oxy-go. I
 
 ## License
 
-[PolyForm Noncommercial 1.0.0](LICENSE)
+[MIT](LICENSE)
