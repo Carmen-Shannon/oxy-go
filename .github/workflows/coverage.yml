@@ -47,9 +47,6 @@ jobs:
         run: mockery
 
       - name: Run tests with coverage
-        env:
-          LIBGL_ALWAYS_SOFTWARE: "1"
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
         run: |
           xvfb-run -a go test ./tests/... \
             -count=1 \
