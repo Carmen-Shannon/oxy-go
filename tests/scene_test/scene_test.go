@@ -39,7 +39,6 @@ func (suite *sceneTest) SetupSuite() {
 	dir, err := os.Getwd()
 	suite.Require().NoError(err)
 	suite.origDir = dir
-	suite.Require().NoError(os.Chdir("f:/Code/oxy-go"))
 }
 
 func (suite *sceneTest) TearDownSuite() {
