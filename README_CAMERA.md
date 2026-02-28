@@ -60,6 +60,8 @@ The constructor applies sensible defaults before processing options:
 
 A `BindGroupProvider` is created automatically with a unique name (`camera_0`, `camera_1`, …).
 
+The `Camera` interface embeds `common.Delegate[Camera]`, exposing `SetDelegate(delegate Camera)`. In production code the delegate is set to the instance itself during construction. In test code the delegate can be replaced with a mock.
+
 ### Camera Builder Options
 
 All options follow the `CameraBuilderOption` functional option pattern.
@@ -78,6 +80,8 @@ All options follow the `CameraBuilderOption` functional option pattern.
 
 ```go
 type Camera interface {
+    common.Delegate[Camera]
+
     // Getters
     Up() (x, y, z float32)
     Fov() float32
@@ -151,6 +155,8 @@ Defaults applied before options:
 | Mouse sensitivity | `0.005`            |
 | Zoom speed        | `15.0`             |
 | Pan speed         | `1.0`              |
+
+A convenience alias `NewOrbitController(options ...CameraControllerOption)` is also available, which delegates directly to `NewCameraController`.
 
 ### Controller Builder Options
 

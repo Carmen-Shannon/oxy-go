@@ -10,7 +10,7 @@ import (
 // GPUCameraUniformSource is the canonical WGSL definition of the CameraUniform struct.
 // Matches GPUCameraUniform layout exactly (80 bytes, std430 aligned).
 //
-//go:embed assets/camera_uniform.wgsl
+//go:embed assets/camera-uniform.wgsl
 var GPUCameraUniformSource string
 
 // GPUCameraUniform is the GPU-aligned representation of the camera uniform buffer.

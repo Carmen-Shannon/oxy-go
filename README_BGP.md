@@ -10,10 +10,12 @@ The `engine/renderer/bind_group_provider` package provides the abstraction layer
 
 ```
 BindGroupProvider (public interface)
+ ├─ common.Delegate[BindGroupProvider]   ← mock / test delegation
  └─ bindGroupProvider (unexported struct)
+      └─ common.DelegateImpl[BindGroupProvider]
 ```
 
-The package follows the standard oxy-go interface-first pattern: a single public `BindGroupProvider` interface backed by an unexported `bindGroupProvider` struct with a compile-time implementation check.
+The package follows the standard oxy-go interface-first pattern: a single public `BindGroupProvider` interface backed by an unexported `bindGroupProvider` struct with a compile-time implementation check. The interface embeds `common.Delegate[BindGroupProvider]` for mock/test delegation support.
 
 ---
 
@@ -38,30 +40,42 @@ A `BindGroupProvider` manages three categories of GPU resources:
 
 ### Bind Group Resources
 
-| Field / Method         | Description                                         |
-| ---------------------- | --------------------------------------------------- |
-| `BindGroup()`          | The WebGPU bind group created for shader binding    |
-| `BindGroupLayout()`    | The bind group layout used to create the bind group |
-| `Buffer(binding)`      | A GPU buffer at the given binding index             |
-| `Buffers()`            | All buffers keyed by binding index                  |
-| `TextureView(binding)` | A GPU texture view at the given binding index       |
-| `TextureViews()`       | All texture views keyed by binding index            |
-| `Sampler(binding)`     | A GPU sampler at the given binding index            |
-| `Samplers()`           | All samplers keyed by binding index                 |
+| Field / Method                                            | Description                                         |
+| --------------------------------------------------------- | --------------------------------------------------- |
+| `BindGroup() *wgpu.BindGroup`                             | The WebGPU bind group created for shader binding    |
+| `BindGroupLayout() *wgpu.BindGroupLayout`                 | The bind group layout used to create the bind group |
+| `Buffer(binding int) *wgpu.Buffer`                        | A GPU buffer at the given binding index             |
+| `Buffers() map[int]*wgpu.Buffer`                          | All buffers keyed by binding index                  |
+| `TextureView(binding int) *wgpu.TextureView`              | A GPU texture view at the given binding index       |
+| `TextureViews() map[int]*wgpu.TextureView`                | All texture views keyed by binding index            |
+| `Sampler(binding int) *wgpu.Sampler`                      | A GPU sampler at the given binding index            |
+| `Samplers() map[int]*wgpu.Sampler`                        | All samplers keyed by binding index                 |
+| `SetBindGroup(bg *wgpu.BindGroup)`                        | Updates the bind group                              |
+| `SetBindGroupLayout(bgl *wgpu.BindGroupLayout)`           | Updates the bind group layout                       |
+| `SetBuffer(binding int, buf *wgpu.Buffer)`                | Sets a single buffer at a binding index             |
+| `SetBuffers(buffers map[int]*wgpu.Buffer)`                | Replaces the entire buffer map                      |
+| `SetTextureView(binding int, tv *wgpu.TextureView)`       | Sets a single texture view at a binding index       |
+| `SetTextureViews(textureViews map[int]*wgpu.TextureView)` | Replaces the entire texture view map                |
+| `SetSampler(binding int, s *wgpu.Sampler)`                | Sets a single sampler at a binding index            |
+| `SetSamplers(samplers map[int]*wgpu.Sampler)`             | Replaces the entire sampler map                     |
 
 ### Vertex Pulling Resources
 
-| Field / Method   | Description                                            |
-| ---------------- | ------------------------------------------------------ |
-| `VertexBuffer()` | GPU vertex buffer for mesh vertex data                 |
-| `IndexBuffer()`  | GPU index buffer for mesh index data                   |
-| `IndexCount()`   | Number of indices, used by the Renderer for draw calls |
+| Field / Method                      | Description                                            |
+| ----------------------------------- | ------------------------------------------------------ |
+| `VertexBuffer() *wgpu.Buffer`       | GPU vertex buffer for mesh vertex data                 |
+| `IndexBuffer() *wgpu.Buffer`        | GPU index buffer for mesh index data                   |
+| `IndexCount() int`                  | Number of indices, used by the Renderer for draw calls |
+| `SetVertexBuffer(buf *wgpu.Buffer)` | Updates the vertex buffer                              |
+| `SetIndexBuffer(buf *wgpu.Buffer)`  | Updates the index buffer                               |
+| `SetIndexCount(count int)`          | Updates the index count                                |
 
-### Metadata
+### Metadata & Lifecycle
 
-| Field / Method | Description                               |
-| -------------- | ----------------------------------------- |
-| `Label()`      | Debug label for profiling and diagnostics |
+| Field / Method   | Description                                   |
+| ---------------- | --------------------------------------------- |
+| `Label() string` | Debug label for profiling and diagnostics     |
+| `Release()`      | Frees all GPU resources held by this provider |
 
 ---
 
@@ -69,12 +83,19 @@ A `BindGroupProvider` manages three categories of GPU resources:
 
 The `NewBindGroupProvider` constructor accepts a required label and variadic `BindGroupProviderOption` functions:
 
-| Option                     | Description                                             |
-| -------------------------- | ------------------------------------------------------- |
-| `WithBindGroup(bg)`        | Pre-sets the bind group (typically set by the Renderer) |
-| `WithBindGroupLayout(bgl)` | Pre-sets the bind group layout                          |
-| `WithBuffer(binding, buf)` | Sets a single buffer at a specific binding index        |
-| `WithBuffers(map)`         | Replaces the entire buffer map                          |
+| Option                         | Description                                             |
+| ------------------------------ | ------------------------------------------------------- |
+| `WithBindGroup(bg)`            | Pre-sets the bind group (typically set by the Renderer) |
+| `WithBindGroupLayout(bgl)`     | Pre-sets the bind group layout                          |
+| `WithBuffer(binding, buf)`     | Sets a single buffer at a specific binding index        |
+| `WithBuffers(map)`             | Replaces the entire buffer map                          |
+| `WithTextureView(binding, tv)` | Sets a single texture view at a binding index           |
+| `WithTextureViews(map)`        | Replaces the entire texture view map                    |
+| `WithSampler(binding, s)`      | Sets a single sampler at a binding index                |
+| `WithSamplers(map)`            | Replaces the entire sampler map                         |
+| `WithVertexBuffer(buf)`        | Pre-sets the vertex buffer                              |
+| `WithIndexBuffer(buf)`         | Pre-sets the index buffer                               |
+| `WithIndexCount(count)`        | Pre-sets the index count                                |
 
 ---
 
@@ -84,7 +105,7 @@ The `NewBindGroupProvider` constructor accepts a required label and variadic `Bi
 func NewBindGroupProvider(label string, options ...BindGroupProviderOption) BindGroupProvider
 ```
 
-Creates a new `BindGroupProvider` with initialized empty maps for buffers, texture views, and samplers. Builder options are applied after map initialization.
+Creates a new `BindGroupProvider` with initialized empty maps for buffers, texture views, and samplers. Sets `p.Delegate = p` so delegation routes to itself by default. Builder options are applied after map initialization.
 
 ---
 

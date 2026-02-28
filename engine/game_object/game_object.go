@@ -6,6 +6,7 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/light"
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
+	"github.com/Carmen-Shannon/oxy-go/engine/physics"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/animator"
 )
 
@@ -19,6 +20,7 @@ type gameObject struct {
 	animator           animator.Animator
 	animatorInstanceID int
 	attachedLight      light.Light
+	rigidBody          physics.RigidBody
 
 	// initial transform state used before the object is added to a Scene
 	initialPosition      [3]float32
@@ -175,6 +177,18 @@ type GameObject interface {
 	// Parameters:
 	//   - l: the Light to attach, or nil to detach
 	SetLight(l light.Light)
+
+	// RigidBody returns the physics.RigidBody associated with this object, or nil if none is set.
+	//
+	// Returns:
+	//   - physics.RigidBody: the associated rigid body or nil
+	RigidBody() physics.RigidBody
+
+	// SetRigidBody sets the RigidBody instance for this GameObject.
+	//
+	// Parameters:
+	//   - rb: the RigidBody to associate with this GameObject
+	SetRigidBody(rb physics.RigidBody)
 }
 
 var _ GameObject = &gameObject{}
@@ -324,4 +338,12 @@ func (g *gameObject) Light() light.Light {
 
 func (g *gameObject) SetLight(l light.Light) {
 	g.attachedLight = l
+}
+
+func (g *gameObject) RigidBody() physics.RigidBody {
+	return g.rigidBody
+}
+
+func (g *gameObject) SetRigidBody(rb physics.RigidBody) {
+	g.rigidBody = rb
 }

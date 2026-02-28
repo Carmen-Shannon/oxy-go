@@ -15,7 +15,6 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/material"
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	"github.com/Carmen-Shannon/oxy-go/engine/window"
 )
@@ -57,14 +56,8 @@ func main() {
 		)),
 	)
 
-	// ── Shaders ─────────────────────────────────────────────────────────
-	computeShader := shader.NewShader("simple_compute", shader.ShaderTypeCompute, "examples/assets/shaders/simple-compute.wgsl")
-	vertexShader := shader.NewShader("simple_vert", shader.ShaderTypeVertex, "examples/assets/shaders/simple-vert.wgsl")
-	fragmentShader := shader.NewShader("rainbow_frag", shader.ShaderTypeFragment, "examples/assets/shaders/rainbow-frag.wgsl")
-
 	// ── Scene ───────────────────────────────────────────────────────────
-	// NewScene inits the camera BGP from the vertex shader's camera bind group layout.
-	sc := scene.NewScene("Scene Test", cam, r, vertexShader,
+	sc := scene.NewScene("Scene Test", cam, r,
 		scene.WithActive(true),
 	)
 
@@ -83,6 +76,7 @@ func main() {
 			model.WithRenderMaterials(material.NewMaterial(
 				material.WithName("rainbow_cube"),
 				material.WithPipelineKey("rainbow_cube"),
+				material.WithFragmentShaderPath("examples/assets/shaders/rainbow-frag.wgsl"),
 			)),
 		)),
 		game_object.WithPosition(0, 0, 0),
@@ -91,7 +85,7 @@ func main() {
 		game_object.WithEphemeral(true),
 	)
 
-	_ = sc.Add(cube, computeShader, vertexShader, fragmentShader)
+	_ = sc.Add(cube)
 
 	eng.AddScene(0, sc)
 

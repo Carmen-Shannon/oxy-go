@@ -1,8 +1,6 @@
 package loader
 
 import (
-	"io"
-
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
 )
 
@@ -31,12 +29,4 @@ func newGLTFLoaderBackend() gltfLoaderBackend {
 
 func (b *gltfLoaderBackendImpl) Load(path string) (*model.ImportedModel, error) {
 	return b.importer.Import(path)
-}
-
-func (b *gltfLoaderBackendImpl) LoadMeshOnly(path string) (*model.ImportedModel, error) {
-	return b.importer.ImportMeshOnly(path)
-}
-
-func (b *gltfLoaderBackendImpl) LoadReader(r io.Reader, isGLB bool) (*model.ImportedModel, error) {
-	return b.importer.ImportReader(r, isGLB)
 }

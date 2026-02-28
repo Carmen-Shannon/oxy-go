@@ -9,8 +9,8 @@ The `engine/renderer/pipeline` package manages render and compute pipeline confi
 ## Architecture
 
 ```
-Pipeline (public interface)
- └─ pipeline (unexported struct)
+Pipeline (public interface, embeds common.Delegate[Pipeline])
+ └─ pipeline (unexported struct, embeds common.DelegateImpl[Pipeline])
 ```
 
 The package follows the standard oxy-go interface-first pattern: a single public `Pipeline` interface backed by an unexported `pipeline` struct with a compile-time implementation check.
@@ -39,18 +39,19 @@ The package follows the standard oxy-go interface-first pattern: a single public
 
 ### Render State (render pipelines only)
 
-| Method                              | Description                                    |
-| ----------------------------------- | ---------------------------------------------- |
-| `DepthTestEnabled() bool`           | Whether depth testing is on (default `true`)   |
-| `DepthWriteEnabled() bool`          | Whether depth writes are on (default `true`)   |
-| `DepthBias() int32`                 | Constant depth bias value (default `0`)        |
-| `DepthBiasSlopeScale() float32`     | Slope-based depth bias (default `0`)           |
-| `BlendEnabled() bool`               | Whether blending is on (default `false`)       |
-| `CullMode() wgpu.CullMode`          | Face culling mode (default `CullModeNone`)     |
-| `Topology() wgpu.PrimitiveTopology` | Primitive topology (default `TriangleList`)    |
-| `FrontFace() wgpu.FrontFace`        | Winding order (default `FrontFaceCCW`)         |
-| `WriteMask() wgpu.ColorWriteMask`   | Color write mask (default `ColorWriteMaskAll`) |
-| `BlendState() *wgpu.BlendState`     | Blend factors/operations, or nil               |
+| Method                                | Description                                                         |
+| ------------------------------------- | ------------------------------------------------------------------- |
+| `DepthTestEnabled() bool`             | Whether depth testing is on (default `true`)                        |
+| `DepthWriteEnabled() bool`            | Whether depth writes are on (default `true`)                        |
+| `DepthBias() int32`                   | Constant depth bias value (default `0`)                             |
+| `DepthBiasSlopeScale() float32`       | Slope-based depth bias (default `0`)                                |
+| `DepthCompare() wgpu.CompareFunction` | Depth comparison function (default derived from `DepthTestEnabled`) |
+| `BlendEnabled() bool`                 | Whether blending is on (default `false`)                            |
+| `CullMode() wgpu.CullMode`            | Face culling mode (default `CullModeNone`)                          |
+| `Topology() wgpu.PrimitiveTopology`   | Primitive topology (default `TriangleList`)                         |
+| `FrontFace() wgpu.FrontFace`          | Winding order (default `FrontFaceCCW`)                              |
+| `WriteMask() wgpu.ColorWriteMask`     | Color write mask (default `ColorWriteMaskAll`)                      |
+| `BlendState() *wgpu.BlendState`       | Blend factors/operations, or nil                                    |
 
 ### Mutators
 
@@ -73,6 +74,7 @@ The `NewPipeline` constructor accepts variadic `PipelineBuilderOption` functions
 | `WithDepthTestEnabled(enabled)`  | Toggles depth testing                         |
 | `WithDepthWriteEnabled(enabled)` | Toggles depth writing                         |
 | `WithDepthBias(bias, slope)`     | Sets depth bias constant and slope scale      |
+| `WithDepthCompare(fn)`           | Sets the depth comparison function            |
 | `WithBlendEnabled(enabled)`      | Toggles blending                              |
 | `WithCullMode(mode)`             | Sets the face culling mode                    |
 | `WithTopology(topology)`         | Sets the primitive topology                   |
@@ -88,7 +90,7 @@ The `NewPipeline` constructor accepts variadic `PipelineBuilderOption` functions
 func NewPipeline(pipelineKey string, pipelineType PipelineType, opts ...PipelineBuilderOption) Pipeline
 ```
 
-Creates a new `Pipeline` with the specified key and type. Render state defaults are:
+Creates a new `Pipeline` with the specified key and type. The delegation target is set to itself (`p.Delegate = p`). Render state defaults are:
 
 - Depth test: **enabled**, depth write: **enabled**
 - Blend: **disabled**
@@ -105,4 +107,4 @@ Builder options are applied after defaults.
 | File                  | Purpose                                                     |
 | --------------------- | ----------------------------------------------------------- |
 | `pipeline.go`         | `Pipeline` interface, `pipeline` struct, constructor, impls |
-| `pipeline_builder.go` | `PipelineBuilderOption` type and 12 builder functions       |
+| `pipeline_builder.go` | `PipelineBuilderOption` type and 13 builder functions       |

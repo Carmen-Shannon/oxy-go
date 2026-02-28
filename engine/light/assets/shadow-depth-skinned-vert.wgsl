@@ -13,31 +13,12 @@
 // shader's MAX_BONES constant so the per-instance stride is consistent.
 const MAX_BONES: u32 = 64u;
 
-// ── Vertex attributes ──────────────────────────────────────────────
-// Must match Go's model.GPUSkinnedVertex struct layout exactly (96 bytes).
-// Only position, bone_indices, and bone_weights are used; other fields
-// are declared for stride compatibility.
 //@oxy:include skinned_vertex
-// struct VertexInput {
-//     @location(0) position:     vec3<f32>,
-//     @location(1) normal:       vec3<f32>,
-//     @location(2) uv:           vec2<f32>,
-//     @location(3) color:        vec4<f32>,
-//     @location(4) tangent:      vec4<f32>,
-//     @location(5) bone_indices: vec4<u32>,
-//     @location(6) bone_weights: vec4<f32>,
-// };
+//@oxy:include shadow_uniform
 
-// ── Output ─────────────────────────────────────────────────────────
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
 };
-
-// ── Shadow uniform ─────────────────────────────────────────────────
-//@oxy:include shadow_uniform
-// struct ShadowUniform {
-//     light_vp: mat4x4<f32>,
-// };
 
 // ── Per-instance data layout in flat vec4 storage ──────────────────
 // The compute shader writes each instance as a flat sequence of vec4<f32>:
@@ -45,13 +26,9 @@ struct VertexOutput {
 // Total per instance: (1 + MAX_BONES) × 4 vec4.
 const FLOATS_PER_INSTANCE: u32 = (1u + MAX_BONES) * 4u;
 
-// ── Bind groups ────────────────────────────────────────────────────
 //@oxy:group 0 0 storage_uniform shadow_uniform shadow_uniform
-// @group(0) @binding(0) var<uniform> shadow_uniform: ShadowUniform;
 //@oxy:provider 1 0 animator
 @group(1) @binding(0) var<storage, read> instance_buffer: array<vec4<f32>>;
-
-// ── Helpers ────────────────────────────────────────────────────────
 
 // read_mat4 reconstructs a mat4x4 from 4 consecutive vec4 entries in the flat buffer.
 fn read_mat4(base: u32) -> mat4x4<f32> {
@@ -63,7 +40,6 @@ fn read_mat4(base: u32) -> mat4x4<f32> {
     );
 }
 
-// ── Entry point ────────────────────────────────────────────────────
 @vertex
 fn vs_main(
     vertex: VertexInput,

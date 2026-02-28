@@ -13,6 +13,10 @@ The `light` package provides the lighting, shadow mapping, and Forward+ tile cul
 - [Light Interface](#light-interface)
   - [Properties](#properties)
   - [Setters](#setters)
+- [LightingHandler](#lightinghandler)
+  - [Creating a LightingHandler](#creating-a-lightinghandler)
+  - [LightingHandler Builder Options](#lightinghandler-builder-options)
+  - [LightingHandler Interface](#lightinghandler-interface)
 - [Forward+ Light Culling](#forward-light-culling)
   - [Constants](#constants)
   - [TileCounts](#tilecounts)
@@ -105,6 +109,8 @@ Defaults applied before options:
 | Ephemeral    | `false`               |
 | CastsShadows | `false`               |
 
+The `Light` interface embeds `common.Delegate[Light]`, exposing `SetDelegate(delegate Light)`. In production code the delegate is set to the instance itself during construction. In test code the delegate can be replaced with a mock.
+
 ---
 
 ## Builder Options
@@ -156,6 +162,112 @@ All options follow the `LightBuilderOption` functional option pattern.
 | `SetEnabled(enabled bool)`                | Enables or disables the light                        |
 | `SetEphemeral(ephemeral bool)`            | Marks as ephemeral                                   |
 | `SetCastsShadows(castsShadows bool)`      | Enables or disables shadow casting                   |
+
+---
+
+## LightingHandler
+
+The `LightingHandler` manages the light list, ambient color, shadow mapping configuration, Forward+ tile culling state, and all associated GPU resources (bind group providers, pipeline keys, shadow textures). It is created via `NewLightingHandler` with builder options and attached to a scene. GPU resources are initialized lazily by the scene when the first light is added.
+
+Thread safety is provided by the owning scene's mutex — the handler itself does not perform internal locking.
+
+### Creating a LightingHandler
+
+```go
+handler := light.NewLightingHandler(
+    light.WithShadowHalfExtent(50.0),
+    light.WithShadowNearFar(0.1, 300.0),
+    light.WithShadowBias(0.002),
+    light.WithShadowNormalBiasScale(3.0),
+    light.WithShadowMapResolution(4096),
+    light.WithAmbientColor([3]float32{0.05, 0.05, 0.08}),
+)
+```
+
+Defaults applied before options:
+
+| Parameter              | Default                                    |
+| ---------------------- | ------------------------------------------ |
+| Enabled                | `false`                                    |
+| Lights                 | empty                                      |
+| Ambient color          | `(0, 0, 0)` (black)                        |
+| Shadow half-extent     | `DefaultShadowHalfExtent` (`40.0`)          |
+| Shadow near            | `DefaultShadowNear` (`0.1`)                 |
+| Shadow far             | `DefaultShadowFar` (`200.0`)                |
+| Shadow bias            | `DefaultShadowBias` (`0.001`)               |
+| Shadow normal bias     | `DefaultShadowNormalBiasScale` (`3.0`)      |
+| Shadow map resolution  | `ShadowMapResolution` (`2048`)              |
+
+The constructor pre-creates five named `BindGroupProvider` entries: `"lights"`, `"shadow_data"`, `"shadow_lit"`, `"light_cull"`, `"tile_lit"`.
+
+### LightingHandler Builder Options
+
+All options follow the `LightingHandlerOption` functional option pattern.
+
+| Option                     | Parameters                   | Description                                                 |
+| -------------------------- | ---------------------------- | ----------------------------------------------------------- |
+| `WithShadowHalfExtent`     | `halfExtent float32`          | Orthographic frustum half-extent in world units             |
+| `WithShadowNearFar`        | `near, far float32`           | Near/far planes for shadow projection                       |
+| `WithShadowBias`           | `bias float32`                | Depth comparison bias to reduce shadow acne                 |
+| `WithShadowNormalBiasScale`| `scale float32`               | Normal-offset bias multiplier on per-texel world-size       |
+| `WithShadowMapResolution`  | `resolution int`              | Shadow depth texture resolution in texels                   |
+| `WithAmbientColor`         | `color [3]float32`            | Initial ambient light color                                 |
+
+### LightingHandler Interface
+
+#### Light Management
+
+| Method                                    | Description                                                                 |
+| ----------------------------------------- | --------------------------------------------------------------------------- |
+| `Enabled() bool`                          | Whether the lighting subsystem is GPU-initialized and ready for rendering   |
+| `SetEnabled(enabled bool)`                | Marks the subsystem as GPU-initialized                                      |
+| `Lights() []Light`                        | Returns a copy of the current light list                                    |
+| `AddLight(l Light)`                       | Appends a light to the handler's list                                       |
+| `RemoveLight(l Light)`                    | Removes a light by reference equality                                       |
+| `AmbientColor() [3]float32`               | Returns the scene's ambient light color                                     |
+| `SetAmbientColor(color [3]float32)`        | Sets the scene's ambient light color                                        |
+
+#### Bind Group Providers & Pipelines
+
+| Method                                    | Description                                                                 |
+| ----------------------------------------- | --------------------------------------------------------------------------- |
+| `Bgp(key string)`                         | Retrieves a BindGroupProvider by key (`"lights"`, `"shadow_data"`, `"shadow_lit"`, `"light_cull"`, `"tile_lit"`) |
+| `Bgps()`                                  | Returns the full map of bind group providers                                |
+| `PipelineKey(name string) string`          | Retrieves the pipeline key for a given name                                 |
+| `PipelineKeys() map[string]string`         | Returns the full map of pipeline name-to-key mappings                       |
+| `SetPipelineKey(name, key string)`         | Stores a pipeline key under the given name                                  |
+
+#### Shadow Mapping Resources
+
+| Method                                            | Description                                                     |
+| ------------------------------------------------- | --------------------------------------------------------------- |
+| `ShadowDepthTexture() *wgpu.Texture`               | Returns the shadow depth texture, or nil if not initialized     |
+| `SetShadowDepthTexture(t *wgpu.Texture)`           | Sets the shadow depth texture                                   |
+| `ShadowDepthTextureView() *wgpu.TextureView`       | Returns the shadow depth texture view                           |
+| `SetShadowDepthTextureView(tv *wgpu.TextureView)`  | Sets the shadow depth texture view                              |
+| `ShadowComparisonSampler() *wgpu.Sampler`           | Returns the PCF comparison sampler                              |
+| `SetShadowComparisonSampler(s *wgpu.Sampler)`       | Sets the PCF comparison sampler                                 |
+
+#### Shadow Configuration (Read-Only)
+
+| Method                               | Description                                           |
+| ------------------------------------ | ----------------------------------------------------- |
+| `ShadowHalfExtent() float32`          | Orthographic frustum half-extent in world units       |
+| `ShadowNear() float32`                | Near plane for shadow projection                      |
+| `ShadowFar() float32`                 | Far plane for shadow projection                       |
+| `ShadowBias() float32`                | Depth comparison bias                                 |
+| `ShadowNormalBiasScale() float32`     | Normal-offset bias multiplier                         |
+| `ShadowMapResolution() int`           | Shadow depth texture resolution in texels             |
+
+#### Screen & Tile State
+
+| Method                         | Description                                                     |
+| ------------------------------ | --------------------------------------------------------------- |
+| `ScreenWidth() int`             | Current screen width in pixels for tile calculations            |
+| `ScreenHeight() int`            | Current screen height in pixels for tile calculations           |
+| `TileCountX() uint32`           | Number of Forward+ tile columns                                 |
+| `TileCountY() uint32`           | Number of Forward+ tile rows                                    |
+| `Resize(width, height int)`     | Updates screen dimensions and recalculates tile counts          |
 
 ---
 

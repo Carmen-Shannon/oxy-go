@@ -16,7 +16,6 @@
 //   @group(4) shadow     — shadow depth texture, comparison sampler, ShadowData uniform
 //   @group(5) tiles      — TileUniforms + per-tile light counts + per-tile light indices
 
-// ── Fragment input (from vertex shader) ────────────────────────────
 struct FragmentInput {
     @builtin(position) position: vec4<f32>,
     @builtin(front_facing) front_facing: bool,

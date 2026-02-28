@@ -74,7 +74,7 @@ func (g *GPULight) Marshal() []byte {
 // GPULightHeaderSource is the canonical WGSL definition of the LightHeader struct.
 // Matches GPULightHeader layout exactly (16 bytes, std430 aligned).
 //
-//go:embed assets/light_header.wgsl
+//go:embed assets/light-header.wgsl
 var GPULightHeaderSource string
 
 // GPULightHeader is the header prepended to the light storage buffer.
@@ -111,7 +111,7 @@ func (h *GPULightHeader) Marshal() []byte {
 // GPUShadowDataSource is the canonical WGSL definition of the ShadowData struct.
 // Matches GPUShadowData layout exactly (80 bytes, std430 aligned).
 //
-//go:embed assets/shadow_data.wgsl
+//go:embed assets/shadow-data.wgsl
 var GPUShadowDataSource string
 
 // GPUShadowData is the GPU-aligned representation of directional shadow data.
@@ -212,7 +212,7 @@ func (s *GPUShadowData) Marshal() []byte {
 // GPUShadowUniformSource is the canonical WGSL definition of the ShadowUniform struct.
 // Matches GPUShadowUniform layout exactly (64 bytes, std430 aligned).
 //
-//go:embed assets/shadow_uniform.wgsl
+//go:embed assets/shadow-uniform.wgsl
 var GPUShadowUniformSource string
 
 // GPUShadowUniform is the GPU-aligned representation of the shadow vertex
@@ -247,7 +247,7 @@ func (u *GPUShadowUniform) Marshal() []byte {
 // GPULightCullUniformsSource is the canonical WGSL definition of the LightCullUniforms struct.
 // Matches GPULightCullUniforms layout exactly (160 bytes, std430 aligned).
 //
-//go:embed assets/light_cull_uniforms.wgsl
+//go:embed assets/light-cull-uniforms.wgsl
 var GPULightCullUniformsSource string
 
 // GPULightCullUniforms is the GPU-aligned uniform data for the light culling
@@ -336,7 +336,7 @@ func (u *GPULightCullUniforms) Marshal() []byte {
 // GPUTileUniformsSource is the canonical WGSL definition of the TileUniforms struct.
 // Matches GPUTileUniforms layout exactly (8 bytes).
 //
-//go:embed assets/tile_uniforms.wgsl
+//go:embed assets/tile-uniforms.wgsl
 var GPUTileUniformsSource string
 
 // GPUTileUniforms is the GPU-aligned uniform data read by the lit fragment

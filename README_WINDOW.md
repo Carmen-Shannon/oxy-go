@@ -9,8 +9,8 @@ The `engine/window` package provides a platform-abstracted windowing layer built
 ## Architecture
 
 ```
-Window (public interface)
- └─ engineWindow (unexported struct)
+Window (public interface, embeds common.Delegate[Window])
+ └─ engineWindow (unexported struct, embeds common.DelegateImpl[Window])
       └── glfwWindow (platform-specific GLFW state)
 ```
 
@@ -24,7 +24,7 @@ The public `Window` interface is implemented by `engineWindow`, which delegates 
 func NewWindow(options ...WindowBuilderOption) Window
 ```
 
-Creates a new Window with default configuration, applies each option in order, then initializes the underlying GLFW window. Panics if the platform window fails to create.
+Creates a new Window with default configuration, applies each option in order, initializes the underlying GLFW window, and sets the delegation target to itself (`w.Delegate = w`). Panics if the platform window fails to create.
 
 **Defaults:**
 
@@ -55,6 +55,10 @@ Creates a new Window with default configuration, applies each option in order, t
 ---
 
 ## Window Interface
+
+### Delegation
+
+The `Window` interface embeds `common.Delegate[Window]`, exposing `SetDelegate(delegate Window)`. In production code the delegate is set to the instance itself during construction. In test code the delegate can be replaced with a mock.
 
 ### Lifecycle
 

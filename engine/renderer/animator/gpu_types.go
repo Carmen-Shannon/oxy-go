@@ -10,7 +10,7 @@ import (
 // GPUInstanceDataSource is the canonical WGSL definition of the InstanceData struct.
 // Matches GPUInstanceData layout exactly (64 bytes, std430 aligned).
 //
-//go:embed assets/instance_data.wgsl
+//go:embed assets/instance-data.wgsl
 var GPUInstanceDataSource string
 
 // GPUInstanceData is the GPU-aligned representation of per-instance data for models.
@@ -42,7 +42,7 @@ func (g *GPUInstanceData) Marshal() []byte {
 // GPUAnimationDataSource is the canonical WGSL definition of the AnimationData struct.
 // Matches GPUAnimationData layout exactly (64 bytes, std430 aligned).
 //
-//go:embed assets/animation_data.wgsl
+//go:embed assets/animation-data.wgsl
 var GPUAnimationDataSource string
 
 // GPUAnimationData is the GPU-aligned representation of per-instance animation data for the simple animator.
@@ -95,7 +95,7 @@ func (g *GPUAnimationData) Marshal() []byte {
 // GPUFrustumPlaneSource is the canonical WGSL definition of the FrustumPlane struct.
 // Matches GPUFrustumPlane layout exactly (16 bytes, std430 aligned).
 //
-//go:embed assets/frustum_plane.wgsl
+//go:embed assets/frustum-plane.wgsl
 var GPUFrustumPlaneSource string
 
 // GPUFrustumPlane is the GPU-aligned representation of a single view-frustum plane.
@@ -130,7 +130,7 @@ func (g *GPUFrustumPlane) Marshal() []byte {
 // GPUGlobalDataSource is the canonical WGSL definition of the GlobalData struct.
 // Matches GPUGlobalData layout exactly (112 bytes, std430 aligned).
 //
-//go:embed assets/simple_globals.wgsl
+//go:embed assets/simple-globals.wgsl
 var GPUGlobalDataSource string
 
 // GPUGlobalData is the GPU-aligned per-frame uniform for the frustum-culled simple compute shader.
@@ -177,7 +177,7 @@ func (g *GPUGlobalData) Marshal() []byte {
 // GPUAnimationGlobalsSource is the canonical WGSL definition of the AnimationGlobals struct.
 // Matches GPUAnimationGlobals layout exactly (128 bytes, std430 aligned).
 //
-//go:embed assets/animation_globals.wgsl
+//go:embed assets/animation-globals.wgsl
 var GPUAnimationGlobalsSource string
 
 // GPUAnimationGlobals is the GPU-aligned per-frame uniform for the frustum-culled skeletal compute shader.
@@ -232,7 +232,7 @@ func (g *GPUAnimationGlobals) Marshal() []byte {
 // GPUIndirectArgsSource is the canonical WGSL definition of the IndirectArgs struct.
 // Matches GPUIndirectArgs layout exactly (20 bytes).
 //
-//go:embed assets/indirect_args.wgsl
+//go:embed assets/indirect-args.wgsl
 var GPUIndirectArgsSource string
 
 // GPUIndirectArgs is the GPU-aligned DrawIndexedIndirect arguments written by the compute shader.
@@ -271,7 +271,7 @@ func (g *GPUIndirectArgs) Marshal() []byte {
 // GPUBoneInfoSource is the canonical WGSL definition of the BoneInfo struct.
 // Matches GPUBoneInfo layout exactly (112 bytes, std430 aligned).
 //
-//go:embed assets/bone_info.wgsl
+//go:embed assets/bone-info.wgsl
 var GPUBoneInfoSource string
 
 // GPUBoneInfo is the GPU-aligned representation of a single bone in the skeleton.
@@ -446,7 +446,7 @@ func (g *GPUClipHeader) Marshal() []byte {
 // GPUSkeletalAnimationDataSource is the canonical WGSL definition of the SkeletalAnimationData struct.
 // Matches GPUSkeletalAnimationData layout exactly (48 bytes, std430 aligned).
 //
-//go:embed assets/skeletal_animation_data.wgsl
+//go:embed assets/skeletal-animation-data.wgsl
 var GPUSkeletalAnimationDataSource string
 
 // GPUSkeletalAnimationData is the GPU-aligned per-instance animation state for the skeletal compute shader.

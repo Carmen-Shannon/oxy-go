@@ -62,6 +62,17 @@ func (suite *materialTest) TestNewMaterialDefaults() {
 		m := material.NewMaterial()
 		suite.Nil(m.BindGroupProvider())
 	})
+
+	suite.Run("fragment shader path is empty by default", func() {
+		m := material.NewMaterial()
+		suite.Equal("", m.FragmentShaderPath())
+	})
+
+	suite.Run("provider returns nil for any group by default", func() {
+		m := material.NewMaterial()
+		suite.Nil(m.Provider(0))
+		suite.Nil(m.Provider(1))
+	})
 }
 
 func (suite *materialTest) TestWithNameOption() {
@@ -254,6 +265,118 @@ func (suite *materialTest) TestSetBindGroupProvider() {
 	})
 }
 
+func (suite *materialTest) TestWithFragmentShaderPathOption() {
+	suite.Run("sets fragment shader path", func() {
+		m := material.NewMaterial(material.WithFragmentShaderPath("shaders/custom.wgsl"))
+		suite.Equal("shaders/custom.wgsl", m.FragmentShaderPath())
+	})
+
+	suite.Run("empty path uses engine default", func() {
+		m := material.NewMaterial(material.WithFragmentShaderPath(""))
+		suite.Equal("", m.FragmentShaderPath())
+	})
+
+	suite.Run("later option overwrites earlier", func() {
+		m := material.NewMaterial(
+			material.WithFragmentShaderPath("first.wgsl"),
+			material.WithFragmentShaderPath("second.wgsl"),
+		)
+		suite.Equal("second.wgsl", m.FragmentShaderPath())
+	})
+}
+
+func (suite *materialTest) TestFragmentShaderPath() {
+	suite.Run("default is empty string", func() {
+		m := material.NewMaterial()
+		suite.Equal("", m.FragmentShaderPath())
+	})
+
+	suite.Run("returns value set by builder option", func() {
+		m := material.NewMaterial(material.WithFragmentShaderPath("shaders/overlay.wgsl"))
+		suite.Equal("shaders/overlay.wgsl", m.FragmentShaderPath())
+	})
+}
+
+func (suite *materialTest) TestSetFragmentShaderPath() {
+	suite.Run("set and get round-trips", func() {
+		m := material.NewMaterial()
+		m.SetFragmentShaderPath("shaders/toon.wgsl")
+		suite.Equal("shaders/toon.wgsl", m.FragmentShaderPath())
+	})
+
+	suite.Run("overwrites previous value", func() {
+		m := material.NewMaterial(material.WithFragmentShaderPath("first.wgsl"))
+		m.SetFragmentShaderPath("second.wgsl")
+		suite.Equal("second.wgsl", m.FragmentShaderPath())
+	})
+
+	suite.Run("setting to empty clears the path", func() {
+		m := material.NewMaterial(material.WithFragmentShaderPath("some.wgsl"))
+		m.SetFragmentShaderPath("")
+		suite.Equal("", m.FragmentShaderPath())
+	})
+}
+
+func (suite *materialTest) TestProvider() {
+	suite.Run("returns nil for unset group", func() {
+		m := material.NewMaterial()
+		suite.Nil(m.Provider(0))
+	})
+
+	suite.Run("returns nil for non-existent group index", func() {
+		m := material.NewMaterial()
+		bgp := bind_group_provider.NewBindGroupProvider("group-1")
+		m.SetProvider(1, bgp)
+		suite.Nil(m.Provider(99))
+	})
+
+	suite.Run("returns provider set at group index", func() {
+		m := material.NewMaterial()
+		bgp := bind_group_provider.NewBindGroupProvider("tex-group")
+		m.SetProvider(2, bgp)
+		suite.NotNil(m.Provider(2))
+		suite.Equal("tex-group", m.Provider(2).Label())
+	})
+}
+
+func (suite *materialTest) TestSetProvider() {
+	suite.Run("set and get round-trips", func() {
+		m := material.NewMaterial()
+		bgp := bind_group_provider.NewBindGroupProvider("group-0")
+		m.SetProvider(0, bgp)
+		suite.NotNil(m.Provider(0))
+		suite.Equal("group-0", m.Provider(0).Label())
+	})
+
+	suite.Run("overwriting group replaces previous provider", func() {
+		m := material.NewMaterial()
+		bgp1 := bind_group_provider.NewBindGroupProvider("first")
+		bgp2 := bind_group_provider.NewBindGroupProvider("second")
+		m.SetProvider(0, bgp1)
+		suite.Equal("first", m.Provider(0).Label())
+		m.SetProvider(0, bgp2)
+		suite.Equal("second", m.Provider(0).Label())
+	})
+
+	suite.Run("multiple groups are independent", func() {
+		m := material.NewMaterial()
+		bgp0 := bind_group_provider.NewBindGroupProvider("group-0")
+		bgp1 := bind_group_provider.NewBindGroupProvider("group-1")
+		m.SetProvider(0, bgp0)
+		m.SetProvider(1, bgp1)
+		suite.Equal("group-0", m.Provider(0).Label())
+		suite.Equal("group-1", m.Provider(1).Label())
+	})
+
+	suite.Run("setting nil clears the provider for that group", func() {
+		m := material.NewMaterial()
+		bgp := bind_group_provider.NewBindGroupProvider("temp")
+		m.SetProvider(0, bgp)
+		m.SetProvider(0, nil)
+		suite.Nil(m.Provider(0))
+	})
+}
+
 func (suite *materialTest) TestSetDelegate() {
 	suite.Run("set delegate does not panic", func() {
 		m := material.NewMaterial()
@@ -280,6 +403,7 @@ func (suite *materialTest) TestAllOptionsComposed() {
 			material.WithMetallicRoughnessTexture(mrTex),
 			material.WithPipelineKey("lit-pbr"),
 			material.WithBindGroupProvider(bgp),
+			material.WithFragmentShaderPath("shaders/custom.wgsl"),
 		)
 
 		suite.Equal("pbr-gold", m.Name())
@@ -295,5 +419,6 @@ func (suite *materialTest) TestAllOptionsComposed() {
 		suite.Equal("lit-pbr", m.PipelineKey())
 		suite.NotNil(m.BindGroupProvider())
 		suite.Equal("composed-bgp", m.BindGroupProvider().Label())
+		suite.Equal("shaders/custom.wgsl", m.FragmentShaderPath())
 	})
 }

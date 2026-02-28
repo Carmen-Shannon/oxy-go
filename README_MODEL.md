@@ -57,7 +57,7 @@ mdl := model.NewModel(
 )
 ```
 
-The constructor applies no defaults — all fields start at their zero values. Builder options set only the fields you provide.
+The constructor defaults `CastsShadows` to `true`. All other fields start at their zero values. Builder options set only the fields you provide.
 
 ---
 
@@ -79,10 +79,14 @@ All options follow the `ModelBuilderOption` functional option pattern.
 | `WithVertexData`         | `data []byte`                         | Sets the raw vertex byte buffer                                       |
 | `WithIndexData`          | `data []byte`                         | Sets the raw index byte buffer                                        |
 | `WithIndexCount`         | `count int`                           | Sets the number of indices in the mesh                                |
+| `WithCastsShadows`       | `casts bool`                          | Sets whether the model is rendered into the shadow depth map          |
+| `WithShadowCullMode`     | `mode ShadowCullMode`                 | Sets the face culling mode for the shadow pass                        |
 
 ---
 
 ## Model Interface
+
+The `Model` interface embeds `common.Delegate[Model]`, exposing `SetDelegate(delegate Model)`. In production code the delegate is set to the instance itself during construction. In test code the delegate can be replaced with a mock.
 
 ### Identity & Mesh Data
 
@@ -125,6 +129,15 @@ All options follow the `ModelBuilderOption` functional option pattern.
 | `SetEffectProvider(provider BindGroupProvider)` | Assigns an effect parameter bind group provider            |
 | `ComputePipelineKey() string`                   | Returns the compute pipeline key for the model's animator  |
 | `SetComputePipelineKey(key string)`             | Sets the compute pipeline key                              |
+
+### Shadow Settings
+
+| Method                                   | Description                                                      |
+| ---------------------------------------- | ---------------------------------------------------------------- |
+| `CastsShadows() bool`                    | Reports whether this model is rendered into the shadow depth map |
+| `SetCastsShadows(casts bool)`            | Enables or disables shadow casting                               |
+| `ShadowCullMode() ShadowCullMode`        | Returns the face culling mode for the shadow pass                |
+| `SetShadowCullMode(mode ShadowCullMode)` | Sets the shadow pass face culling mode                           |
 
 ---
 
@@ -194,6 +207,14 @@ Decomposed transform for animation interpolation.
 | `Value` | `[4]float32` | Quaternion at this keyframe (xyzw) |
 
 ### Import Types
+
+**ShadowCullMode** — Controls face culling during the shadow depth pass:
+
+| Constant              | Value | Description                |
+| --------------------- | ----- | -------------------------- |
+| `ShadowCullModeBack`  | `0`   | Culls back faces (default) |
+| `ShadowCullModeFront` | `1`   | Culls front faces          |
+| `ShadowCullModeNone`  | `2`   | No culling                 |
 
 **ImportedModel** — Universal format produced by importers (glTF, etc.):
 
@@ -265,8 +286,8 @@ Each GPU type has a corresponding `.wgsl` asset file embedded at compile time vi
 | Go Type            | WGSL Struct Name | Asset File                                | Annotation Key     |
 | ------------------ | ---------------- | ----------------------------------------- | ------------------ |
 | `GPUVertex`        | `VertexInput`    | `engine/model/assets/vertex.wgsl`         | `vertex`\*         |
-| `GPUSkinnedVertex` | `VertexInput`    | `engine/model/assets/skinned_vertex.wgsl` | `skinned_vertex`\* |
-| `GPUModelData`     | `ModelData`      | `engine/model/assets/model_data.wgsl`     | `model_data`       |
+| `GPUSkinnedVertex` | `VertexInput`    | `engine/model/assets/skinned-vertex.wgsl` | `skinned_vertex`\* |
+| `GPUModelData`     | `ModelData`      | `engine/model/assets/model-data.wgsl`     | `model_data`       |
 
 \* Unexported annotation keys — used internally by the shader pre-processor.
 
@@ -284,7 +305,7 @@ Each GPU type has a corresponding `.wgsl` asset file embedded at compile time vi
 
 ```go
 // Typical flow: the Loader produces a Model from a glTF file.
-mdl, err := ldr.Load("assets/models/fox.glb", fragmentShader)
+mdl, err := ldr.Load("assets/models/fox.glb")
 if err != nil {
     log.Fatal(err)
 }

@@ -62,10 +62,7 @@ The repository includes several runnable example scenes in the `examples` direct
 | `scene.go`          | Basic unlit scene with a rotating cube                          |
 | `scene_fox.go`      | Animated fox model with skeletal animation                      |
 | `scene_lit.go`      | Full forward+ lit scene with shadows and multiple lights        |
-| `many_cubes.go`     | Instanced rendering stress test (unlit)                         |
-| `many_foxes.go`     | Instanced skeletal animation stress test (unlit)                |
-| `many_cubes_lit.go` | Lit instanced cube stress test with shadows and orbiting sun    |
-| `many_foxes_lit.go` | Lit instanced skeletal animation stress test with full lighting |
+| `physics_scene.go`  | Physics simulation with rigid bodies and lighting               |
 
 Run any example with:
 

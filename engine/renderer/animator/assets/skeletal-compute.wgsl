@@ -19,75 +19,16 @@
 // InstanceData.bone_matrices array size so the output stride is consistent.
 const MAX_BONES: u32 = 64u;
 
-// ── Per-instance animation state (48 bytes) ────────────────────────
-// Must match Go's skeletalAnimationData struct exactly.
 //@oxy:include skeletal_animation_data
-// struct SkeletalAnimationData {
-//     animation_index: u32,
-//     animation_time: f32,
-//     blend_weight: f32,
-//     secondary_anim_index: u32,
-//     secondary_anim_time: f32,
-//     _pad: vec3<f32>,
-// }
-
-// ── Frustum plane ──────────────────────────────────────────────────
 //@oxy:include frustum_plane
-// struct FrustumPlane {
-//     normal: vec3<f32>,
-//     distance: f32,
-// }
-
-// ── Per-frame global uniform (128 bytes) ───────────────────────────
-// Must match Go's skeletalCullUniformData struct.
 //@oxy:include animation_globals
-// struct AnimationGlobals {
-//     instance_count: u32,
-//     bone_count: u32,
-//     bounding_radius: f32,
-//     channel_data_offset: u32,
-//     keyframe_data_offset: u32,
-//     _pad1: u32,
-//     _pad2: u32,
-//     _pad3: u32,
-//     planes: array<FrustumPlane, 6>,
-// }
-
-// ── Bone info (112 bytes) ──────────────────────────────────────────
-// Must match Go's bone struct.
 //@oxy:include bone_info
-// struct BoneInfo {
-//     inverse_bind_matrix: mat4x4<f32>,
-//     local_translation: vec3<f32>,
-//     parent_index: i32,
-//     local_scale: vec3<f32>,
-//     _pad_scale: f32,
-//     local_rotation: vec4<f32>,
-// }
-
-// ── Indirect draw arguments ────────────────────────────────────────
 //@oxy:include indirect_args
-// struct IndirectArgs {
-//     index_count: u32,
-//     instance_count: atomic<u32>,
-//     first_index: u32,
-//     base_vertex: u32,
-//     first_instance: u32,
-// }
-
-// ── Per-instance model matrix ──────────────────────────────────────
 //@oxy:include model_data
-// struct ModelData {
-//     model: mat4x4<f32>,
-// };
 
-// ── Bind group 0 ───────────────────────────────────────────────────
 //@oxy:group 0 0 storage_uniform globals animation_globals
-// @group(0) @binding(0) var<uniform> globals: AnimationGlobals;
 //@oxy:group 0 1 storage_read_write instance_data array<skeletal_animation_data>
-// @group(0) @binding(1) var<storage, read_write> instance_data: array<SkeletalAnimationData>;
 //@oxy:group 0 2 storage_read bone_data array<bone_info>
-// @group(0) @binding(2) var<storage, read> bone_data: array<BoneInfo>;
 //@oxy:provider 0 3 animator_packed
 @group(0) @binding(3) var<storage, read> anim_packed: array<u32>;
 //@oxy:provider 0 4 animator_output
@@ -95,16 +36,7 @@ const MAX_BONES: u32 = 64u;
 //@oxy:provider 0 5 animator_scratch
 @group(0) @binding(5) var<storage, read_write> scratch_matrices: array<mat4x4<f32>>;
 //@oxy:group 0 6 storage_read model_data array<model_data>
-// @group(0) @binding(6) var<storage, read> model_data: array<mat4x4<f32>>;
 //@oxy:group 0 7 storage_read_write indirect_args indirect_args
-// @group(0) @binding(7) var<storage, read_write> indirect_args: IndirectArgs;
-
-// ════════════════════════════════════════════════════════════════════
-// Packed Buffer Accessors
-// ════════════════════════════════════════════════════════════════════
-// Clips, channels, and keyframes are packed into a single flat u32 array
-// to stay within the 8 storage-buffer-per-stage limit. Offsets from
-// AnimationGlobals locate each section.
 
 fn get_clip_duration(clip_idx: u32) -> f32 {
     return bitcast<f32>(anim_packed[clip_idx * 4u + 0u]);
@@ -188,10 +120,6 @@ fn get_keyframe_scale(kf_idx: u32) -> vec3<f32> {
     );
 }
 
-// ════════════════════════════════════════════════════════════════════
-// Quaternion Math
-// ════════════════════════════════════════════════════════════════════
-
 fn quat_mul(a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(
         a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
@@ -242,10 +170,6 @@ fn build_trs(translation: vec3<f32>, rotation: vec4<f32>, scale: vec3<f32>) -> m
     result[3] = vec4<f32>(translation, 1.0);
     return result;
 }
-
-// ════════════════════════════════════════════════════════════════════
-// Keyframe Sampling
-// ════════════════════════════════════════════════════════════════════
 
 fn sample_vec3_keyframes(time: f32, offset: u32, count: u32, is_scale: bool) -> vec3<f32> {
     if count == 0u {
@@ -308,10 +232,6 @@ fn sample_quat_keyframes(time: f32, offset: u32, count: u32) -> vec4<f32> {
     return slerp(get_keyframe_rotation(key0_idx), get_keyframe_rotation(key1_idx), t);
 }
 
-// ════════════════════════════════════════════════════════════════════
-// Bone Transform Sampling
-// ════════════════════════════════════════════════════════════════════
-
 fn sample_bone_transform(clip_idx: u32, bone_idx: u32, time: f32) -> mat4x4<f32> {
     let clip_duration = get_clip_duration(clip_idx);
     let clip_channel_offset = get_clip_channel_offset(clip_idx);
@@ -355,10 +275,6 @@ fn sample_bone_transform(clip_idx: u32, bone_idx: u32, time: f32) -> mat4x4<f32>
     return build_trs(local_translation, local_rotation, local_scale);
 }
 
-// ════════════════════════════════════════════════════════════════════
-// Bone Matrix Computation
-// ════════════════════════════════════════════════════════════════════
-
 fn scratch_index(instance_idx: u32, slot: u32, bone_idx: u32) -> u32 {
     return instance_idx * (globals.bone_count * 2u) + slot * globals.bone_count + bone_idx;
 }
@@ -399,10 +315,6 @@ fn blend_matrices(mat_a: mat4x4<f32>, mat_b: mat4x4<f32>, weight: f32) -> mat4x4
     );
 }
 
-// ════════════════════════════════════════════════════════════════════
-// Frustum Test
-// ════════════════════════════════════════════════════════════════════
-
 fn is_visible(pos: vec3<f32>, radius: f32) -> bool {
     for (var i = 0u; i < 6u; i = i + 1u) {
         let plane = globals.planes[i];
@@ -413,10 +325,6 @@ fn is_visible(pos: vec3<f32>, radius: f32) -> bool {
     }
     return true;
 }
-
-// ════════════════════════════════════════════════════════════════════
-// Output Writer
-// ════════════════════════════════════════════════════════════════════
 
 // Writes a mat4x4 column-major into the flat output buffer at the given float offset.
 fn write_mat4(base: u32, m: mat4x4<f32>) {
@@ -429,10 +337,6 @@ fn write_mat4(base: u32, m: mat4x4<f32>) {
     output_transforms[base + 12u] = m[3].x; output_transforms[base + 13u] = m[3].y;
     output_transforms[base + 14u] = m[3].z; output_transforms[base + 15u] = m[3].w;
 }
-
-// ════════════════════════════════════════════════════════════════════
-// Entry Point
-// ════════════════════════════════════════════════════════════════════
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
@@ -456,8 +360,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let model_matrix = model_data[instance_idx].model;
     let world_pos = model_matrix[3].xyz;
 
-    // Frustum culling test using the instance's world position
-    if (!is_visible(world_pos, globals.bounding_radius)) {
+    // Frustum cull — derive per-instance scale from model matrix column
+    // lengths so that scaled instances are not incorrectly culled.
+    let sx = length(model_matrix[0].xyz);
+    let sy = length(model_matrix[1].xyz);
+    let sz = length(model_matrix[2].xyz);
+    let max_scale = max(sx, max(sy, sz));
+    if (!is_visible(world_pos, globals.bounding_radius * max_scale)) {
         return;
     }
 

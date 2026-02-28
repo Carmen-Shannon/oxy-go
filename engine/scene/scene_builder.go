@@ -2,6 +2,8 @@ package scene
 
 import (
 	"github.com/Carmen-Shannon/oxy-go/engine/game_object"
+	"github.com/Carmen-Shannon/oxy-go/engine/light"
+	"github.com/Carmen-Shannon/oxy-go/engine/physics"
 )
 
 // SceneBuilderOption is a functional option for configuring a Scene.
@@ -79,79 +81,54 @@ func WithCullingDisabled(disabled bool) SceneBuilderOption {
 	}
 }
 
-// WithShadowHalfExtent sets the orthographic half-extent of the directional shadow
-// frustum in world units. Larger values capture more of the scene but reduce shadow
-// resolution. Default is light.DefaultShadowHalfExtent (40.0).
+// WithLighting attaches a pre-configured LightingHandler to the scene, replacing
+// the default handler created by NewScene. Use light.NewLightingHandler with
+// light.WithShadow* options to configure shadow mapping and ambient color before
+// passing the handler here. GPU resources are initialized lazily when the first
+// light is added via AddLight.
 //
 // Parameters:
-//   - halfExtent: half-size of the shadow frustum in world units
+//   - handler: the pre-configured LightingHandler
 //
 // Returns:
 //   - SceneBuilderOption: option function to apply
-func WithShadowHalfExtent(halfExtent float32) SceneBuilderOption {
+func WithLighting(handler light.LightingHandler) SceneBuilderOption {
 	return func(s *scene) {
-		s.shadowHalfExtent = halfExtent
+		s.lightHandler = handler
 	}
 }
 
-// WithShadowNearFar sets the near and far planes for the directional shadow projection.
-// Default is light.DefaultShadowNear (0.1) and light.DefaultShadowFar (200.0).
+// WithPhysics creates a Physics instance with the given options and attaches it
+// to the scene. GPU resources are initialized lazily when the first rigid body
+// object is added via Add. If not called, objects with RigidBodies will be
+// rendered without physics simulation — no forces, collisions, or integration
+// will be applied.
 //
 // Parameters:
-//   - near: near plane distance
-//   - far: far plane distance
+//   - opts: variadic physics builder options to configure the physics simulation
 //
 // Returns:
 //   - SceneBuilderOption: option function to apply
-func WithShadowNearFar(near, far float32) SceneBuilderOption {
+func WithPhysics(opts ...physics.PhysicsBuilderOption) SceneBuilderOption {
 	return func(s *scene) {
-		s.shadowNear = near
-		s.shadowFar = far
+		s.physicsHandler = physics.NewPhysics(opts...)
 	}
 }
 
-// WithShadowBias sets the depth comparison bias used during shadow sampling to
-// reduce shadow acne. Default is light.DefaultShadowBias (0.001).
+// WithScreenSize sets the initial screen dimensions on the scene. These dimensions
+// are used for Forward+ tile culling calculations and are automatically updated
+// when Resize is called. If not set, AddLight will use zero dimensions until the
+// first Resize call.
 //
 // Parameters:
-//   - bias: the depth bias value
+//   - width: screen width in pixels
+//   - height: screen height in pixels
 //
 // Returns:
 //   - SceneBuilderOption: option function to apply
-func WithShadowBias(bias float32) SceneBuilderOption {
+func WithScreenSize(width, height int) SceneBuilderOption {
 	return func(s *scene) {
-		s.shadowBias = bias
-	}
-}
-
-// WithShadowNormalBiasScale sets the multiplier applied to the shadow-map
-// texel world-size to derive the normal-offset bias. The normal offset
-// shifts the shadow lookup position along the surface normal, preventing
-// self-shadowing on concave geometry. Default is light.DefaultShadowNormalBiasScale (3.0).
-//
-// Parameters:
-//   - scale: multiplier on per-texel world size (typically 2.0–4.0)
-//
-// Returns:
-//   - SceneBuilderOption: option function to apply
-func WithShadowNormalBiasScale(scale float32) SceneBuilderOption {
-	return func(s *scene) {
-		s.shadowNormalBiasScale = scale
-	}
-}
-
-// WithShadowMapResolution sets the width and height in texels of the shadow
-// depth texture. Higher values produce sharper shadows at the cost of more
-// GPU memory and fill-rate. Must be set before InitShadowMap / InitLighting
-// is called, as the texture is allocated once. Default is light.ShadowMapResolution (2048).
-//
-// Parameters:
-//   - resolution: shadow map width and height in texels (e.g. 1024, 2048, 4096)
-//
-// Returns:
-//   - SceneBuilderOption: option function to apply
-func WithShadowMapResolution(resolution int) SceneBuilderOption {
-	return func(s *scene) {
-		s.shadowMapResolution = resolution
+		s.screenWidth = width
+		s.screenHeight = height
 	}
 }

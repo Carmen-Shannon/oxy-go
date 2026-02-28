@@ -151,6 +151,46 @@ type wgpuRendererBackend interface {
 	//   - error: an error if the sampler could not be created or initialized, otherwise nil
 	InitSampler(provider bind_group_provider.BindGroupProvider, bindingKey int, samplerStagingData common.SamplerStagingData) error
 
+	// CreateBuffer creates a GPU buffer with the specified label, size, and usage flags.
+	// This is a low-level operation for creating buffers outside of BindGroupProviders,
+	// such as staging buffers for GPU→CPU readback.
+	//
+	// Parameters:
+	//   - label: a debug label for the buffer
+	//   - size: the buffer size in bytes
+	//   - usage: the buffer usage flags (e.g. MapRead | CopyDst for staging)
+	//
+	// Returns:
+	//   - *wgpu.Buffer: the created GPU buffer
+	//   - error: an error if buffer creation fails
+	CreateBuffer(label string, size uint64, usage wgpu.BufferUsage) (*wgpu.Buffer, error)
+
+	// CopyBufferToBuffer encodes a buffer-to-buffer copy on the current compute frame encoder.
+	// Must be called between BeginComputeFrame and EndComputeFrame, outside of any compute pass.
+	//
+	// Parameters:
+	//   - src: the source buffer to copy from
+	//   - dst: the destination buffer to copy to
+	//   - srcOffset: byte offset in the source buffer
+	//   - dstOffset: byte offset in the destination buffer
+	//   - size: the number of bytes to copy
+	CopyBufferToBuffer(src, dst *wgpu.Buffer, srcOffset, dstOffset, size uint64)
+
+	// ReadMappedBuffer synchronously maps a buffer for reading, copies the data into a new
+	// byte slice, and unmaps the buffer. Blocks via Device.Poll until the mapping completes.
+	// The buffer must have been created with BufferUsageMapRead and the GPU work that wrote
+	// to it must have been submitted before this call.
+	//
+	// Parameters:
+	//   - buf: the buffer to map and read (must have MapRead usage)
+	//   - offset: byte offset to start reading from
+	//   - size: number of bytes to read
+	//
+	// Returns:
+	//   - []byte: a copy of the mapped buffer data
+	//   - error: an error if mapping fails
+	ReadMappedBuffer(buf *wgpu.Buffer, offset, size uint64) ([]byte, error)
+
 	// WriteBuffers writes all staged buffer writes to the GPU queue.
 	// Each BufferWrite targets a specific buffer on a BindGroupProvider at a given binding and offset.
 	//
@@ -422,6 +462,52 @@ func (b *wgpuRendererBackendImpl) SetPresentMode(mode PresentMode) {
 	}
 }
 
+func (b *wgpuRendererBackendImpl) CreateBuffer(label string, size uint64, usage wgpu.BufferUsage) (*wgpu.Buffer, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.device.CreateBuffer(&wgpu.BufferDescriptor{
+		Label: label,
+		Size:  size,
+		Usage: usage,
+	})
+}
+
+func (b *wgpuRendererBackendImpl) CopyBufferToBuffer(src, dst *wgpu.Buffer, srcOffset, dstOffset, size uint64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.computeFrameEncoder == nil {
+		return
+	}
+	_ = b.computeFrameEncoder.CopyBufferToBuffer(src, srcOffset, dst, dstOffset, size)
+}
+
+func (b *wgpuRendererBackendImpl) ReadMappedBuffer(buf *wgpu.Buffer, offset, size uint64) ([]byte, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	done := make(chan wgpu.BufferMapAsyncStatus, 1)
+	if err := buf.MapAsync(wgpu.MapModeRead, offset, size, func(status wgpu.BufferMapAsyncStatus) {
+		done <- status
+	}); err != nil {
+		return nil, err
+	}
+
+	// Block until the mapping completes.
+	b.device.Poll(true, nil)
+	status := <-done
+	if status != wgpu.BufferMapAsyncStatusSuccess {
+		return nil, fmt.Errorf("buffer map failed with status %d", status)
+	}
+
+	mapped := buf.GetMappedRange(uint(offset), uint(size))
+	result := make([]byte, len(mapped))
+	copy(result, mapped)
+	_ = buf.Unmap()
+	return result, nil
+}
+
 func (b *wgpuRendererBackendImpl) BeginComputeFrame() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -567,9 +653,12 @@ func (b *wgpuRendererBackendImpl) RegisterRenderPipeline(p pipeline.Pipeline) er
 			Mask:  0xFFFFFFFF,
 		},
 		DepthStencil: func() *wgpu.DepthStencilState {
-			depthCompare := wgpu.CompareFunctionLess
-			if !p.DepthTestEnabled() {
-				depthCompare = wgpu.CompareFunctionAlways
+			depthCompare := p.DepthCompare()
+			if depthCompare == wgpu.CompareFunctionUndefined {
+				depthCompare = wgpu.CompareFunctionLess
+				if !p.DepthTestEnabled() {
+					depthCompare = wgpu.CompareFunctionAlways
+				}
 			}
 			return &wgpu.DepthStencilState{
 				Format:              wgpu.TextureFormatDepth24Plus,
@@ -790,6 +879,11 @@ func (b *wgpuRendererBackendImpl) InitTextureView(provider bind_group_provider.B
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	format := wgpu.TextureFormatRGBA8UnormSrgb
+	if stagingData.Linear {
+		format = wgpu.TextureFormatRGBA8Unorm
+	}
+
 	tex, err := b.device.CreateTexture(&wgpu.TextureDescriptor{
 		Label:     provider.Label() + " Texture",
 		Usage:     wgpu.TextureUsageTextureBinding | wgpu.TextureUsageCopyDst,
@@ -799,7 +893,7 @@ func (b *wgpuRendererBackendImpl) InitTextureView(provider bind_group_provider.B
 			Height:             stagingData.Height,
 			DepthOrArrayLayers: 1,
 		},
-		Format:        wgpu.TextureFormatRGBA8UnormSrgb,
+		Format:        format,
 		MipLevelCount: 1,
 		SampleCount:   1,
 	})

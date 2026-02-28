@@ -9,8 +9,10 @@ The `engine/renderer` package provides the high-level rendering API for the oxy-
 ## Architecture
 
 ```
-Renderer (public interface)
- └─ renderer (unexported struct)
+Renderer (public interface, embeds common.Delegate[Renderer])
+ └─ renderer (unexported struct, embeds common.DelegateImpl[Renderer])
+      ├─ pipelineCache (map[string]pipeline.Pipeline)
+      ├─ materialCache (map[string]material.Material)
       └─ RendererBackend (interface)
            └─ wgpuRendererBackendImpl (WGPU backend)
 ```
@@ -66,18 +68,22 @@ The `NewRenderer` constructor accepts variadic `RendererBuilderOption` functions
 ```go
 func NewRenderer(
     backendType RendererBackendType,
-    windowHwnd, windowHinstance unsafe.Pointer,
+    window window.Window,
     options ...RendererBuilderOption,
 ) Renderer
 ```
 
-Creates a new `Renderer` with the specified backend type and native window handles. Builder options are applied before backend initialization.
+Creates a new `Renderer` with the specified backend type and window. The window provides the surface descriptor for WebGPU surface creation. Builder options are applied before backend initialization. The delegation target is set to itself (`r.Delegate = r`).
 
 ---
 
 ## Renderer Interface
 
 The `Renderer` interface groups its methods into the following categories.
+
+### Delegation
+
+The `Renderer` interface embeds `common.Delegate[Renderer]`, exposing `SetDelegate(delegate Renderer)`. In production code the delegate is set to the instance itself during construction. In test code the delegate can be replaced with a mock.
 
 ### Pipeline Management
 
@@ -98,11 +104,21 @@ The `Renderer` interface groups its methods into the following categories.
 | `InitTextureView(provider, bindingKey, stagingData) error`                             | Uploads texture pixel data and creates a texture view.                 |
 | `InitSampler(provider, bindingKey, samplerStagingData) error`                          | Creates a GPU sampler with the given parameters.                       |
 
-### Buffer Writes
+### Buffer Operations
 
-| Method                               | Description                                                          |
-| ------------------------------------ | -------------------------------------------------------------------- |
-| `WriteBuffers(writes []BufferWrite)` | Batch-writes data to GPU buffers identified by provider and binding. |
+| Method                                                     | Description                                                             |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `WriteBuffers(writes []bind_group_provider.BufferWrite)`   | Batch-writes data to GPU buffers identified by provider and binding.    |
+| `CreateBuffer(label, size, usage) (*wgpu.Buffer, error)`   | Creates a GPU buffer with the specified label, size, and usage flags.   |
+| `CopyBufferToBuffer(src, dst, srcOffset, dstOffset, size)` | Encodes a buffer-to-buffer copy on the current compute frame encoder.   |
+| `ReadMappedBuffer(buf, offset, size) ([]byte, error)`      | Synchronously maps a buffer for reading and returns a copy of the data. |
+
+### Material Management
+
+| Method                                                                                                      | Description                                                                          |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `RegisterMaterial(mat material.Material, key string, pipelineOpts ...pipeline.PipelineBuilderOption) error` | Creates GPU resources for a material and optionally registers a new render pipeline. |
+| `Material(name string) material.Material`                                                                   | Returns a cached material by name, or `nil` if not found.                            |
 
 ### Compute Frame
 

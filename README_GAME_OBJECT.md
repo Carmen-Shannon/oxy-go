@@ -58,6 +58,9 @@ Defaults applied before options:
 | Rotation       | `(0, 0, 0)` |
 | Rotation speed | `(0, 0, 0)` |
 | Light          | `nil`       |
+| RigidBody      | `nil`       |
+
+The `GameObject` interface embeds `common.Delegate[GameObject]`, exposing `SetDelegate(delegate GameObject)`. In production code the delegate is set to the instance itself during construction. In test code the delegate can be replaced with a mock.
 
 ---
 
@@ -76,6 +79,7 @@ All options follow the `GameObjectBuilderOption` functional option pattern.
 | `WithRotation`      | `rx, ry, rz float32` | Sets the initial rotation (applied when added to a scene)         |
 | `WithRotationSpeed` | `rx, ry, rz float32` | Sets the initial rotation speed (applied when added to a scene)   |
 | `WithLight`         | `l light.Light`      | Attaches a light whose position syncs from the object's transform |
+| `WithRigidBody`     | `rb physics.RigidBody` | Attaches a rigid body for physics simulation                     |
 
 ---
 
@@ -126,6 +130,13 @@ All transform setters write through to the Animator, preserving sibling values (
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `Light() light.Light`     | Returns the attached Light, or `nil`                                                                                   |
 | `SetLight(l light.Light)` | Attaches a Light (pass `nil` to detach). The scene syncs the light's position from this object's transform each frame. |
+
+### Physics
+
+| Method                                     | Description                                                 |
+| ------------------------------------------ | ----------------------------------------------------------- |
+| `RigidBody() physics.RigidBody`            | Returns the attached RigidBody, or `nil`                    |
+| `SetRigidBody(rb physics.RigidBody)`       | Attaches a RigidBody for physics simulation (pass `nil` to detach) |
 
 ---
 

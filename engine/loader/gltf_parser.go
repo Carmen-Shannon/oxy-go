@@ -42,17 +42,6 @@ type gltfParser interface {
 	//   - error: error if parsing fails
 	Parse(path string) error
 
-	// ParseReader parses a glTF document from a reader.
-	// Use this when loading from embedded resources or network streams.
-	//
-	// Parameters:
-	//   - r: reader containing glTF JSON or GLB data
-	//   - isGLB: true if the data is in GLB format
-	//
-	// Returns:
-	//   - error: error if parsing fails
-	ParseReader(r io.Reader, isGLB bool) error
-
 	// Document returns the parsed glTF document.
 	// Returns nil if Parse has not been called successfully.
 	//
@@ -181,18 +170,6 @@ func (p *gltfParserImpl) Parse(path string) error {
 		return p.parseGLB(data)
 	}
 
-	return p.parseGLTF(data)
-}
-
-func (p *gltfParserImpl) ParseReader(r io.Reader, isGLB bool) error {
-	data, err := io.ReadAll(r)
-	if err != nil {
-		return fmt.Errorf("failed to read data: %w", err)
-	}
-
-	if isGLB {
-		return p.parseGLB(data)
-	}
 	return p.parseGLTF(data)
 }
 

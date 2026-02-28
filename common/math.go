@@ -228,3 +228,38 @@ func LookAt(out []float32, eyeX, eyeY, eyeZ, centerX, centerY, centerZ, upX, upY
 	out[2], out[6], out[10], out[14] = z0, z1, z2, -(z0*eyeX + z1*eyeY + z2*eyeZ)
 	out[3], out[7], out[11], out[15] = 0, 0, 0, 1
 }
+
+// Invert3x3 computes the inverse of a 3x3 matrix stored as a [9]float32 in
+// row-major order. Returns the inverted matrix and true if the matrix is
+// invertible, or a zero matrix and false if the determinant is near zero.
+//
+// Parameters:
+//   - m: the 3x3 matrix to invert, in row-major order [row0col0, row0col1, row0col2, row1col0, ...]
+//
+// Returns:
+//   - [9]float32: the inverted matrix, or zero if not invertible
+//   - bool: true if the matrix was successfully inverted
+func Invert3x3(m [9]float32) ([9]float32, bool) {
+	// Cofactor matrix (transposed for adjugate)
+	c0 := m[4]*m[8] - m[5]*m[7]
+	c1 := m[5]*m[6] - m[3]*m[8]
+	c2 := m[3]*m[7] - m[4]*m[6]
+
+	det := m[0]*c0 + m[1]*c1 + m[2]*c2
+	if det > -1e-12 && det < 1e-12 {
+		return [9]float32{}, false
+	}
+
+	invDet := 1.0 / det
+	return [9]float32{
+		c0 * invDet,
+		(m[2]*m[7] - m[1]*m[8]) * invDet,
+		(m[1]*m[5] - m[2]*m[4]) * invDet,
+		c1 * invDet,
+		(m[0]*m[8] - m[2]*m[6]) * invDet,
+		(m[2]*m[3] - m[0]*m[5]) * invDet,
+		c2 * invDet,
+		(m[1]*m[6] - m[0]*m[7]) * invDet,
+		(m[0]*m[4] - m[1]*m[3]) * invDet,
+	}, true
+}

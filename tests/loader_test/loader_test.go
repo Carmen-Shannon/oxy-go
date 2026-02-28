@@ -5,19 +5,15 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/Carmen-Shannon/oxy-go/engine/loader"
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
-	materialmocks "github.com/Carmen-Shannon/oxy-go/tests/mocks/material"
 	modelmocks "github.com/Carmen-Shannon/oxy-go/tests/mocks/model"
-	renderermocks "github.com/Carmen-Shannon/oxy-go/tests/mocks/renderer"
-	shadermocks "github.com/Carmen-Shannon/oxy-go/tests/mocks/shader"
-	"github.com/cogentcore/webgpu/wgpu"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -48,14 +44,6 @@ func (suite *loaderTest) TestNewLoader() {
 }
 
 func (suite *loaderTest) TestNewLoaderWithOptions() {
-	suite.Run("WithRenderer sets the renderer", func() {
-		r := &renderermocks.MockRenderer{}
-		l := loader.NewLoader(loader.BackendTypeGLTF, loader.WithRenderer(r))
-		// Verify renderer is set by calling InitMaterialGPU which checks for nil renderer
-		// A nil renderer would return an error; a non-nil one will proceed further
-		suite.NotNil(l)
-	})
-
 	suite.Run("WithModel pre-populates cache", func() {
 		m := &modelmocks.MockModel{}
 		l := loader.NewLoader(loader.BackendTypeGLTF, loader.WithModel("test_model", m))
@@ -128,21 +116,21 @@ func (suite *loaderTest) TestModels() {
 func (suite *loaderTest) TestLoadUnsupportedFormat() {
 	suite.Run("returns error for .obj extension", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		_, err := l.Load("model.obj", nil)
+		_, err := l.Load("model.obj")
 		suite.Error(err)
 		suite.Contains(err.Error(), "unsupported model format")
 	})
 
 	suite.Run("returns error for .fbx extension", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		_, err := l.Load("model.fbx", nil)
+		_, err := l.Load("model.fbx")
 		suite.Error(err)
 		suite.Contains(err.Error(), "unsupported model format")
 	})
 
 	suite.Run("returns error for no extension", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		_, err := l.Load("modelfile", nil)
+		_, err := l.Load("modelfile")
 		suite.Error(err)
 		suite.Contains(err.Error(), "unsupported model format")
 	})
@@ -151,13 +139,13 @@ func (suite *loaderTest) TestLoadUnsupportedFormat() {
 func (suite *loaderTest) TestLoadNonexistentFile() {
 	suite.Run("returns error for missing gltf file", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		_, err := l.Load("/nonexistent/path/model.gltf", nil)
+		_, err := l.Load("/nonexistent/path/model.gltf")
 		suite.Error(err)
 	})
 
 	suite.Run("returns error for missing glb file", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		_, err := l.Load("/nonexistent/path/model.glb", nil)
+		_, err := l.Load("/nonexistent/path/model.glb")
 		suite.Error(err)
 	})
 }
@@ -167,164 +155,9 @@ func (suite *loaderTest) TestLoadCacheHit() {
 		m := &modelmocks.MockModel{}
 		l := loader.NewLoader(loader.BackendTypeGLTF, loader.WithModel("scene.glb", m))
 
-		result, err := l.Load("scene.glb", nil)
+		result, err := l.Load("scene.glb")
 		suite.NoError(err)
 		suite.Equal(m, result)
-	})
-}
-
-func (suite *loaderTest) TestLoadMeshOnlyUnsupportedFormat() {
-	suite.Run("returns error for unsupported extension", func() {
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		_, err := l.LoadMeshOnly("model.obj", nil)
-		suite.Error(err)
-		suite.Contains(err.Error(), "unsupported model format")
-	})
-}
-
-func (suite *loaderTest) TestLoadMeshOnlyCacheHit() {
-	suite.Run("returns cached model on second call", func() {
-		m := &modelmocks.MockModel{}
-		l := loader.NewLoader(loader.BackendTypeGLTF, loader.WithModel("static.glb", m))
-
-		result, err := l.LoadMeshOnly("static.glb", nil)
-		suite.NoError(err)
-		suite.Equal(m, result)
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderCacheHit() {
-	suite.Run("returns cached model by name", func() {
-		m := &modelmocks.MockModel{}
-		l := loader.NewLoader(loader.BackendTypeGLTF, loader.WithModel("stream_model", m))
-
-		result, err := l.LoadReader("stream_model", bytes.NewReader(nil), true, nil)
-		suite.NoError(err)
-		suite.Equal(m, result)
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderInvalidData() {
-	suite.Run("returns error for empty reader", func() {
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		_, err := l.LoadReader("bad", bytes.NewReader(nil), true, nil)
-		suite.Error(err)
-	})
-
-	suite.Run("returns error for garbage bytes as GLB", func() {
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		_, err := l.LoadReader("garbage", bytes.NewReader([]byte("not a glb")), true, nil)
-		suite.Error(err)
-	})
-
-	suite.Run("returns error for invalid JSON as gltf", func() {
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		_, err := l.LoadReader("bad_json", bytes.NewReader([]byte("{invalid json")), false, nil)
-		suite.Error(err)
-	})
-
-	suite.Run("returns error for valid JSON but wrong gltf version", func() {
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		json := []byte(`{"asset":{"version":"1.0"}}`)
-		_, err := l.LoadReader("v1", bytes.NewReader(json), false, nil)
-		suite.Error(err)
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderMinimalGLB() {
-	suite.Run("loads minimal GLB with no meshes", func() {
-		glb := buildMinimalGLB(`{"asset":{"version":"2.0"}}`)
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-
-		result, err := l.LoadReader("minimal", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.NotNil(result)
-	})
-
-	suite.Run("model is cached after load", func() {
-		glb := buildMinimalGLB(`{"asset":{"version":"2.0"}}`)
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-
-		_, err := l.LoadReader("cached_glb", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-
-		cached := l.Get("cached_glb")
-		suite.NotNil(cached)
-	})
-
-	suite.Run("cached model has expected name", func() {
-		glb := buildMinimalGLB(`{"asset":{"version":"2.0"}}`)
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-
-		m, err := l.LoadReader("named_model", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		// With no scene name and empty fallback, the importer produces "unnamed_model"
-		suite.Equal("unnamed_model", m.Name())
-	})
-
-	suite.Run("cached model has no skeleton", func() {
-		glb := buildMinimalGLB(`{"asset":{"version":"2.0"}}`)
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-
-		m, err := l.LoadReader("no_skel", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.Nil(m.Skeleton())
-		suite.False(m.Skinned())
-	})
-
-	suite.Run("cached model has no animations", func() {
-		glb := buildMinimalGLB(`{"asset":{"version":"2.0"}}`)
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-
-		m, err := l.LoadReader("no_anim", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.Equal(0, m.AnimationCount())
-	})
-
-	suite.Run("cached model has no materials", func() {
-		glb := buildMinimalGLB(`{"asset":{"version":"2.0"}}`)
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-
-		m, err := l.LoadReader("no_mat", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.Empty(m.ImportedMaterials())
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderMinimalGLTFJSON() {
-	suite.Run("loads minimal gltf JSON via reader", func() {
-		json := []byte(`{"asset":{"version":"2.0"}}`)
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-
-		m, err := l.LoadReader("json_model", bytes.NewReader(json), false, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-		suite.Equal("unnamed_model", m.Name())
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderWithSceneName() {
-	suite.Run("uses scene name when available", func() {
-		json := []byte(`{"asset":{"version":"2.0"},"scene":0,"scenes":[{"name":"MyScene"}]}`)
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-
-		m, err := l.LoadReader("scene_named", bytes.NewReader(json), false, nil)
-		suite.NoError(err)
-		suite.Equal("MyScene", m.Name())
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderWithRenderer() {
-	suite.Run("calls InitMeshBuffers when renderer is set", func() {
-		r := &renderermocks.MockRenderer{}
-		r.EXPECT().InitMeshBuffers(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
-
-		json := []byte(`{"asset":{"version":"2.0"}}`)
-		l := loader.NewLoader(loader.BackendTypeGLTF, loader.WithRenderer(r))
-
-		m, err := l.LoadReader("with_renderer", bytes.NewReader(json), false, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
 	})
 }
 
@@ -336,7 +169,7 @@ func (suite *loaderTest) TestLoadWithTempGLBFile() {
 		suite.Require().NoError(os.WriteFile(path, glb, 0644))
 
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(path, nil)
+		m, err := l.Load(path)
 		suite.NoError(err)
 		suite.NotNil(m)
 	})
@@ -348,10 +181,10 @@ func (suite *loaderTest) TestLoadWithTempGLBFile() {
 		suite.Require().NoError(os.WriteFile(path, glb, 0644))
 
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m1, err := l.Load(path, nil)
+		m1, err := l.Load(path)
 		suite.NoError(err)
 
-		m2, err := l.Load(path, nil)
+		m2, err := l.Load(path)
 		suite.NoError(err)
 		suite.Equal(m1, m2)
 	})
@@ -362,66 +195,9 @@ func (suite *loaderTest) TestLoadWithTempGLBFile() {
 		suite.Require().NoError(os.WriteFile(path, []byte(`{"asset":{"version":"2.0"}}`), 0644))
 
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(path, nil)
+		m, err := l.Load(path)
 		suite.NoError(err)
 		suite.NotNil(m)
-	})
-}
-
-func (suite *loaderTest) TestLoadMeshOnlyWithTempFile() {
-	suite.Run("loads a real GLB file via LoadMeshOnly", func() {
-		glb := buildMinimalGLB(`{"asset":{"version":"2.0"}}`)
-		dir := suite.T().TempDir()
-		path := filepath.Join(dir, "static.glb")
-		suite.Require().NoError(os.WriteFile(path, glb, 0644))
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadMeshOnly(path, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-		suite.Nil(m.Skeleton())
-		suite.False(m.Skinned())
-	})
-
-	suite.Run("caches model by file path", func() {
-		glb := buildMinimalGLB(`{"asset":{"version":"2.0"}}`)
-		dir := suite.T().TempDir()
-		path := filepath.Join(dir, "mesh_cached.glb")
-		suite.Require().NoError(os.WriteFile(path, glb, 0644))
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m1, err := l.LoadMeshOnly(path, nil)
-		suite.NoError(err)
-
-		m2, err := l.LoadMeshOnly(path, nil)
-		suite.NoError(err)
-		suite.Equal(m1, m2)
-	})
-}
-
-func (suite *loaderTest) TestInitMaterialGPUWithoutRenderer() {
-	suite.Run("returns error when renderer is nil", func() {
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		err := l.InitMaterialGPU(nil, nil, "test_provider")
-		suite.Error(err)
-		suite.Contains(err.Error(), "cannot InitMaterialGPU without a Renderer")
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderRendererInitMeshBuffersError() {
-	suite.Run("propagates InitMeshBuffers error", func() {
-		r := &renderermocks.MockRenderer{}
-		r.EXPECT().InitMeshBuffers(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-			Return(fmt.Errorf("gpu buffer creation failed")).Maybe()
-
-		// A minimal glTF with one triangle mesh to trigger InitMeshBuffers
-		json := buildMinimalTriangleGLTF()
-		glb := buildGLBWithBin(json, buildMinimalTriangleBin())
-
-		l := loader.NewLoader(loader.BackendTypeGLTF, loader.WithRenderer(r))
-		_, err := l.LoadReader("mesh_err", bytes.NewReader(glb), true, nil)
-		suite.Error(err)
-		suite.Contains(err.Error(), "failed to init mesh bind group")
 	})
 }
 
@@ -433,7 +209,7 @@ func (suite *loaderTest) TestLoadModelNameFromPath() {
 		suite.Require().NoError(os.WriteFile(path, glb, 0644))
 
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(path, nil)
+		m, err := l.Load(path)
 		suite.NoError(err)
 		// The importer uses the file path as fallback name
 		suite.Equal(path, m.Name())
@@ -448,7 +224,7 @@ func (suite *loaderTest) TestLoadReaderCaseInsensitiveExtension() {
 		suite.Require().NoError(os.WriteFile(path, glb, 0644))
 
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(path, nil)
+		m, err := l.Load(path)
 		suite.NoError(err)
 		suite.NotNil(m)
 	})
@@ -459,262 +235,9 @@ func (suite *loaderTest) TestLoadReaderCaseInsensitiveExtension() {
 		suite.Require().NoError(os.WriteFile(path, []byte(`{"asset":{"version":"2.0"}}`), 0644))
 
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(path, nil)
+		m, err := l.Load(path)
 		suite.NoError(err)
 		suite.NotNil(m)
-	})
-}
-
-func (suite *loaderTest) TestLoadMeshOnlyNonexistentFile() {
-	suite.Run("returns error for missing file", func() {
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		_, err := l.LoadMeshOnly("/nonexistent/model.glb", nil)
-		suite.Error(err)
-	})
-}
-
-func (suite *loaderTest) TestModelsAfterLoad() {
-	suite.Run("Models includes loaded model after LoadReader", func() {
-		json := []byte(`{"asset":{"version":"2.0"}}`)
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-
-		_, err := l.LoadReader("loaded", bytes.NewReader(json), false, nil)
-		suite.NoError(err)
-
-		models := l.Models()
-		suite.Len(models, 1)
-		suite.NotNil(models["loaded"])
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderGLBWithSceneName() {
-	suite.Run("GLB with named scene uses scene name", func() {
-		json := `{"asset":{"version":"2.0"},"scene":0,"scenes":[{"name":"TestScene"}]}`
-		glb := buildMinimalGLB(json)
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-
-		m, err := l.LoadReader("test_scene_glb", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.Equal("TestScene", m.Name())
-	})
-}
-
-func (suite *loaderTest) TestInitMaterialGPUNoDeclarations() {
-	suite.Run("returns nil when shader has no material provider declarations", func() {
-		r := &renderermocks.MockRenderer{}
-		s := &shadermocks.MockShader{}
-		mat := &materialmocks.MockMaterial{}
-
-		// Shader returns empty declarations â€” no material provider found
-		s.EXPECT().Declarations().Return([]shader.Annotation{}).Maybe()
-
-		l := loader.NewLoader(loader.BackendTypeGLTF, loader.WithRenderer(r))
-		err := l.InitMaterialGPU(mat, s, "test_provider")
-		suite.NoError(err)
-	})
-
-	suite.Run("returns nil when shader has only non-material provider declarations", func() {
-		r := &renderermocks.MockRenderer{}
-		s := &shadermocks.MockShader{}
-		mat := &materialmocks.MockMaterial{}
-
-		group := 0
-		binding := 0
-		s.EXPECT().Declarations().Return([]shader.Annotation{
-			{
-				Type:    shader.AnnotationTypeProvider,
-				Args:    []shader.AnnotationArg{"animator_output"},
-				Group:   &group,
-				Binding: &binding,
-			},
-		}).Maybe()
-
-		l := loader.NewLoader(loader.BackendTypeGLTF, loader.WithRenderer(r))
-		err := l.InitMaterialGPU(mat, s, "test_provider")
-		suite.NoError(err)
-	})
-}
-
-func (suite *loaderTest) TestInitMaterialGPUWithFallbackTextures() {
-	suite.Run("creates fallback textures for unset material bindings", func() {
-		r := &renderermocks.MockRenderer{}
-		s := &shadermocks.MockShader{}
-		mat := &materialmocks.MockMaterial{}
-
-		group := 2
-		diffuseTexBinding := 0
-		diffuseSamplerBinding := 1
-		normalTexBinding := 2
-		normalSamplerBinding := 3
-
-		s.EXPECT().Declarations().Return([]shader.Annotation{
-			{
-				Type:    shader.AnnotationTypeProvider,
-				Args:    []shader.AnnotationArg{shader.AnnotationArgMaterial, shader.AnnotationArgDiffuseTexture},
-				Group:   &group,
-				Binding: &diffuseTexBinding,
-			},
-			{
-				Type:    shader.AnnotationTypeProvider,
-				Args:    []shader.AnnotationArg{shader.AnnotationArgMaterial, shader.AnnotationArgDiffuseSampler},
-				Group:   &group,
-				Binding: &diffuseSamplerBinding,
-			},
-			{
-				Type:    shader.AnnotationTypeProvider,
-				Args:    []shader.AnnotationArg{shader.AnnotationArgMaterial, shader.AnnotationArgNormalTexture},
-				Group:   &group,
-				Binding: &normalTexBinding,
-			},
-			{
-				Type:    shader.AnnotationTypeProvider,
-				Args:    []shader.AnnotationArg{shader.AnnotationArgMaterial, shader.AnnotationArgNormalSampler},
-				Group:   &group,
-				Binding: &normalSamplerBinding,
-			},
-		}).Maybe()
-
-		// Material has no textures set
-		mat.EXPECT().DiffuseTexture().Return(nil).Maybe()
-		mat.EXPECT().NormalTexture().Return(nil).Maybe()
-		mat.EXPECT().MetallicRoughnessTexture().Return(nil).Maybe()
-
-		// Shader returns layout descriptor with texture and sampler entries
-		s.EXPECT().BindGroupLayoutDescriptor(2).Return(wgpu.BindGroupLayoutDescriptor{
-			Entries: []wgpu.BindGroupLayoutEntry{
-				{Binding: 0, Texture: wgpu.TextureBindingLayout{SampleType: wgpu.TextureSampleTypeFloat}},
-				{Binding: 1, Sampler: wgpu.SamplerBindingLayout{Type: wgpu.SamplerBindingTypeFiltering}},
-				{Binding: 2, Texture: wgpu.TextureBindingLayout{SampleType: wgpu.TextureSampleTypeFloat}},
-				{Binding: 3, Sampler: wgpu.SamplerBindingLayout{Type: wgpu.SamplerBindingTypeFiltering}},
-			},
-		}).Maybe()
-
-		// Renderer should be called for fallback textures and samplers
-		r.EXPECT().InitTextureView(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
-		r.EXPECT().InitSampler(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
-		r.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
-
-		mat.EXPECT().SetBindGroupProvider(mock.Anything).Maybe()
-
-		l := loader.NewLoader(loader.BackendTypeGLTF, loader.WithRenderer(r))
-		err := l.InitMaterialGPU(mat, s, "test_material")
-		suite.NoError(err)
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderWithMaterials() {
-	suite.Run("loads glTF with materials without renderer", func() {
-		json := []byte(`{
-			"asset": {"version": "2.0"},
-			"materials": [
-				{
-					"name": "TestMaterial",
-					"pbrMetallicRoughness": {
-						"baseColorFactor": [1.0, 0.0, 0.0, 1.0],
-						"metallicFactor": 0.5,
-						"roughnessFactor": 0.8
-					}
-				}
-			]
-		}`)
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-
-		m, err := l.LoadReader("with_materials", bytes.NewReader(json), false, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-		suite.Len(m.ImportedMaterials(), 1)
-		suite.Equal("TestMaterial", m.ImportedMaterials()[0].Name)
-	})
-
-	suite.Run("material base color is extracted", func() {
-		json := []byte(`{
-			"asset": {"version": "2.0"},
-			"materials": [
-				{
-					"pbrMetallicRoughness": {
-						"baseColorFactor": [0.5, 0.6, 0.7, 1.0]
-					}
-				}
-			]
-		}`)
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-
-		m, err := l.LoadReader("color_mat", bytes.NewReader(json), false, nil)
-		suite.NoError(err)
-		suite.Len(m.ImportedMaterials(), 1)
-		suite.InDelta(0.5, float64(m.ImportedMaterials()[0].BaseColor[0]), 1e-6)
-		suite.InDelta(0.6, float64(m.ImportedMaterials()[0].BaseColor[1]), 1e-6)
-		suite.InDelta(0.7, float64(m.ImportedMaterials()[0].BaseColor[2]), 1e-6)
-		suite.InDelta(1.0, float64(m.ImportedMaterials()[0].BaseColor[3]), 1e-6)
-	})
-
-	suite.Run("material metallic and roughness are extracted", func() {
-		json := []byte(`{
-			"asset": {"version": "2.0"},
-			"materials": [
-				{
-					"pbrMetallicRoughness": {
-						"metallicFactor": 0.3,
-						"roughnessFactor": 0.9
-					}
-				}
-			]
-		}`)
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-
-		m, err := l.LoadReader("pbr_mat", bytes.NewReader(json), false, nil)
-		suite.NoError(err)
-		suite.Len(m.ImportedMaterials(), 1)
-		suite.InDelta(0.3, float64(m.ImportedMaterials()[0].Metallic), 1e-6)
-		suite.InDelta(0.9, float64(m.ImportedMaterials()[0].Roughness), 1e-6)
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderTriangleMeshWithRenderer() {
-	suite.Run("loads a triangle mesh and calls renderer mesh init", func() {
-		r := &renderermocks.MockRenderer{}
-		r.EXPECT().InitMeshBuffers(mock.Anything, mock.Anything, mock.Anything, 3).Return(nil).Once()
-
-		jsonStr := buildMinimalTriangleGLTF()
-		glb := buildGLBWithBin(jsonStr, buildMinimalTriangleBin())
-
-		l := loader.NewLoader(loader.BackendTypeGLTF, loader.WithRenderer(r))
-		m, err := l.LoadReader("triangle", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-		suite.NotNil(m.MeshProvider())
-		r.AssertExpectations(suite.T())
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderTriangleMeshWithoutRenderer() {
-	suite.Run("loads a triangle mesh without renderer", func() {
-		jsonStr := buildMinimalTriangleGLTF()
-		glb := buildGLBWithBin(jsonStr, buildMinimalTriangleBin())
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("triangle_no_gpu", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-		suite.False(m.Skinned())
-	})
-}
-
-func (suite *loaderTest) TestLoadWithRendererAndMaterials() {
-	suite.Run("loads glTF with materials and renderer but no fragment shader", func() {
-		r := &renderermocks.MockRenderer{}
-		r.EXPECT().InitMeshBuffers(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
-
-		json := []byte(`{
-			"asset": {"version": "2.0"},
-			"materials": [{"name": "Mat1", "pbrMetallicRoughness": {}}]
-		}`)
-		l := loader.NewLoader(loader.BackendTypeGLTF, loader.WithRenderer(r))
-
-		m, err := l.LoadReader("with_renderer_mats", bytes.NewReader(json), false, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-		suite.Len(m.ImportedMaterials(), 1)
 	})
 }
 
@@ -770,49 +293,6 @@ func buildGLBWithBin(jsonStr string, binData []byte) []byte {
 	return buf.Bytes()
 }
 
-// buildMinimalTriangleGLTF returns a glTF JSON string describing a single triangle
-// with 3 vertices (position only) and 3 indices, backed by a single binary buffer.
-func buildMinimalTriangleGLTF() string {
-	// 3 vertices Ã— 12 bytes (float32Ã—3) = 36 bytes for positions
-	// 3 indices Ã— 2 bytes (uint16) = 6 bytes, padded to 8 for alignment
-	// Total buffer: 44 bytes
-	// BufferView 0: positions at offset 0, length 36
-	// BufferView 1: indices at offset 36, length 6
-	return strings.TrimSpace(`{
-  "asset": {"version": "2.0"},
-  "scene": 0,
-  "scenes": [{"nodes": [0]}],
-  "nodes": [{"mesh": 0}],
-  "meshes": [{
-    "primitives": [{
-      "attributes": {"POSITION": 0},
-      "indices": 1
-    }]
-  }],
-  "accessors": [
-    {
-      "bufferView": 0,
-      "componentType": 5126,
-      "count": 3,
-      "type": "VEC3",
-      "max": [1.0, 1.0, 0.0],
-      "min": [0.0, 0.0, 0.0]
-    },
-    {
-      "bufferView": 1,
-      "componentType": 5123,
-      "count": 3,
-      "type": "SCALAR"
-    }
-  ],
-  "bufferViews": [
-    {"buffer": 0, "byteOffset": 0, "byteLength": 36},
-    {"buffer": 0, "byteOffset": 36, "byteLength": 6}
-  ],
-  "buffers": [{"byteLength": 44}]
-}`)
-}
-
 // buildMinimalTriangleBin constructs the binary buffer for the minimal triangle mesh.
 // Contains 3 vertex positions followed by 3 uint16 indices, padded to 4-byte alignment.
 func buildMinimalTriangleBin() []byte {
@@ -846,14 +326,14 @@ func foxModelPath() string {
 func (suite *loaderTest) TestFoxModelLoad() {
 	suite.Run("loads Fox.glb without error", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.NoError(err)
 		suite.NotNil(m)
 	})
 
 	suite.Run("model has a non-empty name", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		suite.NotEmpty(m.Name())
 	})
@@ -862,7 +342,7 @@ func (suite *loaderTest) TestFoxModelLoad() {
 func (suite *loaderTest) TestFoxModelSkinned() {
 	suite.Run("fox model reports as skinned", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		suite.True(m.Skinned())
 	})
@@ -871,35 +351,35 @@ func (suite *loaderTest) TestFoxModelSkinned() {
 func (suite *loaderTest) TestFoxModelSkeleton() {
 	suite.Run("skeleton is not nil", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		suite.NotNil(m.Skeleton())
 	})
 
 	suite.Run("skeleton has bones", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		suite.Greater(len(m.Skeleton().Bones), 0)
 	})
 
 	suite.Run("skeleton has root bone indices", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		suite.NotEmpty(m.Skeleton().RootBoneIndices)
 	})
 
 	suite.Run("skeleton has bone name to index mapping", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		suite.NotEmpty(m.Skeleton().BoneNameToIndex)
 	})
 
 	suite.Run("bone count matches name-to-index map length", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		skel := m.Skeleton()
 		suite.Equal(len(skel.Bones), len(skel.BoneNameToIndex))
@@ -907,7 +387,7 @@ func (suite *loaderTest) TestFoxModelSkeleton() {
 
 	suite.Run("root bones have parent index of negative one", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		skel := m.Skeleton()
 		for _, rootIdx := range skel.RootBoneIndices {
@@ -917,7 +397,7 @@ func (suite *loaderTest) TestFoxModelSkeleton() {
 
 	suite.Run("non-root bones have valid parent indices", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		skel := m.Skeleton()
 		boneCount := int32(len(skel.Bones))
@@ -932,7 +412,7 @@ func (suite *loaderTest) TestFoxModelSkeleton() {
 
 	suite.Run("all bones have non-empty names", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		for _, bone := range m.Skeleton().Bones {
 			suite.NotEmpty(bone.Name)
@@ -941,7 +421,7 @@ func (suite *loaderTest) TestFoxModelSkeleton() {
 
 	suite.Run("bone name to index map entries match bones slice", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		skel := m.Skeleton()
 		for name, idx := range skel.BoneNameToIndex {
@@ -951,7 +431,7 @@ func (suite *loaderTest) TestFoxModelSkeleton() {
 
 	suite.Run("bones have non-zero inverse bind matrices", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		for _, bone := range m.Skeleton().Bones {
 			allZero := true
@@ -967,7 +447,7 @@ func (suite *loaderTest) TestFoxModelSkeleton() {
 
 	suite.Run("bones have non-zero local transform scale", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		for _, bone := range m.Skeleton().Bones {
 			hasScale := bone.LocalTransform.Scale[0] != 0 ||
@@ -979,7 +459,7 @@ func (suite *loaderTest) TestFoxModelSkeleton() {
 
 	suite.Run("skeleton parents come before children in topological order", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		skel := m.Skeleton()
 		for i, bone := range skel.Bones {
@@ -993,28 +473,28 @@ func (suite *loaderTest) TestFoxModelSkeleton() {
 func (suite *loaderTest) TestFoxModelAnimations() {
 	suite.Run("has at least one animation", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		suite.Greater(m.AnimationCount(), 0)
 	})
 
 	suite.Run("animation count matches animations slice length", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		suite.Equal(m.AnimationCount(), len(m.Animations()))
 	})
 
 	suite.Run("animation names count matches animation count", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		suite.Len(m.AnimationNames(), m.AnimationCount())
 	})
 
 	suite.Run("all animations have non-empty names", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		for _, clip := range m.Animations() {
 			suite.NotEmpty(clip.Name)
@@ -1023,7 +503,7 @@ func (suite *loaderTest) TestFoxModelAnimations() {
 
 	suite.Run("all animations have positive duration", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		for _, clip := range m.Animations() {
 			suite.Greater(clip.Duration, float32(0))
@@ -1032,7 +512,7 @@ func (suite *loaderTest) TestFoxModelAnimations() {
 
 	suite.Run("all animations have at least one channel", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		for _, clip := range m.Animations() {
 			suite.NotEmpty(clip.Channels)
@@ -1041,7 +521,7 @@ func (suite *loaderTest) TestFoxModelAnimations() {
 
 	suite.Run("animation channels reference valid bone indices", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		boneCount := int32(len(m.Skeleton().Bones))
 		for _, clip := range m.Animations() {
@@ -1054,7 +534,7 @@ func (suite *loaderTest) TestFoxModelAnimations() {
 
 	suite.Run("every animation has channels with keyframes", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		for _, clip := range m.Animations() {
 			hasKeyframes := false
@@ -1070,7 +550,7 @@ func (suite *loaderTest) TestFoxModelAnimations() {
 
 	suite.Run("rotation keyframe quaternions have approximately unit length", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		checked := 0
 		for _, clip := range m.Animations() {
@@ -1091,7 +571,7 @@ func (suite *loaderTest) TestFoxModelAnimations() {
 
 	suite.Run("position keyframes have non-negative timestamps", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		for _, clip := range m.Animations() {
 			for _, ch := range clip.Channels {
@@ -1104,7 +584,7 @@ func (suite *loaderTest) TestFoxModelAnimations() {
 
 	suite.Run("keyframe timestamps do not exceed animation duration", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		for _, clip := range m.Animations() {
 			for _, ch := range clip.Channels {
@@ -1125,7 +605,7 @@ func (suite *loaderTest) TestFoxModelAnimations() {
 func (suite *loaderTest) TestFoxModelAnimationLookup() {
 	suite.Run("known animation names return valid indices", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		for i, name := range m.AnimationNames() {
 			suite.Equal(i, m.GetAnimationIndex(name))
@@ -1134,7 +614,7 @@ func (suite *loaderTest) TestFoxModelAnimationLookup() {
 
 	suite.Run("unknown animation name returns negative one", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		suite.Equal(-1, m.GetAnimationIndex("nonexistent_animation"))
 	})
@@ -1143,21 +623,21 @@ func (suite *loaderTest) TestFoxModelAnimationLookup() {
 func (suite *loaderTest) TestFoxModelMaterials() {
 	suite.Run("has at least one imported material", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		suite.NotEmpty(m.ImportedMaterials())
 	})
 
 	suite.Run("first material has a name", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		suite.NotEmpty(m.ImportedMaterials()[0].Name)
 	})
 
 	suite.Run("materials have valid base color range", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		for _, mat := range m.ImportedMaterials() {
 			for _, c := range mat.BaseColor {
@@ -1169,7 +649,7 @@ func (suite *loaderTest) TestFoxModelMaterials() {
 
 	suite.Run("at least one material has diffuse texture data", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		hasDiffuse := false
 		for _, mat := range m.ImportedMaterials() {
@@ -1183,7 +663,7 @@ func (suite *loaderTest) TestFoxModelMaterials() {
 
 	suite.Run("diffuse texture has a mime type", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		for _, mat := range m.ImportedMaterials() {
 			if mat.DiffuseTexture != nil && len(mat.DiffuseTexture.Data) > 0 {
@@ -1195,7 +675,7 @@ func (suite *loaderTest) TestFoxModelMaterials() {
 
 	suite.Run("metallic and roughness values are in valid range", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		for _, mat := range m.ImportedMaterials() {
 			suite.GreaterOrEqual(mat.Metallic, float32(0))
@@ -1206,103 +686,13 @@ func (suite *loaderTest) TestFoxModelMaterials() {
 	})
 }
 
-func (suite *loaderTest) TestFoxModelLoadReader() {
-	suite.Run("loads Fox.glb via LoadReader with same results", func() {
-		data, err := os.ReadFile(foxModelPath())
-		suite.Require().NoError(err)
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("fox_reader", bytes.NewReader(data), true, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-		suite.True(m.Skinned())
-		suite.NotNil(m.Skeleton())
-		suite.Greater(m.AnimationCount(), 0)
-		suite.NotEmpty(m.ImportedMaterials())
-	})
-
-	suite.Run("LoadReader skeleton matches Load skeleton bone count", func() {
-		data, err := os.ReadFile(foxModelPath())
-		suite.Require().NoError(err)
-
-		l1 := loader.NewLoader(loader.BackendTypeGLTF)
-		m1, err := l1.Load(foxModelPath(), nil)
-		suite.Require().NoError(err)
-
-		l2 := loader.NewLoader(loader.BackendTypeGLTF)
-		m2, err := l2.LoadReader("fox_reader_cmp", bytes.NewReader(data), true, nil)
-		suite.Require().NoError(err)
-
-		suite.Equal(len(m1.Skeleton().Bones), len(m2.Skeleton().Bones))
-	})
-
-	suite.Run("LoadReader animation count matches Load animation count", func() {
-		data, err := os.ReadFile(foxModelPath())
-		suite.Require().NoError(err)
-
-		l1 := loader.NewLoader(loader.BackendTypeGLTF)
-		m1, err := l1.Load(foxModelPath(), nil)
-		suite.Require().NoError(err)
-
-		l2 := loader.NewLoader(loader.BackendTypeGLTF)
-		m2, err := l2.LoadReader("fox_reader_anim", bytes.NewReader(data), true, nil)
-		suite.Require().NoError(err)
-
-		suite.Equal(m1.AnimationCount(), m2.AnimationCount())
-	})
-}
-
-func (suite *loaderTest) TestFoxModelLoadMeshOnly() {
-	suite.Run("loads Fox.glb mesh only without error", func() {
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadMeshOnly(foxModelPath(), nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-	})
-
-	suite.Run("mesh-only model is not skinned", func() {
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadMeshOnly(foxModelPath(), nil)
-		suite.Require().NoError(err)
-		suite.False(m.Skinned())
-	})
-
-	suite.Run("mesh-only model has no skeleton", func() {
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadMeshOnly(foxModelPath(), nil)
-		suite.Require().NoError(err)
-		suite.Nil(m.Skeleton())
-	})
-
-	suite.Run("mesh-only model has no animations", func() {
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadMeshOnly(foxModelPath(), nil)
-		suite.Require().NoError(err)
-		suite.Equal(0, m.AnimationCount())
-	})
-
-	suite.Run("mesh-only model still has imported materials", func() {
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadMeshOnly(foxModelPath(), nil)
-		suite.Require().NoError(err)
-		suite.NotEmpty(m.ImportedMaterials())
-	})
-
-	suite.Run("mesh-only model has a mesh provider", func() {
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadMeshOnly(foxModelPath(), nil)
-		suite.Require().NoError(err)
-		suite.NotNil(m.MeshProvider())
-	})
-}
-
 func (suite *loaderTest) TestFoxModelCaching() {
 	suite.Run("second Load call returns cached model", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m1, err := l.Load(foxModelPath(), nil)
+		m1, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 
-		m2, err := l.Load(foxModelPath(), nil)
+		m2, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 
 		suite.Equal(m1.Name(), m2.Name())
@@ -1310,7 +700,7 @@ func (suite *loaderTest) TestFoxModelCaching() {
 
 	suite.Run("Get returns model after Load", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		_, err := l.Load(foxModelPath(), nil)
+		_, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 
 		cached := l.Get(foxModelPath())
@@ -1319,7 +709,7 @@ func (suite *loaderTest) TestFoxModelCaching() {
 
 	suite.Run("Models map contains loaded fox model", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		_, err := l.Load(foxModelPath(), nil)
+		_, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 
 		models := l.Models()
@@ -1330,7 +720,7 @@ func (suite *loaderTest) TestFoxModelCaching() {
 func (suite *loaderTest) TestFoxModelMeshProvider() {
 	suite.Run("model has a non-nil mesh provider", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		suite.NotNil(m.MeshProvider())
 	})
@@ -1339,1271 +729,16 @@ func (suite *loaderTest) TestFoxModelMeshProvider() {
 func (suite *loaderTest) TestFoxModelRenderMaterials() {
 	suite.Run("render materials are created without renderer", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		suite.NotEmpty(m.RenderMaterials())
 	})
 
 	suite.Run("render materials count matches imported materials count", func() {
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(foxModelPath(), nil)
+		m, err := l.Load(foxModelPath())
 		suite.Require().NoError(err)
 		suite.Equal(len(m.ImportedMaterials()), len(m.RenderMaterials()))
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderDataURITexture() {
-	suite.Run("extracts embedded base64 PNG texture from material", func() {
-		pngBase64 := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQaaaabjru5erkjggg=="
-		dataURI := "data:image/png;base64," + pngBase64
-
-		jsonStr := `{
-"asset": {"version": "2.0"},
-"materials": [{
-"name": "DataURIMat",
-"pbrMetallicRoughness": {
-"baseColorTexture": {"index": 0}
-}
-}],
-"textures": [{"source": 0}],
-"images": [{"uri": "` + dataURI + `", "mimeType": "image/png"}]
-}`
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("data_uri_tex", bytes.NewReader([]byte(jsonStr)), false, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-		suite.Len(m.ImportedMaterials(), 1)
-		suite.NotNil(m.ImportedMaterials()[0].DiffuseTexture)
-		suite.NotEmpty(m.ImportedMaterials()[0].DiffuseTexture.Data)
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderDataURIBuffer() {
-	suite.Run("loads glTF with base64-encoded buffer data URI", func() {
-		positions := [3][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}}
-		indices := [3]uint16{0, 1, 2}
-
-		buf := &bytes.Buffer{}
-		for _, p := range positions {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		for _, idx := range indices {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		b64 := base64.StdEncoding.EncodeToString(buf.Bytes())
-		dataURI := "data:application/octet-stream;base64," + b64
-
-		jsonStr := `{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [{"mesh": 0}],
-"meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": 36},
-{"buffer": 0, "byteOffset": 36, "byteLength": 6}
-],
-"buffers": [{"uri": "` + dataURI + `", "byteLength": ` + fmt.Sprintf("%d", buf.Len()) + `}]
-}`
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("data_uri_buf", bytes.NewReader([]byte(jsonStr)), false, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-		suite.NotNil(m.MeshProvider())
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderSamplerWrapModes() {
-	suite.Run("sampler with clamp-to-edge and mirrored-repeat wrap modes is extracted", func() {
-		pngBase64 := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQaaaabjru5erkjggg=="
-		dataURI := "data:image/png;base64," + pngBase64
-
-		jsonStr := `{
-"asset": {"version": "2.0"},
-"materials": [{
-"name": "SamplerMat",
-"pbrMetallicRoughness": {
-"baseColorTexture": {"index": 0}
-}
-}],
-"textures": [{"source": 0, "sampler": 0}],
-"samplers": [{
-"magFilter": 9728,
-"minFilter": 9987,
-"wrapS": 33071,
-"wrapT": 33648
-}],
-"images": [{"uri": "` + dataURI + `", "mimeType": "image/png"}]
-}`
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("sampler_wrap", bytes.NewReader([]byte(jsonStr)), false, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-		suite.Len(m.ImportedMaterials(), 1)
-		suite.NotNil(m.ImportedMaterials()[0].DiffuseTexture)
-		suite.NotNil(m.ImportedMaterials()[0].DiffuseTexture.SamplerData)
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderVertexColorsMesh() {
-	suite.Run("extracts mesh with VEC4 float vertex colors", func() {
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		posLen := buf.Len()
-		for _, c := range [][4]float32{{1, 0, 0, 1}, {0, 1, 0, 1}, {0, 0, 1, 1}} {
-			binary.Write(buf, binary.LittleEndian, c)
-		}
-		colorLen := buf.Len() - posLen
-		for _, idx := range []uint16{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		idxOffset := buf.Len() - 6
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [{"mesh": 0}],
-"meshes": [{"primitives": [{"attributes": {"POSITION": 0, "COLOR_0": 1}, "indices": 2}]}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC4"},
-{"bufferView": 2, "componentType": 5123, "count": 3, "type": "SCALAR"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": 6}
-],
-"buffers": [{"byteLength": %d}]
-}`, posLen, posLen, colorLen, idxOffset, buf.Len())
-
-		glb := buildGLBWithBin(jsonStr, buf.Bytes())
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("color_mesh", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-	})
-
-	suite.Run("extracts mesh with VEC3 float vertex colors", func() {
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		posLen := buf.Len()
-		for _, c := range [][3]float32{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}} {
-			binary.Write(buf, binary.LittleEndian, c)
-		}
-		colorLen := buf.Len() - posLen
-		for _, idx := range []uint16{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		idxOffset := buf.Len() - 6
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [{"mesh": 0}],
-"meshes": [{"primitives": [{"attributes": {"POSITION": 0, "COLOR_0": 1}, "indices": 2}]}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3"},
-{"bufferView": 2, "componentType": 5123, "count": 3, "type": "SCALAR"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": 6}
-],
-"buffers": [{"byteLength": %d}]
-}`, posLen, posLen, colorLen, idxOffset, buf.Len())
-
-		glb := buildGLBWithBin(jsonStr, buf.Bytes())
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("color3_mesh", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-	})
-
-	suite.Run("extracts mesh with VEC4 unsigned byte vertex colors", func() {
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		posLen := buf.Len()
-		for _, c := range [][4]uint8{{255, 0, 0, 255}, {0, 255, 0, 255}, {0, 0, 255, 255}} {
-			buf.Write(c[:])
-		}
-		colorLen := buf.Len() - posLen
-		for _, idx := range []uint16{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		idxOffset := buf.Len() - 6
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [{"mesh": 0}],
-"meshes": [{"primitives": [{"attributes": {"POSITION": 0, "COLOR_0": 1}, "indices": 2}]}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5121, "count": 3, "type": "VEC4"},
-{"bufferView": 2, "componentType": 5123, "count": 3, "type": "SCALAR"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": 6}
-],
-"buffers": [{"byteLength": %d}]
-}`, posLen, posLen, colorLen, idxOffset, buf.Len())
-
-		glb := buildGLBWithBin(jsonStr, buf.Bytes())
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("color_byte_mesh", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-	})
-
-	suite.Run("extracts mesh with VEC4 unsigned short vertex colors", func() {
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		posLen := buf.Len()
-		for _, c := range [][4]uint16{
-			{65535, 0, 0, 65535}, {0, 65535, 0, 65535}, {0, 0, 65535, 65535}} {
-			binary.Write(buf, binary.LittleEndian, c)
-		}
-		colorLen := buf.Len() - posLen
-		for _, idx := range []uint16{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		idxOffset := buf.Len() - 6
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [{"mesh": 0}],
-"meshes": [{"primitives": [{"attributes": {"POSITION": 0, "COLOR_0": 1}, "indices": 2}]}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5123, "count": 3, "type": "VEC4"},
-{"bufferView": 2, "componentType": 5123, "count": 3, "type": "SCALAR"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": 6}
-],
-"buffers": [{"byteLength": %d}]
-}`, posLen, posLen, colorLen, idxOffset, buf.Len())
-
-		glb := buildGLBWithBin(jsonStr, buf.Bytes())
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("color_short_mesh", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderUint32Indices() {
-	suite.Run("loads mesh with uint32 index accessor", func() {
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		posLen := buf.Len()
-		for _, idx := range []uint32{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		idxLen := buf.Len() - posLen
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [{"mesh": 0}],
-"meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5125, "count": 3, "type": "SCALAR"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d}
-],
-"buffers": [{"byteLength": %d}]
-}`, posLen, posLen, idxLen, buf.Len())
-
-		glb := buildGLBWithBin(jsonStr, buf.Bytes())
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("uint32_indices", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderUint8Indices() {
-	suite.Run("loads mesh with uint8 index accessor", func() {
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		posLen := buf.Len()
-		buf.Write([]byte{0, 1, 2})
-		idxLen := buf.Len() - posLen
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [{"mesh": 0}],
-"meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5121, "count": 3, "type": "SCALAR"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d}
-],
-"buffers": [{"byteLength": %d}]
-}`, posLen, posLen, idxLen, buf.Len())
-
-		glb := buildGLBWithBin(jsonStr, buf.Bytes())
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("uint8_indices", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderMatrixTransformSkeleton() {
-	suite.Run("loads skeleton with bone using matrix transform", func() {
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		posLen := buf.Len()
-		for _, idx := range []uint16{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		idxLen := buf.Len() - posLen
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		ibmOffset := buf.Len()
-		ibm := [16]float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}
-		binary.Write(buf, binary.LittleEndian, ibm)
-		ibmLen := buf.Len() - ibmOffset
-
-		jointsOffset := buf.Len()
-		for i := 0; i < 3; i++ {
-			buf.Write([]byte{0, 0, 0, 0})
-		}
-		jointsLen := buf.Len() - jointsOffset
-
-		weightsOffset := buf.Len()
-		for i := 0; i < 3; i++ {
-			binary.Write(buf, binary.LittleEndian, [4]float32{1, 0, 0, 0})
-		}
-		weightsLen := buf.Len() - weightsOffset
-
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [
-{"mesh": 0, "skin": 0},
-{
-"name": "RootBone",
-"matrix": [2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 1, 2, 3, 1]
-}
-],
-"meshes": [{"primitives": [{"attributes": {"POSITION": 0, "JOINTS_0": 3, "WEIGHTS_0": 4}, "indices": 1}]}],
-"skins": [{"joints": [1], "inverseBindMatrices": 2}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"},
-{"bufferView": 2, "componentType": 5126, "count": 1, "type": "MAT4"},
-{"bufferView": 3, "componentType": 5121, "count": 3, "type": "VEC4"},
-{"bufferView": 4, "componentType": 5126, "count": 3, "type": "VEC4"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d}
-],
-"buffers": [{"byteLength": %d}],
-"animations": [{
-"name": "BoneAnim",
-"channels": [{"sampler": 0, "target": {"node": 1, "path": "translation"}}],
-"samplers": [{"input": 5, "output": 6, "interpolation": "LINEAR"}]
-}]
-}`, posLen, posLen, idxLen, ibmOffset, ibmLen, jointsOffset, jointsLen, weightsOffset, weightsLen, buf.Len())
-
-		animInputOffset := buf.Len()
-		binary.Write(buf, binary.LittleEndian, []float32{0, 1})
-		animInputLen := buf.Len() - animInputOffset
-		animOutputOffset := buf.Len()
-		binary.Write(buf, binary.LittleEndian, [][3]float32{{0, 0, 0}, {1, 2, 3}})
-		animOutputLen := buf.Len() - animOutputOffset
-
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		jsonStr = fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [
-{"mesh": 0, "skin": 0},
-{
-"name": "RootBone",
-"matrix": [2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 1, 2, 3, 1]
-}
-],
-"meshes": [{"primitives": [{"attributes": {"POSITION": 0, "JOINTS_0": 3, "WEIGHTS_0": 4}, "indices": 1}]}],
-"skins": [{"joints": [1], "inverseBindMatrices": 2}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"},
-{"bufferView": 2, "componentType": 5126, "count": 1, "type": "MAT4"},
-{"bufferView": 3, "componentType": 5121, "count": 3, "type": "VEC4"},
-{"bufferView": 4, "componentType": 5126, "count": 3, "type": "VEC4"},
-{"bufferView": 5, "componentType": 5126, "count": 2, "type": "SCALAR", "max": [1], "min": [0]},
-{"bufferView": 6, "componentType": 5126, "count": 2, "type": "VEC3"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d}
-],
-"buffers": [{"byteLength": %d}]
-}`, posLen, posLen, idxLen, ibmOffset, ibmLen, jointsOffset, jointsLen, weightsOffset, weightsLen, animInputOffset, animInputLen, animOutputOffset, animOutputLen, buf.Len())
-
-		glb := buildGLBWithBin(jsonStr, buf.Bytes())
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("matrix_skeleton", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-		suite.True(m.Skinned())
-		suite.NotNil(m.Skeleton())
-		suite.Len(m.Skeleton().Bones, 1)
-		bone := m.Skeleton().Bones[0]
-		suite.Equal("RootBone", bone.Name)
-		suite.InDelta(2.0, float64(bone.LocalTransform.Scale[0]), 1e-3)
-		suite.InDelta(2.0, float64(bone.LocalTransform.Scale[1]), 1e-3)
-		suite.InDelta(2.0, float64(bone.LocalTransform.Scale[2]), 1e-3)
-		suite.InDelta(1.0, float64(bone.LocalTransform.Translation[0]), 1e-3)
-		suite.InDelta(2.0, float64(bone.LocalTransform.Translation[1]), 1e-3)
-		suite.InDelta(3.0, float64(bone.LocalTransform.Translation[2]), 1e-3)
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderAnimationWithoutSkeleton() {
-	suite.Run("extracts animations when no skeleton is present", func() {
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		posLen := buf.Len()
-		for _, idx := range []uint16{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		idxLen := buf.Len() - posLen
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		animInputOffset := buf.Len()
-		binary.Write(buf, binary.LittleEndian, []float32{0, 1})
-		animInputLen := buf.Len() - animInputOffset
-		animOutputOffset := buf.Len()
-		binary.Write(buf, binary.LittleEndian, [][3]float32{{0, 0, 0}, {1, 2, 3}})
-		animOutputLen := buf.Len() - animOutputOffset
-
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0, 1]}],
-"nodes": [
-{"mesh": 0},
-{"name": "AnimTarget"}
-],
-"meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"},
-{"bufferView": 2, "componentType": 5126, "count": 2, "type": "SCALAR", "max": [1], "min": [0]},
-{"bufferView": 3, "componentType": 5126, "count": 2, "type": "VEC3"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d}
-],
-"buffers": [{"byteLength": %d}],
-"animations": [{
-"name": "NoSkelAnim",
-"channels": [{"sampler": 0, "target": {"node": 1, "path": "translation"}}],
-"samplers": [{"input": 2, "output": 3, "interpolation": "LINEAR"}]
-}]
-}`, posLen, posLen, idxLen, animInputOffset, animInputLen, animOutputOffset, animOutputLen, buf.Len())
-
-		glb := buildGLBWithBin(jsonStr, buf.Bytes())
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("no_skel_anim", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-		suite.False(m.Skinned())
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderMaterialWithAllTextures() {
-	suite.Run("extracts material with diffuse normal and metallic textures", func() {
-		pngBase64 := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQaaaabjru5erkjggg=="
-		dataURI := "data:image/png;base64," + pngBase64
-
-		jsonStr := `{
-"asset": {"version": "2.0"},
-"materials": [{
-"name": "FullMat",
-"pbrMetallicRoughness": {
-"baseColorFactor": [0.8, 0.6, 0.4, 1.0],
-"metallicFactor": 0.5,
-"roughnessFactor": 0.3,
-"baseColorTexture": {"index": 0},
-"metallicRoughnessTexture": {"index": 1}
-},
-"normalTexture": {"index": 2}
-}],
-"textures": [
-{"source": 0},
-{"source": 0},
-{"source": 0}
-],
-"images": [{"uri": "` + dataURI + `", "mimeType": "image/png"}]
-}`
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("full_mat", bytes.NewReader([]byte(jsonStr)), false, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-		suite.Len(m.ImportedMaterials(), 1)
-		mat := m.ImportedMaterials()[0]
-		suite.Equal("FullMat", mat.Name)
-		suite.NotNil(mat.DiffuseTexture)
-		suite.NotNil(mat.NormalTexture)
-		suite.NotNil(mat.MetallicRoughnessTexture)
-		suite.InDelta(0.5, float64(mat.Metallic), 1e-6)
-		suite.InDelta(0.3, float64(mat.Roughness), 1e-6)
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderMaterialWithExternalTexture() {
-	suite.Run("handles material with external texture URI gracefully", func() {
-		jsonStr := `{
-"asset": {"version": "2.0"},
-"materials": [{
-"name": "ExternalMat",
-"pbrMetallicRoughness": {
-"baseColorTexture": {"index": 0}
-}
-}],
-"textures": [{"source": 0}],
-"images": [{"uri": "textures/diffuse.png", "mimeType": "image/png"}]
-}`
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("external_tex", bytes.NewReader([]byte(jsonStr)), false, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-		suite.Len(m.ImportedMaterials(), 1)
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderMeshWithoutIndices() {
-	suite.Run("generates sequential indices when primitive omits indices", func() {
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [{"mesh": 0}],
-"meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d}
-],
-"buffers": [{"byteLength": %d}]
-}`, buf.Len(), buf.Len())
-
-		glb := buildGLBWithBin(jsonStr, buf.Bytes())
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("no_indices", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderMeshWithTangents() {
-	suite.Run("extracts mesh with TANGENT attribute", func() {
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		posLen := buf.Len()
-		for _, n := range [][3]float32{{0, 0, 1}, {0, 0, 1}, {0, 0, 1}} {
-			binary.Write(buf, binary.LittleEndian, n)
-		}
-		normalLen := buf.Len() - posLen
-		normalOffset := posLen
-		for _, uv := range [][2]float32{{0, 0}, {1, 0}, {0, 1}} {
-			binary.Write(buf, binary.LittleEndian, uv)
-		}
-		uvLen := buf.Len() - normalOffset - normalLen
-		uvOffset := normalOffset + normalLen
-		for _, t := range [][4]float32{{1, 0, 0, 1}, {1, 0, 0, 1}, {1, 0, 0, 1}} {
-			binary.Write(buf, binary.LittleEndian, t)
-		}
-		tangentLen := buf.Len() - uvOffset - uvLen
-		tangentOffset := uvOffset + uvLen
-		for _, idx := range []uint16{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		idxLen := buf.Len() - tangentOffset - tangentLen
-		idxOffset := tangentOffset + tangentLen
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [{"mesh": 0}],
-"meshes": [{"primitives": [{
-"attributes": {"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2, "TANGENT": 3},
-"indices": 4
-}]}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3"},
-{"bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC2"},
-{"bufferView": 3, "componentType": 5126, "count": 3, "type": "VEC4"},
-{"bufferView": 4, "componentType": 5123, "count": 3, "type": "SCALAR"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d}
-],
-"buffers": [{"byteLength": %d}]
-}`, posLen, normalOffset, normalLen, uvOffset, uvLen, tangentOffset, tangentLen, idxOffset, idxLen, buf.Len())
-
-		glb := buildGLBWithBin(jsonStr, buf.Bytes())
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("tangent_mesh", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderVertexColorsVec3UnsignedByte() {
-	suite.Run("extracts mesh with VEC3 unsigned byte vertex colors", func() {
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		posLen := buf.Len()
-		for _, c := range [][3]uint8{{255, 0, 0}, {0, 255, 0}, {0, 0, 255}} {
-			buf.Write(c[:])
-		}
-		colorLen := buf.Len() - posLen
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-		colorPadded := buf.Len() - posLen
-		_ = colorPadded
-		for _, idx := range []uint16{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		idxOffset := posLen + colorLen
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [{"mesh": 0}],
-"meshes": [{"primitives": [{"attributes": {"POSITION": 0, "COLOR_0": 1}, "indices": 2}]}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5121, "count": 3, "type": "VEC3"},
-{"bufferView": 2, "componentType": 5123, "count": 3, "type": "SCALAR"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": 6}
-],
-"buffers": [{"byteLength": %d}]
-}`, posLen, posLen, colorLen, idxOffset, buf.Len())
-
-		glb := buildGLBWithBin(jsonStr, buf.Bytes())
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("color3_byte_mesh", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderVertexColorsVec3UnsignedShort() {
-	suite.Run("extracts mesh with VEC3 unsigned short vertex colors", func() {
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		posLen := buf.Len()
-		for _, c := range [][3]uint16{{65535, 0, 0}, {0, 65535, 0}, {0, 0, 65535}} {
-			binary.Write(buf, binary.LittleEndian, c)
-		}
-		colorLen := buf.Len() - posLen
-		for _, idx := range []uint16{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		idxOffset := buf.Len() - 6
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [{"mesh": 0}],
-"meshes": [{"primitives": [{"attributes": {"POSITION": 0, "COLOR_0": 1}, "indices": 2}]}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5123, "count": 3, "type": "VEC3"},
-{"bufferView": 2, "componentType": 5123, "count": 3, "type": "SCALAR"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": 6}
-],
-"buffers": [{"byteLength": %d}]
-}`, posLen, posLen, colorLen, idxOffset, buf.Len())
-
-		glb := buildGLBWithBin(jsonStr, buf.Bytes())
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("color3_short_mesh", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderMultipleMeshes() {
-	suite.Run("loads model with two separate meshes", func() {
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		posLen := buf.Len()
-		for _, idx := range []uint16{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		idxLen := buf.Len() - posLen
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		set2Offset := buf.Len()
-		for _, p := range [][3]float32{{2, 0, 0}, {3, 0, 0}, {2, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		pos2Len := buf.Len() - set2Offset
-		idx2Offset := buf.Len()
-		for _, idx := range []uint16{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		idx2Len := buf.Len() - idx2Offset
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0, 1]}],
-"nodes": [{"mesh": 0}, {"mesh": 1}],
-"meshes": [
-{"name": "Mesh1", "primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]},
-{"name": "Mesh2", "primitives": [{"attributes": {"POSITION": 2}, "indices": 3}]}
-],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"},
-{"bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC3", "max": [3,1,0], "min": [2,0,0]},
-{"bufferView": 3, "componentType": 5123, "count": 3, "type": "SCALAR"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d}
-],
-"buffers": [{"byteLength": %d}]
-}`, posLen, posLen, idxLen, set2Offset, pos2Len, idx2Offset, idx2Len, buf.Len())
-
-		glb := buildGLBWithBin(jsonStr, buf.Bytes())
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("multi_mesh", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderSamplerFilterTypes() {
-	suite.Run("extracts sampler with nearest mag filter", func() {
-		pngBase64 := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQaaaabjru5erkjggg=="
-		dataURI := "data:image/png;base64," + pngBase64
-
-		jsonStr := `{
-"asset": {"version": "2.0"},
-"materials": [{
-"name": "NearestMat",
-"pbrMetallicRoughness": {
-"baseColorTexture": {"index": 0}
-}
-}],
-"textures": [{"source": 0, "sampler": 0}],
-"samplers": [{
-"magFilter": 9728,
-"minFilter": 9984,
-"wrapS": 10497,
-"wrapT": 10497
-}],
-"images": [{"uri": "` + dataURI + `", "mimeType": "image/png"}]
-}`
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("nearest_filter", bytes.NewReader([]byte(jsonStr)), false, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-		suite.NotNil(m.ImportedMaterials()[0].DiffuseTexture)
-		suite.NotNil(m.ImportedMaterials()[0].DiffuseTexture.SamplerData)
-	})
-
-	suite.Run("extracts sampler with linear mipmap nearest filter", func() {
-		pngBase64 := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQaaaabjru5erkjggg=="
-		dataURI := "data:image/png;base64," + pngBase64
-
-		jsonStr := `{
-"asset": {"version": "2.0"},
-"materials": [{
-"name": "LinearMipNearest",
-"pbrMetallicRoughness": {
-"baseColorTexture": {"index": 0}
-}
-}],
-"textures": [{"source": 0, "sampler": 0}],
-"samplers": [{
-"magFilter": 9729,
-"minFilter": 9985
-}],
-"images": [{"uri": "` + dataURI + `", "mimeType": "image/png"}]
-}`
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("linear_mip_nearest", bytes.NewReader([]byte(jsonStr)), false, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-		suite.NotNil(m.ImportedMaterials()[0].DiffuseTexture)
-		suite.NotNil(m.ImportedMaterials()[0].DiffuseTexture.SamplerData)
-	})
-
-	suite.Run("extracts sampler with nearest mipmap linear filter", func() {
-		pngBase64 := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQaaaabjru5erkjggg=="
-		dataURI := "data:image/png;base64," + pngBase64
-
-		jsonStr := `{
-"asset": {"version": "2.0"},
-"materials": [{
-"name": "NearestMipLinear",
-"pbrMetallicRoughness": {
-"baseColorTexture": {"index": 0}
-}
-}],
-"textures": [{"source": 0, "sampler": 0}],
-"samplers": [{
-"minFilter": 9986
-}],
-"images": [{"uri": "` + dataURI + `", "mimeType": "image/png"}]
-}`
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("nearest_mip_linear", bytes.NewReader([]byte(jsonStr)), false, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-		suite.NotNil(m.ImportedMaterials()[0].DiffuseTexture)
-		suite.NotNil(m.ImportedMaterials()[0].DiffuseTexture.SamplerData)
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderJointsWithUnsignedShort() {
-	suite.Run("loads skeleton with unsigned short joint indices", func() {
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		posLen := buf.Len()
-		for _, idx := range []uint16{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		idxLen := buf.Len() - posLen
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		ibmOffset := buf.Len()
-		ibm := [16]float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}
-		binary.Write(buf, binary.LittleEndian, ibm)
-		ibmLen := buf.Len() - ibmOffset
-
-		jointsOffset := buf.Len()
-		for i := 0; i < 3; i++ {
-			binary.Write(buf, binary.LittleEndian, [4]uint16{0, 0, 0, 0})
-		}
-		jointsLen := buf.Len() - jointsOffset
-
-		weightsOffset := buf.Len()
-		for i := 0; i < 3; i++ {
-			binary.Write(buf, binary.LittleEndian, [4]float32{1, 0, 0, 0})
-		}
-		weightsLen := buf.Len() - weightsOffset
-
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [
-{"mesh": 0, "skin": 0},
-{"name": "Bone", "translation": [0, 0, 0]}
-],
-"meshes": [{"primitives": [{"attributes": {"POSITION": 0, "JOINTS_0": 3, "WEIGHTS_0": 4}, "indices": 1}]}],
-"skins": [{"joints": [1], "inverseBindMatrices": 2}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"},
-{"bufferView": 2, "componentType": 5126, "count": 1, "type": "MAT4"},
-{"bufferView": 3, "componentType": 5123, "count": 3, "type": "VEC4"},
-{"bufferView": 4, "componentType": 5126, "count": 3, "type": "VEC4"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d}
-],
-"buffers": [{"byteLength": %d}]
-}`, posLen, posLen, idxLen, ibmOffset, ibmLen, jointsOffset, jointsLen, weightsOffset, weightsLen, buf.Len())
-
-		glb := buildGLBWithBin(jsonStr, buf.Bytes())
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("ushort_joints", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-		suite.True(m.Skinned())
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderSkeletonRotationMatrixBranches() {
-	suite.Run("skeleton with 180 degree X rotation matrix", func() {
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		posLen := buf.Len()
-		for _, idx := range []uint16{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		idxLen := buf.Len() - posLen
-
-		ibmOffset := buf.Len()
-		ibm := [16]float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}
-		binary.Write(buf, binary.LittleEndian, ibm)
-		ibmLen := buf.Len() - ibmOffset
-
-		jointsOffset := buf.Len()
-		for i := 0; i < 3; i++ {
-			binary.Write(buf, binary.LittleEndian, [4]uint8{0, 0, 0, 0})
-		}
-		jointsLen := buf.Len() - jointsOffset
-
-		weightsOffset := buf.Len()
-		for i := 0; i < 3; i++ {
-			binary.Write(buf, binary.LittleEndian, [4]float32{1, 0, 0, 0})
-		}
-		weightsLen := buf.Len() - weightsOffset
-
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [
-{"mesh": 0, "skin": 0},
-{"name": "Bone180X", "matrix": [1,0,0,0, 0,-1,0,0, 0,0,-1,0, 0,0,0,1]}
-],
-"meshes": [{"primitives": [{"attributes": {"POSITION": 0, "JOINTS_0": 3, "WEIGHTS_0": 4}, "indices": 1}]}],
-"skins": [{"joints": [1], "inverseBindMatrices": 2}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"},
-{"bufferView": 2, "componentType": 5126, "count": 1, "type": "MAT4"},
-{"bufferView": 3, "componentType": 5121, "count": 3, "type": "VEC4"},
-{"bufferView": 4, "componentType": 5126, "count": 3, "type": "VEC4"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d}
-],
-"buffers": [{"byteLength": %d}]
-}`, posLen, posLen, idxLen, ibmOffset, ibmLen, jointsOffset, jointsLen, weightsOffset, weightsLen, buf.Len())
-
-		glb := buildGLBWithBin(jsonStr, buf.Bytes())
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("rot_x180", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-		suite.True(m.Skinned())
-	})
-
-	suite.Run("skeleton with 180 degree Y rotation matrix", func() {
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		posLen := buf.Len()
-		for _, idx := range []uint16{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		idxLen := buf.Len() - posLen
-
-		ibmOffset := buf.Len()
-		ibm := [16]float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}
-		binary.Write(buf, binary.LittleEndian, ibm)
-		ibmLen := buf.Len() - ibmOffset
-
-		jointsOffset := buf.Len()
-		for i := 0; i < 3; i++ {
-			binary.Write(buf, binary.LittleEndian, [4]uint8{0, 0, 0, 0})
-		}
-		jointsLen := buf.Len() - jointsOffset
-
-		weightsOffset := buf.Len()
-		for i := 0; i < 3; i++ {
-			binary.Write(buf, binary.LittleEndian, [4]float32{1, 0, 0, 0})
-		}
-		weightsLen := buf.Len() - weightsOffset
-
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [
-{"mesh": 0, "skin": 0},
-{"name": "Bone180Y", "matrix": [-1,0,0,0, 0,1,0,0, 0,0,-1,0, 0,0,0,1]}
-],
-"meshes": [{"primitives": [{"attributes": {"POSITION": 0, "JOINTS_0": 3, "WEIGHTS_0": 4}, "indices": 1}]}],
-"skins": [{"joints": [1], "inverseBindMatrices": 2}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"},
-{"bufferView": 2, "componentType": 5126, "count": 1, "type": "MAT4"},
-{"bufferView": 3, "componentType": 5121, "count": 3, "type": "VEC4"},
-{"bufferView": 4, "componentType": 5126, "count": 3, "type": "VEC4"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d}
-],
-"buffers": [{"byteLength": %d}]
-}`, posLen, posLen, idxLen, ibmOffset, ibmLen, jointsOffset, jointsLen, weightsOffset, weightsLen, buf.Len())
-
-		glb := buildGLBWithBin(jsonStr, buf.Bytes())
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("rot_y180", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-		suite.True(m.Skinned())
-	})
-
-	suite.Run("skeleton with 180 degree Z rotation matrix", func() {
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		posLen := buf.Len()
-		for _, idx := range []uint16{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		idxLen := buf.Len() - posLen
-
-		ibmOffset := buf.Len()
-		ibm := [16]float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}
-		binary.Write(buf, binary.LittleEndian, ibm)
-		ibmLen := buf.Len() - ibmOffset
-
-		jointsOffset := buf.Len()
-		for i := 0; i < 3; i++ {
-			binary.Write(buf, binary.LittleEndian, [4]uint8{0, 0, 0, 0})
-		}
-		jointsLen := buf.Len() - jointsOffset
-
-		weightsOffset := buf.Len()
-		for i := 0; i < 3; i++ {
-			binary.Write(buf, binary.LittleEndian, [4]float32{1, 0, 0, 0})
-		}
-		weightsLen := buf.Len() - weightsOffset
-
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [
-{"mesh": 0, "skin": 0},
-{"name": "Bone180Z", "matrix": [-1,0,0,0, 0,-1,0,0, 0,0,1,0, 0,0,0,1]}
-],
-"meshes": [{"primitives": [{"attributes": {"POSITION": 0, "JOINTS_0": 3, "WEIGHTS_0": 4}, "indices": 1}]}],
-"skins": [{"joints": [1], "inverseBindMatrices": 2}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"},
-{"bufferView": 2, "componentType": 5126, "count": 1, "type": "MAT4"},
-{"bufferView": 3, "componentType": 5121, "count": 3, "type": "VEC4"},
-{"bufferView": 4, "componentType": 5126, "count": 3, "type": "VEC4"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d}
-],
-"buffers": [{"byteLength": %d}]
-}`, posLen, posLen, idxLen, ibmOffset, ibmLen, jointsOffset, jointsLen, weightsOffset, weightsLen, buf.Len())
-
-		glb := buildGLBWithBin(jsonStr, buf.Bytes())
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("rot_z180", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-		suite.True(m.Skinned())
 	})
 }
 
@@ -2650,657 +785,1496 @@ func (suite *loaderTest) TestLoadExternalBufferFile() {
 		suite.NoError(err)
 
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.Load(filepath.Join(tmpDir, "model.gltf"), nil)
+		m, err := l.Load(filepath.Join(tmpDir, "model.gltf"))
 		suite.NoError(err)
 		suite.NotNil(m)
 	})
 }
 
-func (suite *loaderTest) TestLoadReaderMeshWithMaterialIndex() {
-	suite.Run("primitive with material index references correct material", func() {
-		pngBase64 := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQaaaabjru5erkjggg=="
-		dataURI := "data:image/png;base64," + pngBase64
+func (suite *loaderTest) TestLoadGLBWithVertexColors() {
+	suite.Run("loads mesh with VEC3 float vertex colors", func() {
+		bin := buildTriangleWithVec3FloatColors()
+		jsonStr := `{
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [{"mesh": 0}],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "COLOR_0": 1}, "indices": 2}]}],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+    {"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3"},
+    {"bufferView": 2, "componentType": 5123, "count": 3, "type": "SCALAR"}
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+    {"buffer": 0, "byteOffset": 36, "byteLength": 36},
+    {"buffer": 0, "byteOffset": 72, "byteLength": 6}
+  ],
+  "buffers": [{"byteLength": 80}]
+}`
+		glb := buildGLBWithBin(jsonStr, bin)
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "color.glb")
+		suite.Require().NoError(os.WriteFile(path, glb, 0644))
 
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		posLen := buf.Len()
-		for _, idx := range []uint16{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [{"mesh": 0}],
-"meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1, "material": 1}]}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": 6}
-],
-"buffers": [{"byteLength": %d}],
-"materials": [
-{"name": "Mat0", "pbrMetallicRoughness": {"baseColorFactor": [1,0,0,1]}},
-{"name": "Mat1", "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}
-],
-"textures": [{"source": 0}],
-"images": [{"uri": "%s", "mimeType": "image/png"}]
-}`, posLen, posLen, len(buf.Bytes()), dataURI)
-
-		glb := buildGLBWithBin(jsonStr, buf.Bytes())
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("mat_idx", bytes.NewReader(glb), true, nil)
+		m, err := l.Load(path)
 		suite.NoError(err)
 		suite.NotNil(m)
-		suite.True(len(m.ImportedMaterials()) >= 2)
 	})
-}
 
-func (suite *loaderTest) TestLoadReaderMultiplePrimitivesPerMesh() {
-	suite.Run("mesh with two primitives produces correctly named meshes", func() {
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		posLen := buf.Len()
-		for _, idx := range []uint16{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		idxLen := buf.Len() - posLen
+	suite.Run("loads mesh with unsigned byte VEC4 vertex colors", func() {
+		bin := buildTriangleWithUByteVec4Colors()
+		jsonStr := `{
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [{"mesh": 0}],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "COLOR_0": 1}, "indices": 2}]}],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+    {"bufferView": 1, "componentType": 5121, "count": 3, "type": "VEC4"},
+    {"bufferView": 2, "componentType": 5123, "count": 3, "type": "SCALAR"}
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+    {"buffer": 0, "byteOffset": 36, "byteLength": 12},
+    {"buffer": 0, "byteOffset": 48, "byteLength": 6}
+  ],
+  "buffers": [{"byteLength": 56}]
+}`
+		glb := buildGLBWithBin(jsonStr, bin)
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "color_ubyte.glb")
+		suite.Require().NoError(os.WriteFile(path, glb, 0644))
 
-		pos2Offset := buf.Len()
-		for _, p := range [][3]float32{{2, 0, 0}, {3, 0, 0}, {2, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		pos2Len := buf.Len() - pos2Offset
-		idx2Offset := buf.Len()
-		for _, idx := range []uint16{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		idx2Len := buf.Len() - idx2Offset
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [{"mesh": 0}],
-"meshes": [{"name": "MultiPrim", "primitives": [
-{"attributes": {"POSITION": 0}, "indices": 1},
-{"attributes": {"POSITION": 2}, "indices": 3}
-]}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"},
-{"bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC3", "max": [3,1,0], "min": [2,0,0]},
-{"bufferView": 3, "componentType": 5123, "count": 3, "type": "SCALAR"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d}
-],
-"buffers": [{"byteLength": %d}]
-}`, posLen, posLen, idxLen, pos2Offset, pos2Len, idx2Offset, idx2Len, buf.Len())
-
-		glb := buildGLBWithBin(jsonStr, buf.Bytes())
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("multi_prim", bytes.NewReader(glb), true, nil)
+		m, err := l.Load(path)
+		suite.NoError(err)
+		suite.NotNil(m)
+	})
+
+	suite.Run("loads mesh with unsigned short VEC4 vertex colors", func() {
+		bin := buildTriangleWithUShortVec4Colors()
+		jsonStr := `{
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [{"mesh": 0}],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "COLOR_0": 1}, "indices": 2}]}],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+    {"bufferView": 1, "componentType": 5123, "count": 3, "type": "VEC4"},
+    {"bufferView": 2, "componentType": 5123, "count": 3, "type": "SCALAR"}
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+    {"buffer": 0, "byteOffset": 36, "byteLength": 24},
+    {"buffer": 0, "byteOffset": 60, "byteLength": 6}
+  ],
+  "buffers": [{"byteLength": 68}]
+}`
+		glb := buildGLBWithBin(jsonStr, bin)
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "color_ushort.glb")
+		suite.Require().NoError(os.WriteFile(path, glb, 0644))
+
+		l := loader.NewLoader(loader.BackendTypeGLTF)
+		m, err := l.Load(path)
 		suite.NoError(err)
 		suite.NotNil(m)
 	})
 }
 
-func (suite *loaderTest) TestLoadReaderAnimationWithMorphWeights() {
-	suite.Run("animation with morph weight channel is skipped gracefully", func() {
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		posLen := buf.Len()
-		for _, idx := range []uint16{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		idxLen := buf.Len() - posLen
+func (suite *loaderTest) TestLoadGLBWithMatrixSkeleton() {
+	bin := buildSkeletonMatrixBin()
+	jsonStr := `{
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [
+    {"mesh": 0, "skin": 0},
+    {"name": "root_bone", "matrix": [1,0,0,0, 0,1,0,0, 0,0,1,0, 2,3,4,1]}
+  ],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "JOINTS_0": 1, "WEIGHTS_0": 2}, "indices": 3}]}],
+  "skins": [{"joints": [1]}],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+    {"bufferView": 1, "componentType": 5121, "count": 3, "type": "VEC4"},
+    {"bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC4"},
+    {"bufferView": 3, "componentType": 5123, "count": 3, "type": "SCALAR"}
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+    {"buffer": 0, "byteOffset": 36, "byteLength": 12},
+    {"buffer": 0, "byteOffset": 48, "byteLength": 48},
+    {"buffer": 0, "byteOffset": 96, "byteLength": 6}
+  ],
+  "buffers": [{"byteLength": 104}]
+}`
+	glb := buildGLBWithBin(jsonStr, bin)
+	dir := suite.T().TempDir()
+	path := filepath.Join(dir, "skeleton_matrix.glb")
+	suite.Require().NoError(os.WriteFile(path, glb, 0644))
 
-		ibmOffset := buf.Len()
-		ibm := [16]float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}
-		binary.Write(buf, binary.LittleEndian, ibm)
-		ibmLen := buf.Len() - ibmOffset
+	l := loader.NewLoader(loader.BackendTypeGLTF)
+	m, err := l.Load(path)
+	suite.Require().NoError(err)
 
-		jointsOffset := buf.Len()
-		for i := 0; i < 3; i++ {
-			binary.Write(buf, binary.LittleEndian, [4]uint8{0, 0, 0, 0})
-		}
-		jointsLen := buf.Len() - jointsOffset
-
-		weightsOffset := buf.Len()
-		for i := 0; i < 3; i++ {
-			binary.Write(buf, binary.LittleEndian, [4]float32{1, 0, 0, 0})
-		}
-		weightsLen := buf.Len() - weightsOffset
-
-		animInputOffset := buf.Len()
-		binary.Write(buf, binary.LittleEndian, []float32{0.0, 1.0})
-		animInputLen := buf.Len() - animInputOffset
-
-		animTransOffset := buf.Len()
-		binary.Write(buf, binary.LittleEndian, [][3]float32{{0, 0, 0}, {0, 1, 0}})
-		animTransLen := buf.Len() - animTransOffset
-
-		animRotOffset := buf.Len()
-		binary.Write(buf, binary.LittleEndian, [][4]float32{{0, 0, 0, 1}, {0, 0, 0, 1}})
-		animRotLen := buf.Len() - animRotOffset
-
-		animScaleOffset := buf.Len()
-		binary.Write(buf, binary.LittleEndian, [][3]float32{{1, 1, 1}, {1, 1, 1}})
-		animScaleLen := buf.Len() - animScaleOffset
-
-		morphWeightOffset := buf.Len()
-		binary.Write(buf, binary.LittleEndian, []float32{0.0, 1.0})
-		morphWeightLen := buf.Len() - morphWeightOffset
-
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [
-{"mesh": 0, "skin": 0},
-{"name": "Bone", "translation": [0, 0, 0]}
-],
-"meshes": [{"primitives": [{"attributes": {"POSITION": 0, "JOINTS_0": 4, "WEIGHTS_0": 5}, "indices": 1}]}],
-"skins": [{"joints": [1], "inverseBindMatrices": 2}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"},
-{"bufferView": 2, "componentType": 5126, "count": 1, "type": "MAT4"},
-{"bufferView": 3, "componentType": 5126, "count": 2, "type": "SCALAR"},
-{"bufferView": 4, "componentType": 5121, "count": 3, "type": "VEC4"},
-{"bufferView": 5, "componentType": 5126, "count": 3, "type": "VEC4"},
-{"bufferView": 6, "componentType": 5126, "count": 2, "type": "VEC3"},
-{"bufferView": 7, "componentType": 5126, "count": 2, "type": "VEC4"},
-{"bufferView": 8, "componentType": 5126, "count": 2, "type": "VEC3"},
-{"bufferView": 9, "componentType": 5126, "count": 2, "type": "SCALAR"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d}
-],
-"buffers": [{"byteLength": %d}],
-"animations": [{
-"name": "MorphAnim",
-"channels": [
-{"sampler": 0, "target": {"node": 1, "path": "translation"}},
-{"sampler": 1, "target": {"node": 1, "path": "rotation"}},
-{"sampler": 2, "target": {"node": 1, "path": "scale"}},
-{"sampler": 3, "target": {"node": 1, "path": "weights"}}
-],
-"samplers": [
-{"input": 3, "output": 6, "interpolation": "LINEAR"},
-{"input": 3, "output": 7, "interpolation": "LINEAR"},
-{"input": 3, "output": 8, "interpolation": "LINEAR"},
-{"input": 3, "output": 9, "interpolation": "LINEAR"}
-]
-}]
-}`, posLen, posLen, idxLen, ibmOffset, ibmLen, animInputOffset, animInputLen, jointsOffset, jointsLen, weightsOffset, weightsLen, animTransOffset, animTransLen, animRotOffset, animRotLen, animScaleOffset, animScaleLen, morphWeightOffset, morphWeightLen, buf.Len())
-
-		glb := buildGLBWithBin(jsonStr, buf.Bytes())
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("morph_weights", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
+	suite.Run("model is skinned", func() {
 		suite.True(m.Skinned())
+	})
+
+	suite.Run("bone transform has correct translation from matrix decomposition", func() {
+		skel := m.Skeleton()
+		suite.Require().NotNil(skel)
+		suite.Require().Len(skel.Bones, 1)
+		t := skel.Bones[0].LocalTransform.Translation
+		suite.InDelta(2.0, float64(t[0]), 1e-3)
+		suite.InDelta(3.0, float64(t[1]), 1e-3)
+		suite.InDelta(4.0, float64(t[2]), 1e-3)
+	})
+
+	suite.Run("bone rotation is approximately identity quaternion", func() {
+		skel := m.Skeleton()
+		q := skel.Bones[0].LocalTransform.Rotation
+		suite.InDelta(0.0, float64(q[0]), 1e-3)
+		suite.InDelta(0.0, float64(q[1]), 1e-3)
+		suite.InDelta(0.0, float64(q[2]), 1e-3)
+		suite.InDelta(1.0, float64(q[3]), 1e-3)
+	})
+
+	suite.Run("bone scale is unity", func() {
+		skel := m.Skeleton()
+		s := skel.Bones[0].LocalTransform.Scale
+		suite.InDelta(1.0, float64(s[0]), 1e-3)
+		suite.InDelta(1.0, float64(s[1]), 1e-3)
+		suite.InDelta(1.0, float64(s[2]), 1e-3)
+	})
+
+	suite.Run("bone uses identity inverse bind matrix when not provided by skin", func() {
+		skel := m.Skeleton()
+		expected := [16]float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}
+		suite.Equal(expected, skel.Bones[0].InverseBindMatrix)
+	})
+}
+
+func (suite *loaderTest) TestLoadGLBWithAnimationsNoSkeleton() {
+	bin := buildAnimOnlyBin()
+	jsonStr := `{
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [{"mesh": 0}],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
+  "animations": [{
+    "name": "bounce",
+    "channels": [{"sampler": 0, "target": {"node": 0, "path": "translation"}}],
+    "samplers": [{"input": 2, "output": 3}]
+  }],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+    {"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"},
+    {"bufferView": 2, "componentType": 5126, "count": 2, "type": "SCALAR"},
+    {"bufferView": 3, "componentType": 5126, "count": 2, "type": "VEC3"}
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+    {"buffer": 0, "byteOffset": 36, "byteLength": 6},
+    {"buffer": 0, "byteOffset": 44, "byteLength": 8},
+    {"buffer": 0, "byteOffset": 52, "byteLength": 24}
+  ],
+  "buffers": [{"byteLength": 76}]
+}`
+	glb := buildGLBWithBin(jsonStr, bin)
+	dir := suite.T().TempDir()
+	path := filepath.Join(dir, "anim_only.glb")
+	suite.Require().NoError(os.WriteFile(path, glb, 0644))
+
+	l := loader.NewLoader(loader.BackendTypeGLTF)
+	m, err := l.Load(path)
+	suite.Require().NoError(err)
+
+	suite.Run("model loads successfully", func() {
+		suite.NotNil(m)
+	})
+
+	suite.Run("has one animation", func() {
 		suite.Equal(1, m.AnimationCount())
 	})
-}
 
-func (suite *loaderTest) TestLoadReaderSkeletonWithZeroScaleMatrix() {
-	suite.Run("skeleton node with zero-scale matrix uses identity fallback", func() {
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		posLen := buf.Len()
-		for _, idx := range []uint16{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		idxLen := buf.Len() - posLen
-
-		ibmOffset := buf.Len()
-		ibm := [16]float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}
-		binary.Write(buf, binary.LittleEndian, ibm)
-		ibmLen := buf.Len() - ibmOffset
-
-		jointsOffset := buf.Len()
-		for i := 0; i < 3; i++ {
-			binary.Write(buf, binary.LittleEndian, [4]uint8{0, 0, 0, 0})
-		}
-		jointsLen := buf.Len() - jointsOffset
-
-		weightsOffset := buf.Len()
-		for i := 0; i < 3; i++ {
-			binary.Write(buf, binary.LittleEndian, [4]float32{1, 0, 0, 0})
-		}
-		weightsLen := buf.Len() - weightsOffset
-
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [
-{"mesh": 0, "skin": 0},
-{"name": "ZeroScale", "matrix": [0,0,0,0, 0,0,0,0, 0,0,0,0, 5,10,15,1]}
-],
-"meshes": [{"primitives": [{"attributes": {"POSITION": 0, "JOINTS_0": 3, "WEIGHTS_0": 4}, "indices": 1}]}],
-"skins": [{"joints": [1], "inverseBindMatrices": 2}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"},
-{"bufferView": 2, "componentType": 5126, "count": 1, "type": "MAT4"},
-{"bufferView": 3, "componentType": 5121, "count": 3, "type": "VEC4"},
-{"bufferView": 4, "componentType": 5126, "count": 3, "type": "VEC4"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d}
-],
-"buffers": [{"byteLength": %d}]
-}`, posLen, posLen, idxLen, ibmOffset, ibmLen, jointsOffset, jointsLen, weightsOffset, weightsLen, buf.Len())
-
-		glb := buildGLBWithBin(jsonStr, buf.Bytes())
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("zero_scale", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-		suite.True(m.Skinned())
+	suite.Run("animation name is bounce", func() {
+		anims := m.Animations()
+		suite.Require().Len(anims, 1)
+		suite.Equal("bounce", anims[0].Name)
 	})
 }
 
-func (suite *loaderTest) TestLoadReaderSkeletonWithoutInverseBindMatrices() {
-	suite.Run("skeleton without IBM uses identity matrices for bones", func() {
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		posLen := buf.Len()
-		for _, idx := range []uint16{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		idxLen := buf.Len() - posLen
-
-		jointsOffset := buf.Len()
-		for i := 0; i < 3; i++ {
-			binary.Write(buf, binary.LittleEndian, [4]uint8{0, 0, 0, 0})
-		}
-		jointsLen := buf.Len() - jointsOffset
-
-		weightsOffset := buf.Len()
-		for i := 0; i < 3; i++ {
-			binary.Write(buf, binary.LittleEndian, [4]float32{1, 0, 0, 0})
-		}
-		weightsLen := buf.Len() - weightsOffset
-
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
+func (suite *loaderTest) TestLoadGLTFWithDataURI() {
+	suite.Run("loads gltf with base64 data URI buffer", func() {
+		binData := buildMinimalTriangleBin()
+		encoded := base64.StdEncoding.EncodeToString(binData)
 		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [
-{"mesh": 0, "skin": 0},
-{"name": "Root", "children": [2]},
-{"name": "Child"}
-],
-"meshes": [{"primitives": [{"attributes": {"POSITION": 0, "JOINTS_0": 2, "WEIGHTS_0": 3}, "indices": 1}]}],
-"skins": [{"joints": [1, 2]}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"},
-{"bufferView": 2, "componentType": 5121, "count": 3, "type": "VEC4"},
-{"bufferView": 3, "componentType": 5126, "count": 3, "type": "VEC4"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d}
-],
-"buffers": [{"byteLength": %d}]
-}`, posLen, posLen, idxLen, jointsOffset, jointsLen, weightsOffset, weightsLen, buf.Len())
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [{"mesh": 0}],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
+    {"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"}
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+    {"buffer": 0, "byteOffset": 36, "byteLength": 6}
+  ],
+  "buffers": [{"uri": "data:application/octet-stream;base64,%s", "byteLength": %d}]
+}`, encoded, len(binData))
 
-		glb := buildGLBWithBin(jsonStr, buf.Bytes())
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "data_uri.gltf")
+		suite.Require().NoError(os.WriteFile(path, []byte(jsonStr), 0644))
+
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("no_ibm", bytes.NewReader(glb), true, nil)
+		m, err := l.Load(path)
 		suite.NoError(err)
 		suite.NotNil(m)
-		suite.True(m.Skinned())
-		suite.NotNil(m.Skeleton())
-		suite.Len(m.Skeleton().Bones, 2)
 	})
 }
 
-func (suite *loaderTest) TestLoadReaderDataURINonBase64Error() {
-	suite.Run("data URI without base64 encoding returns error", func() {
+func (suite *loaderTest) TestLoadGLTFWithSamplerWrapAndExternalTexture() {
+	tmpDir := suite.T().TempDir()
+
+	binData := buildMinimalTriangleBin()
+	suite.Require().NoError(os.WriteFile(filepath.Join(tmpDir, "mesh.bin"), binData, 0644))
+
+	pngData := build1x1PNG()
+	suite.Require().NoError(os.WriteFile(filepath.Join(tmpDir, "tex.png"), pngData, 0644))
+
+	jsonStr := fmt.Sprintf(`{
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [{"mesh": 0}],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1, "material": 0}]}],
+  "materials": [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}],
+  "textures": [{"source": 0, "sampler": 0}],
+  "images": [{"uri": "tex.png", "mimeType": "image/png"}],
+  "samplers": [{"wrapS": 33071, "wrapT": 33648, "magFilter": 9728, "minFilter": 9987}],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
+    {"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"}
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+    {"buffer": 0, "byteOffset": 36, "byteLength": 6}
+  ],
+  "buffers": [{"uri": "mesh.bin", "byteLength": %d}]
+}`, len(binData))
+
+	gltfPath := filepath.Join(tmpDir, "model.gltf")
+	suite.Require().NoError(os.WriteFile(gltfPath, []byte(jsonStr), 0644))
+
+	l := loader.NewLoader(loader.BackendTypeGLTF)
+	m, err := l.Load(gltfPath)
+	suite.Require().NoError(err)
+
+	suite.Run("model loads with material", func() {
+		suite.NotEmpty(m.ImportedMaterials())
+	})
+
+	suite.Run("diffuse texture has loaded data from external file", func() {
+		mats := m.ImportedMaterials()
+		suite.Require().NotEmpty(mats)
+		suite.NotNil(mats[0].DiffuseTexture)
+		suite.NotEmpty(mats[0].DiffuseTexture.Data)
+	})
+
+	suite.Run("sampler data is present on texture", func() {
+		mats := m.ImportedMaterials()
+		suite.Require().NotEmpty(mats)
+		suite.Require().NotNil(mats[0].DiffuseTexture)
+		suite.NotNil(mats[0].DiffuseTexture.SamplerData)
+	})
+}
+
+func (suite *loaderTest) TestLoadGLBWithUInt32Indices() {
+	suite.Run("loads mesh with unsigned int indices", func() {
+		bin := buildUInt32IndicesBin()
 		jsonStr := `{
-"asset": {"version": "2.0"},
-"materials": [{
-"name": "BadURI",
-"pbrMetallicRoughness": {
-"baseColorTexture": {"index": 0}
-}
-}],
-"textures": [{"source": 0}],
-"images": [{"uri": "data:image/png;charset=utf-8,notbase64", "mimeType": "image/png"}]
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [{"mesh": 0}],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+    {"bufferView": 1, "componentType": 5125, "count": 3, "type": "SCALAR"}
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+    {"buffer": 0, "byteOffset": 36, "byteLength": 12}
+  ],
+  "buffers": [{"byteLength": 48}]
 }`
+		glb := buildGLBWithBin(jsonStr, bin)
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "uint32_indices.glb")
+		suite.Require().NoError(os.WriteFile(path, glb, 0644))
 
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("bad_uri", bytes.NewReader([]byte(jsonStr)), false, nil)
-		suite.Error(err)
-		suite.Nil(m)
+		m, err := l.Load(path)
+		suite.NoError(err)
+		suite.NotNil(m)
 	})
 }
 
-func (suite *loaderTest) TestLoadReaderGLBInvalidMagic() {
-	suite.Run("GLB with invalid magic byte returns error", func() {
-		data := make([]byte, 20)
-		binary.LittleEndian.PutUint32(data[0:4], 0xDEADBEEF)
-		binary.LittleEndian.PutUint32(data[4:8], 2)
-		binary.LittleEndian.PutUint32(data[8:12], 20)
+// buildTriangleWithVec3FloatColors constructs binary data for a triangle with VEC3 float vertex colors.
+// Layout: 36 bytes positions + 36 bytes VEC3 colors + 6 bytes indices + 2 bytes padding = 80 bytes.
+func buildTriangleWithVec3FloatColors() []byte {
+	buf := &bytes.Buffer{}
+	for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
+		binary.Write(buf, binary.LittleEndian, p)
+	}
+	for _, c := range [][3]float32{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}} {
+		binary.Write(buf, binary.LittleEndian, c)
+	}
+	for _, idx := range []uint16{0, 1, 2} {
+		binary.Write(buf, binary.LittleEndian, idx)
+	}
+	for buf.Len()%4 != 0 {
+		buf.WriteByte(0)
+	}
+	return buf.Bytes()
+}
+
+// buildTriangleWithUByteVec4Colors constructs binary data for a triangle with unsigned byte VEC4 vertex colors.
+// Layout: 36 bytes positions + 12 bytes ubyte VEC4 colors + 6 bytes indices + 2 bytes padding = 56 bytes.
+func buildTriangleWithUByteVec4Colors() []byte {
+	buf := &bytes.Buffer{}
+	for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
+		binary.Write(buf, binary.LittleEndian, p)
+	}
+	for _, c := range [][4]uint8{{255, 0, 0, 255}, {0, 255, 0, 255}, {0, 0, 255, 255}} {
+		binary.Write(buf, binary.LittleEndian, c)
+	}
+	for _, idx := range []uint16{0, 1, 2} {
+		binary.Write(buf, binary.LittleEndian, idx)
+	}
+	for buf.Len()%4 != 0 {
+		buf.WriteByte(0)
+	}
+	return buf.Bytes()
+}
+
+// buildTriangleWithUShortVec4Colors constructs binary data for a triangle with unsigned short VEC4 vertex colors.
+// Layout: 36 bytes positions + 24 bytes ushort VEC4 colors + 6 bytes indices + 2 bytes padding = 68 bytes.
+func buildTriangleWithUShortVec4Colors() []byte {
+	buf := &bytes.Buffer{}
+	for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
+		binary.Write(buf, binary.LittleEndian, p)
+	}
+	for _, c := range [][4]uint16{{65535, 0, 0, 65535}, {0, 65535, 0, 65535}, {0, 0, 65535, 65535}} {
+		binary.Write(buf, binary.LittleEndian, c)
+	}
+	for _, idx := range []uint16{0, 1, 2} {
+		binary.Write(buf, binary.LittleEndian, idx)
+	}
+	for buf.Len()%4 != 0 {
+		buf.WriteByte(0)
+	}
+	return buf.Bytes()
+}
+
+// buildSkeletonMatrixBin constructs binary data for a skinned triangle mesh with one bone.
+// Layout: 36 bytes positions + 12 bytes joints + 48 bytes weights + 6 bytes indices + 2 bytes padding = 104 bytes.
+func buildSkeletonMatrixBin() []byte {
+	buf := &bytes.Buffer{}
+	for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
+		binary.Write(buf, binary.LittleEndian, p)
+	}
+	for i := 0; i < 3; i++ {
+		binary.Write(buf, binary.LittleEndian, [4]uint8{0, 0, 0, 0})
+	}
+	for i := 0; i < 3; i++ {
+		binary.Write(buf, binary.LittleEndian, [4]float32{1, 0, 0, 0})
+	}
+	for _, idx := range []uint16{0, 1, 2} {
+		binary.Write(buf, binary.LittleEndian, idx)
+	}
+	for buf.Len()%4 != 0 {
+		buf.WriteByte(0)
+	}
+	return buf.Bytes()
+}
+
+// buildAnimOnlyBin constructs binary data for a triangle mesh with animation data but no skeleton.
+// Layout: 36 bytes positions + 6 bytes indices + 2 bytes padding + 8 bytes timestamps + 24 bytes translations = 76 bytes.
+func buildAnimOnlyBin() []byte {
+	buf := &bytes.Buffer{}
+	for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
+		binary.Write(buf, binary.LittleEndian, p)
+	}
+	for _, idx := range []uint16{0, 1, 2} {
+		binary.Write(buf, binary.LittleEndian, idx)
+	}
+	for buf.Len()%4 != 0 {
+		buf.WriteByte(0)
+	}
+	binary.Write(buf, binary.LittleEndian, float32(0.0))
+	binary.Write(buf, binary.LittleEndian, float32(1.0))
+	binary.Write(buf, binary.LittleEndian, [3]float32{0, 0, 0})
+	binary.Write(buf, binary.LittleEndian, [3]float32{0, 1, 0})
+	return buf.Bytes()
+}
+
+// buildUInt32IndicesBin constructs binary data for a triangle mesh with uint32 indices.
+// Layout: 36 bytes positions + 12 bytes uint32 indices = 48 bytes.
+func buildUInt32IndicesBin() []byte {
+	buf := &bytes.Buffer{}
+	for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
+		binary.Write(buf, binary.LittleEndian, p)
+	}
+	for _, idx := range []uint32{0, 1, 2} {
+		binary.Write(buf, binary.LittleEndian, idx)
+	}
+	return buf.Bytes()
+}
+
+// build1x1PNG creates a minimal 1x1 white RGBA PNG image as raw bytes.
+func build1x1PNG() []byte {
+	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	img.Set(0, 0, color.RGBA{R: 255, G: 255, B: 255, A: 255})
+	var buf bytes.Buffer
+	png.Encode(&buf, img)
+	return buf.Bytes()
+}
+
+func (suite *loaderTest) TestLoadGLBWithUInt8Indices() {
+	suite.Run("loads mesh with unsigned byte indices", func() {
+		bin := buildUInt8IndicesBin()
+		jsonStr := `{
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [{"mesh": 0}],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+    {"bufferView": 1, "componentType": 5121, "count": 3, "type": "SCALAR"}
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+    {"buffer": 0, "byteOffset": 36, "byteLength": 3}
+  ],
+  "buffers": [{"byteLength": 40}]
+}`
+		glb := buildGLBWithBin(jsonStr, bin)
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "uint8_indices.glb")
+		suite.Require().NoError(os.WriteFile(path, glb, 0644))
 
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("bad_magic", bytes.NewReader(data), true, nil)
-		suite.Error(err)
-		suite.Nil(m)
+		m, err := l.Load(path)
+		suite.NoError(err)
+		suite.NotNil(m)
 	})
 }
 
-func (suite *loaderTest) TestLoadReaderGLBInvalidVersion() {
-	suite.Run("GLB with version 1 returns error", func() {
-		data := make([]byte, 20)
-		binary.LittleEndian.PutUint32(data[0:4], 0x46546C67)
-		binary.LittleEndian.PutUint32(data[4:8], 1)
-		binary.LittleEndian.PutUint32(data[8:12], 20)
+func (suite *loaderTest) TestLoadGLBWithNoIndices() {
+	suite.Run("loads mesh without explicit indices", func() {
+		bin := buildPositionsOnlyBin()
+		jsonStr := `{
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [{"mesh": 0}],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"}
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36}
+  ],
+  "buffers": [{"byteLength": 36}]
+}`
+		glb := buildGLBWithBin(jsonStr, bin)
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "no_indices.glb")
+		suite.Require().NoError(os.WriteFile(path, glb, 0644))
 
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("bad_version", bytes.NewReader(data), true, nil)
-		suite.Error(err)
-		suite.Nil(m)
+		m, err := l.Load(path)
+		suite.NoError(err)
+		suite.NotNil(m)
 	})
 }
 
-func (suite *loaderTest) TestLoadReaderGLBTooSmall() {
-	suite.Run("GLB with less than 12 bytes returns error", func() {
-		data := make([]byte, 8)
+func (suite *loaderTest) TestLoadGLTFWithDataURIImage() {
+	suite.Run("loads material with base64-encoded image data URI", func() {
+		pngData := build1x1PNG()
+		encodedPng := base64.StdEncoding.EncodeToString(pngData)
+		binData := buildMinimalTriangleBin()
+		encodedBin := base64.StdEncoding.EncodeToString(binData)
+
+		jsonStr := fmt.Sprintf(`{
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [{"mesh": 0}],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1, "material": 0}]}],
+  "materials": [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}],
+  "textures": [{"source": 0}],
+  "images": [{"uri": "data:image/png;base64,%s", "mimeType": "image/png"}],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
+    {"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"}
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+    {"buffer": 0, "byteOffset": 36, "byteLength": 6}
+  ],
+  "buffers": [{"uri": "data:application/octet-stream;base64,%s", "byteLength": %d}]
+}`, encodedPng, encodedBin, len(binData))
+
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "data_uri_image.gltf")
+		suite.Require().NoError(os.WriteFile(path, []byte(jsonStr), 0644))
+
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("tiny", bytes.NewReader(data), true, nil)
-		suite.Error(err)
-		suite.Nil(m)
+		m, err := l.Load(path)
+		suite.NoError(err)
+		suite.NotNil(m)
+
+		mats := m.ImportedMaterials()
+		suite.Require().NotEmpty(mats)
+		suite.NotNil(mats[0].DiffuseTexture)
+		suite.NotEmpty(mats[0].DiffuseTexture.Data)
 	})
 }
 
-func (suite *loaderTest) TestLoadReaderGLBMissingJSONChunk() {
-	suite.Run("GLB with only binary chunk and no JSON returns error", func() {
-		binChunk := []byte{0, 0, 0, 0}
-		data := &bytes.Buffer{}
-		binary.Write(data, binary.LittleEndian, uint32(0x46546C67))
-		binary.Write(data, binary.LittleEndian, uint32(2))
-		totalLen := uint32(12 + 8 + len(binChunk))
-		binary.Write(data, binary.LittleEndian, totalLen)
-		binary.Write(data, binary.LittleEndian, uint32(len(binChunk)))
-		binary.Write(data, binary.LittleEndian, uint32(0x004E4942))
-		data.Write(binChunk)
+func (suite *loaderTest) TestLoadGLTFWithNormalAndMetallicTextures() {
+	tmpDir := suite.T().TempDir()
 
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("no_json", bytes.NewReader(data.Bytes()), true, nil)
-		suite.Error(err)
-		suite.Nil(m)
+	pngData := build1x1PNG()
+	suite.Require().NoError(os.WriteFile(filepath.Join(tmpDir, "diffuse.png"), pngData, 0644))
+	suite.Require().NoError(os.WriteFile(filepath.Join(tmpDir, "normal.png"), pngData, 0644))
+	suite.Require().NoError(os.WriteFile(filepath.Join(tmpDir, "metallic.png"), pngData, 0644))
+
+	binData := buildMinimalTriangleBin()
+	suite.Require().NoError(os.WriteFile(filepath.Join(tmpDir, "mesh.bin"), binData, 0644))
+
+	jsonStr := fmt.Sprintf(`{
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [{"mesh": 0}],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1, "material": 0}]}],
+  "materials": [{
+    "pbrMetallicRoughness": {
+      "baseColorTexture": {"index": 0},
+      "metallicRoughnessTexture": {"index": 1},
+      "metallicFactor": 0.5,
+      "roughnessFactor": 0.8,
+      "baseColorFactor": [0.9, 0.8, 0.7, 1.0]
+    },
+    "normalTexture": {"index": 2}
+  }],
+  "textures": [
+    {"source": 0},
+    {"source": 1},
+    {"source": 2}
+  ],
+  "images": [
+    {"uri": "diffuse.png", "mimeType": "image/png"},
+    {"uri": "metallic.png", "mimeType": "image/png"},
+    {"uri": "normal.png", "mimeType": "image/png"}
+  ],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
+    {"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"}
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+    {"buffer": 0, "byteOffset": 36, "byteLength": 6}
+  ],
+  "buffers": [{"uri": "mesh.bin", "byteLength": %d}]
+}`, len(binData))
+
+	gltfPath := filepath.Join(tmpDir, "model.gltf")
+	suite.Require().NoError(os.WriteFile(gltfPath, []byte(jsonStr), 0644))
+
+	l := loader.NewLoader(loader.BackendTypeGLTF)
+	m, err := l.Load(gltfPath)
+	suite.Require().NoError(err)
+
+	suite.Run("material has diffuse texture", func() {
+		mats := m.ImportedMaterials()
+		suite.Require().NotEmpty(mats)
+		suite.NotNil(mats[0].DiffuseTexture)
+	})
+
+	suite.Run("material has normal texture", func() {
+		mats := m.ImportedMaterials()
+		suite.Require().NotEmpty(mats)
+		suite.NotNil(mats[0].NormalTexture)
+	})
+
+	suite.Run("material has metallic roughness texture", func() {
+		mats := m.ImportedMaterials()
+		suite.Require().NotEmpty(mats)
+		suite.NotNil(mats[0].MetallicRoughnessTexture)
+	})
+
+	suite.Run("material metallic factor is correct", func() {
+		mats := m.ImportedMaterials()
+		suite.InDelta(0.5, float64(mats[0].Metallic), 1e-3)
+	})
+
+	suite.Run("material roughness factor is correct", func() {
+		mats := m.ImportedMaterials()
+		suite.InDelta(0.8, float64(mats[0].Roughness), 1e-3)
+	})
+
+	suite.Run("material base color factor is correct", func() {
+		mats := m.ImportedMaterials()
+		suite.InDelta(0.9, float64(mats[0].BaseColor[0]), 1e-3)
+		suite.InDelta(0.8, float64(mats[0].BaseColor[1]), 1e-3)
+		suite.InDelta(0.7, float64(mats[0].BaseColor[2]), 1e-3)
+		suite.InDelta(1.0, float64(mats[0].BaseColor[3]), 1e-3)
 	})
 }
 
-func (suite *loaderTest) TestLoadReaderGLTFInvalidVersion() {
-	suite.Run("GLTF JSON with version 1.0 returns error", func() {
+func (suite *loaderTest) TestLoadGLBWithRotatedMatrixSkeleton() {
+	bin := buildSkeletonMatrixBin()
+
+	suite.Run("180 degree rotation around X axis triggers r00 dominant quaternion branch", func() {
+		jsonStr := `{
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [
+    {"mesh": 0, "skin": 0},
+    {"name": "bone_x180", "matrix": [1,0,0,0, 0,-1,0,0, 0,0,-1,0, 0,0,0,1]}
+  ],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "JOINTS_0": 1, "WEIGHTS_0": 2}, "indices": 3}]}],
+  "skins": [{"joints": [1]}],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+    {"bufferView": 1, "componentType": 5121, "count": 3, "type": "VEC4"},
+    {"bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC4"},
+    {"bufferView": 3, "componentType": 5123, "count": 3, "type": "SCALAR"}
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+    {"buffer": 0, "byteOffset": 36, "byteLength": 12},
+    {"buffer": 0, "byteOffset": 48, "byteLength": 48},
+    {"buffer": 0, "byteOffset": 96, "byteLength": 6}
+  ],
+  "buffers": [{"byteLength": 104}]
+}`
+		glb := buildGLBWithBin(jsonStr, bin)
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "rot_x180.glb")
+		suite.Require().NoError(os.WriteFile(path, glb, 0644))
+
+		l := loader.NewLoader(loader.BackendTypeGLTF)
+		m, err := l.Load(path)
+		suite.NoError(err)
+		suite.NotNil(m)
+
+		skel := m.Skeleton()
+		suite.Require().NotNil(skel)
+		q := skel.Bones[0].LocalTransform.Rotation
+		length := float64(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3])
+		suite.InDelta(1.0, length, 1e-3)
+	})
+
+	suite.Run("180 degree rotation around Y axis triggers r11 dominant quaternion branch", func() {
+		jsonStr := `{
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [
+    {"mesh": 0, "skin": 0},
+    {"name": "bone_y180", "matrix": [-1,0,0,0, 0,1,0,0, 0,0,-1,0, 0,0,0,1]}
+  ],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "JOINTS_0": 1, "WEIGHTS_0": 2}, "indices": 3}]}],
+  "skins": [{"joints": [1]}],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+    {"bufferView": 1, "componentType": 5121, "count": 3, "type": "VEC4"},
+    {"bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC4"},
+    {"bufferView": 3, "componentType": 5123, "count": 3, "type": "SCALAR"}
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+    {"buffer": 0, "byteOffset": 36, "byteLength": 12},
+    {"buffer": 0, "byteOffset": 48, "byteLength": 48},
+    {"buffer": 0, "byteOffset": 96, "byteLength": 6}
+  ],
+  "buffers": [{"byteLength": 104}]
+}`
+		glb := buildGLBWithBin(jsonStr, bin)
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "rot_y180.glb")
+		suite.Require().NoError(os.WriteFile(path, glb, 0644))
+
+		l := loader.NewLoader(loader.BackendTypeGLTF)
+		m, err := l.Load(path)
+		suite.NoError(err)
+		suite.NotNil(m)
+
+		skel := m.Skeleton()
+		suite.Require().NotNil(skel)
+		q := skel.Bones[0].LocalTransform.Rotation
+		length := float64(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3])
+		suite.InDelta(1.0, length, 1e-3)
+	})
+
+	suite.Run("180 degree rotation around Z axis triggers r22 dominant quaternion branch", func() {
+		jsonStr := `{
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [
+    {"mesh": 0, "skin": 0},
+    {"name": "bone_z180", "matrix": [-1,0,0,0, 0,-1,0,0, 0,0,1,0, 0,0,0,1]}
+  ],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "JOINTS_0": 1, "WEIGHTS_0": 2}, "indices": 3}]}],
+  "skins": [{"joints": [1]}],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+    {"bufferView": 1, "componentType": 5121, "count": 3, "type": "VEC4"},
+    {"bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC4"},
+    {"bufferView": 3, "componentType": 5123, "count": 3, "type": "SCALAR"}
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+    {"buffer": 0, "byteOffset": 36, "byteLength": 12},
+    {"buffer": 0, "byteOffset": 48, "byteLength": 48},
+    {"buffer": 0, "byteOffset": 96, "byteLength": 6}
+  ],
+  "buffers": [{"byteLength": 104}]
+}`
+		glb := buildGLBWithBin(jsonStr, bin)
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "rot_z180.glb")
+		suite.Require().NoError(os.WriteFile(path, glb, 0644))
+
+		l := loader.NewLoader(loader.BackendTypeGLTF)
+		m, err := l.Load(path)
+		suite.NoError(err)
+		suite.NotNil(m)
+
+		skel := m.Skeleton()
+		suite.Require().NotNil(skel)
+		q := skel.Bones[0].LocalTransform.Rotation
+		length := float64(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3])
+		suite.InDelta(1.0, length, 1e-3)
+	})
+}
+
+func (suite *loaderTest) TestLoadGLBWithSceneName() {
+	suite.Run("model name comes from scene name when available", func() {
+		glb := buildMinimalGLB(`{"asset":{"version":"2.0"}, "scene": 0, "scenes":[{"name":"MyScene"}]}`)
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "named_scene.glb")
+		suite.Require().NoError(os.WriteFile(path, glb, 0644))
+
+		l := loader.NewLoader(loader.BackendTypeGLTF)
+		m, err := l.Load(path)
+		suite.NoError(err)
+		suite.Equal("MyScene", m.Name())
+	})
+
+	suite.Run("model name is unnamed_model when no scene and no path fallback", func() {
+		bin := buildMinimalTriangleBin()
+		glb := buildGLBWithBin(`{"asset":{"version":"2.0"}, "meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1}]}], "accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},{"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}], "bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":6}], "buffers":[{"byteLength":44}]}`, bin)
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "no_scene.glb")
+		suite.Require().NoError(os.WriteFile(path, glb, 0644))
+
+		l := loader.NewLoader(loader.BackendTypeGLTF)
+		m, err := l.Load(path)
+		suite.NoError(err)
+		// The model name falls back to the file path when no scene name is present
+		suite.Equal(path, m.Name())
+	})
+}
+
+func (suite *loaderTest) TestLoadGLBWithTexCoordAndTangent() {
+	suite.Run("loads mesh with texcoords and tangent attributes", func() {
+		bin := buildTriangleWithTexCoordsAndTangents()
+		jsonStr := `{
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [{"mesh": 0}],
+  "meshes": [{"primitives": [{
+    "attributes": {"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2, "TANGENT": 3},
+    "indices": 4
+  }]}],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+    {"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3"},
+    {"bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC2"},
+    {"bufferView": 3, "componentType": 5126, "count": 3, "type": "VEC4"},
+    {"bufferView": 4, "componentType": 5123, "count": 3, "type": "SCALAR"}
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0,   "byteLength": 36},
+    {"buffer": 0, "byteOffset": 36,  "byteLength": 36},
+    {"buffer": 0, "byteOffset": 72,  "byteLength": 24},
+    {"buffer": 0, "byteOffset": 96,  "byteLength": 48},
+    {"buffer": 0, "byteOffset": 144, "byteLength": 6}
+  ],
+  "buffers": [{"byteLength": 152}]
+}`
+		glb := buildGLBWithBin(jsonStr, bin)
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "tangent.glb")
+		suite.Require().NoError(os.WriteFile(path, glb, 0644))
+
+		l := loader.NewLoader(loader.BackendTypeGLTF)
+		m, err := l.Load(path)
+		suite.NoError(err)
+		suite.NotNil(m)
+	})
+}
+
+func (suite *loaderTest) TestLoadGLBWithUByteVec3Colors() {
+	suite.Run("loads mesh with unsigned byte VEC3 vertex colors", func() {
+		bin := buildTriangleWithUByteVec3Colors()
+		jsonStr := `{
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [{"mesh": 0}],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "COLOR_0": 1}, "indices": 2}]}],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+    {"bufferView": 1, "componentType": 5121, "count": 3, "type": "VEC3"},
+    {"bufferView": 2, "componentType": 5123, "count": 3, "type": "SCALAR"}
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+    {"buffer": 0, "byteOffset": 36, "byteLength": 9},
+    {"buffer": 0, "byteOffset": 48, "byteLength": 6}
+  ],
+  "buffers": [{"byteLength": 56}]
+}`
+		glb := buildGLBWithBin(jsonStr, bin)
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "color_ubyte_vec3.glb")
+		suite.Require().NoError(os.WriteFile(path, glb, 0644))
+
+		l := loader.NewLoader(loader.BackendTypeGLTF)
+		m, err := l.Load(path)
+		suite.NoError(err)
+		suite.NotNil(m)
+	})
+}
+
+func (suite *loaderTest) TestLoadGLBWithUShortVec3Colors() {
+	suite.Run("loads mesh with unsigned short VEC3 vertex colors", func() {
+		bin := buildTriangleWithUShortVec3Colors()
+		jsonStr := `{
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [{"mesh": 0}],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "COLOR_0": 1}, "indices": 2}]}],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+    {"bufferView": 1, "componentType": 5123, "count": 3, "type": "VEC3"},
+    {"bufferView": 2, "componentType": 5123, "count": 3, "type": "SCALAR"}
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+    {"buffer": 0, "byteOffset": 36, "byteLength": 18},
+    {"buffer": 0, "byteOffset": 56, "byteLength": 6}
+  ],
+  "buffers": [{"byteLength": 64}]
+}`
+		glb := buildGLBWithBin(jsonStr, bin)
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "color_ushort_vec3.glb")
+		suite.Require().NoError(os.WriteFile(path, glb, 0644))
+
+		l := loader.NewLoader(loader.BackendTypeGLTF)
+		m, err := l.Load(path)
+		suite.NoError(err)
+		suite.NotNil(m)
+	})
+}
+
+// buildUInt8IndicesBin constructs binary data for a triangle mesh with uint8 indices.
+// Layout: 36 bytes positions + 3 bytes uint8 indices + 1 byte padding = 40 bytes.
+func buildUInt8IndicesBin() []byte {
+	buf := &bytes.Buffer{}
+	for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
+		binary.Write(buf, binary.LittleEndian, p)
+	}
+	buf.Write([]byte{0, 1, 2})
+	for buf.Len()%4 != 0 {
+		buf.WriteByte(0)
+	}
+	return buf.Bytes()
+}
+
+// buildPositionsOnlyBin constructs binary data containing only 3 vertex positions (no indices).
+// Layout: 36 bytes positions.
+func buildPositionsOnlyBin() []byte {
+	buf := &bytes.Buffer{}
+	for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
+		binary.Write(buf, binary.LittleEndian, p)
+	}
+	return buf.Bytes()
+}
+
+// buildTriangleWithTexCoordsAndTangents constructs binary data for a triangle with positions,
+// normals, tex coords, tangents, and indices.
+// Layout: 36 pos + 36 norm + 24 uv + 48 tangent + 6 idx + 2 pad = 152 bytes.
+func buildTriangleWithTexCoordsAndTangents() []byte {
+	buf := &bytes.Buffer{}
+	for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
+		binary.Write(buf, binary.LittleEndian, p)
+	}
+	for range 3 {
+		binary.Write(buf, binary.LittleEndian, [3]float32{0, 0, 1})
+	}
+	for _, uv := range [][2]float32{{0, 0}, {1, 0}, {0, 1}} {
+		binary.Write(buf, binary.LittleEndian, uv)
+	}
+	for range 3 {
+		binary.Write(buf, binary.LittleEndian, [4]float32{1, 0, 0, 1})
+	}
+	for _, idx := range []uint16{0, 1, 2} {
+		binary.Write(buf, binary.LittleEndian, idx)
+	}
+	for buf.Len()%4 != 0 {
+		buf.WriteByte(0)
+	}
+	return buf.Bytes()
+}
+
+// buildTriangleWithUByteVec3Colors constructs binary data for a triangle with unsigned byte VEC3 vertex colors.
+// Layout: 36 pos + 9 colors + 3 pad + 6 idx + 2 pad = 56 bytes.
+func buildTriangleWithUByteVec3Colors() []byte {
+	buf := &bytes.Buffer{}
+	for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
+		binary.Write(buf, binary.LittleEndian, p)
+	}
+	for _, c := range [][3]uint8{{255, 0, 0}, {0, 255, 0}, {0, 0, 255}} {
+		buf.Write(c[:])
+	}
+	for buf.Len()%4 != 0 {
+		buf.WriteByte(0)
+	}
+	for _, idx := range []uint16{0, 1, 2} {
+		binary.Write(buf, binary.LittleEndian, idx)
+	}
+	for buf.Len()%4 != 0 {
+		buf.WriteByte(0)
+	}
+	return buf.Bytes()
+}
+
+// buildTriangleWithUShortVec3Colors constructs binary data for a triangle with unsigned short VEC3 vertex colors.
+// Layout: 36 pos + 18 colors + 2 pad + 6 idx + 2 pad = 64 bytes.
+func buildTriangleWithUShortVec3Colors() []byte {
+	buf := &bytes.Buffer{}
+	for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
+		binary.Write(buf, binary.LittleEndian, p)
+	}
+	for _, c := range [][3]uint16{{65535, 0, 0}, {0, 65535, 0}, {0, 0, 65535}} {
+		binary.Write(buf, binary.LittleEndian, c)
+	}
+	for buf.Len()%4 != 0 {
+		buf.WriteByte(0)
+	}
+	for _, idx := range []uint16{0, 1, 2} {
+		binary.Write(buf, binary.LittleEndian, idx)
+	}
+	for buf.Len()%4 != 0 {
+		buf.WriteByte(0)
+	}
+	return buf.Bytes()
+}
+
+func (suite *loaderTest) TestLoadGLBInvalidMagic() {
+	suite.Run("returns error for GLB with wrong magic number", func() {
+		data := []byte("NOT_GL" + "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00")
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "bad_magic.glb")
+		suite.Require().NoError(os.WriteFile(path, data, 0644))
+
+		l := loader.NewLoader(loader.BackendTypeGLTF)
+		_, err := l.Load(path)
+		suite.Error(err)
+	})
+}
+
+func (suite *loaderTest) TestLoadGLBInvalidVersion() {
+	suite.Run("returns error for GLB with wrong version", func() {
+		buf := &bytes.Buffer{}
+		binary.Write(buf, binary.LittleEndian, uint32(0x46546C67)) // glTF magic
+		binary.Write(buf, binary.LittleEndian, uint32(1))          // wrong version (1 instead of 2)
+		binary.Write(buf, binary.LittleEndian, uint32(20))         // total length
+		// add 8 more zero bytes to avoid "too small" error
+		buf.Write(make([]byte, 8))
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "bad_version.glb")
+		suite.Require().NoError(os.WriteFile(path, buf.Bytes(), 0644))
+
+		l := loader.NewLoader(loader.BackendTypeGLTF)
+		_, err := l.Load(path)
+		suite.Error(err)
+	})
+}
+
+func (suite *loaderTest) TestLoadGLBTooSmall() {
+	suite.Run("returns error for GLB with fewer than 12 bytes", func() {
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "tiny.glb")
+		suite.Require().NoError(os.WriteFile(path, []byte{0x01, 0x02}, 0644))
+
+		l := loader.NewLoader(loader.BackendTypeGLTF)
+		_, err := l.Load(path)
+		suite.Error(err)
+	})
+}
+
+func (suite *loaderTest) TestLoadGLTFInvalidVersion() {
+	suite.Run("returns error for glTF with unsupported version", func() {
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "bad_version.gltf")
 		jsonStr := `{"asset": {"version": "1.0"}}`
+		suite.Require().NoError(os.WriteFile(path, []byte(jsonStr), 0644))
 
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("v1", bytes.NewReader([]byte(jsonStr)), false, nil)
+		_, err := l.Load(path)
 		suite.Error(err)
-		suite.Nil(m)
 	})
 }
 
-func (suite *loaderTest) TestLoadReaderModelNameFromSceneName() {
-	suite.Run("model name comes from scene when scene has a name", func() {
+func (suite *loaderTest) TestLoadGLTFInvalidJSON() {
+	suite.Run("returns error for malformed glTF JSON", func() {
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "bad_json.gltf")
+		suite.Require().NoError(os.WriteFile(path, []byte("{not valid json!}"), 0644))
+
+		l := loader.NewLoader(loader.BackendTypeGLTF)
+		_, err := l.Load(path)
+		suite.Error(err)
+	})
+}
+
+func (suite *loaderTest) TestLoadGLBMissingJSONChunk() {
+	suite.Run("returns error for GLB with no JSON chunk", func() {
+		buf := &bytes.Buffer{}
+		binary.Write(buf, binary.LittleEndian, uint32(0x46546C67)) // magic
+		binary.Write(buf, binary.LittleEndian, uint32(2))          // version
+		binary.Write(buf, binary.LittleEndian, uint32(20))         // total length (header + chunk header + 0 data)
+		// Write a BIN chunk instead of JSON chunk
+		binary.Write(buf, binary.LittleEndian, uint32(0))          // chunk length
+		binary.Write(buf, binary.LittleEndian, uint32(0x004E4942)) // BIN chunk type
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "no_json.glb")
+		suite.Require().NoError(os.WriteFile(path, buf.Bytes(), 0644))
+
+		l := loader.NewLoader(loader.BackendTypeGLTF)
+		_, err := l.Load(path)
+		suite.Error(err)
+	})
+}
+
+func (suite *loaderTest) TestLoadGLTFWithRepeatWrapMode() {
+	suite.Run("loads material with repeat wrap mode on sampler", func() {
+		tmpDir := suite.T().TempDir()
+		pngData := build1x1PNG()
+		suite.Require().NoError(os.WriteFile(filepath.Join(tmpDir, "tex.png"), pngData, 0644))
+
+		binData := buildMinimalTriangleBin()
+		suite.Require().NoError(os.WriteFile(filepath.Join(tmpDir, "mesh.bin"), binData, 0644))
+
+		jsonStr := fmt.Sprintf(`{
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [{"mesh": 0}],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1, "material": 0}]}],
+  "materials": [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}],
+  "textures": [{"source": 0, "sampler": 0}],
+  "samplers": [{"wrapS": 10497, "wrapT": 10497, "magFilter": 9729, "minFilter": 9987}],
+  "images": [{"uri": "tex.png", "mimeType": "image/png"}],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
+    {"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"}
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+    {"buffer": 0, "byteOffset": 36, "byteLength": 6}
+  ],
+  "buffers": [{"uri": "mesh.bin", "byteLength": %d}]
+}`, len(binData))
+		gltfPath := filepath.Join(tmpDir, "model.gltf")
+		suite.Require().NoError(os.WriteFile(gltfPath, []byte(jsonStr), 0644))
+
+		l := loader.NewLoader(loader.BackendTypeGLTF)
+		m, err := l.Load(gltfPath)
+		suite.NoError(err)
+		suite.NotNil(m)
+	})
+}
+
+func (suite *loaderTest) TestLoadGLBWithBufferViewImage() {
+	suite.Run("loads material with image stored in bufferView", func() {
+		pngData := build1x1PNG()
+		triData := buildMinimalTriangleBin()
+
+		totalBin := make([]byte, 0, len(triData)+len(pngData))
+		totalBin = append(totalBin, triData...)
+		totalBin = append(totalBin, pngData...)
+		for len(totalBin)%4 != 0 {
+			totalBin = append(totalBin, 0)
+		}
+
+		jsonStr := fmt.Sprintf(`{
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [{"mesh": 0}],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1, "material": 0}]}],
+  "materials": [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}],
+  "textures": [{"source": 0}],
+  "images": [{"bufferView": 2, "mimeType": "image/png"}],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
+    {"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"}
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+    {"buffer": 0, "byteOffset": 36, "byteLength": 6},
+    {"buffer": 0, "byteOffset": %d, "byteLength": %d}
+  ],
+  "buffers": [{"byteLength": %d}]
+}`, len(triData), len(pngData), len(totalBin))
+
+		glb := buildGLBWithBin(jsonStr, totalBin)
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "bv_image.glb")
+		suite.Require().NoError(os.WriteFile(path, glb, 0644))
+
+		l := loader.NewLoader(loader.BackendTypeGLTF)
+		m, err := l.Load(path)
+		suite.NoError(err)
+		suite.NotNil(m)
+
+		mats := m.ImportedMaterials()
+		suite.Require().NotEmpty(mats)
+		suite.NotNil(mats[0].DiffuseTexture)
+		suite.NotEmpty(mats[0].DiffuseTexture.Data)
+	})
+}
+
+func (suite *loaderTest) TestLoadGLBWithUnnamedAnimation() {
+	suite.Run("animation with no name gets fallback name", func() {
+		bin := buildAnimationWithScaleBin()
 		jsonStr := `{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"name": "MySceneName"}]
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [
+    {"mesh": 0, "skin": 0},
+    {"name": "bone"}
+  ],
+  "skins": [{"joints": [1]}],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "JOINTS_0": 1, "WEIGHTS_0": 2}, "indices": 3}]}],
+  "animations": [{
+    "channels": [
+      {"sampler": 0, "target": {"node": 1, "path": "scale"}}
+    ],
+    "samplers": [
+      {"input": 4, "output": 5}
+    ]
+  }],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+    {"bufferView": 1, "componentType": 5121, "count": 3, "type": "VEC4"},
+    {"bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC4"},
+    {"bufferView": 3, "componentType": 5123, "count": 3, "type": "SCALAR"},
+    {"bufferView": 4, "componentType": 5126, "count": 2, "type": "SCALAR"},
+    {"bufferView": 5, "componentType": 5126, "count": 2, "type": "VEC3"}
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+    {"buffer": 0, "byteOffset": 36, "byteLength": 12},
+    {"buffer": 0, "byteOffset": 48, "byteLength": 48},
+    {"buffer": 0, "byteOffset": 96, "byteLength": 6},
+    {"buffer": 0, "byteOffset": 104, "byteLength": 8},
+    {"buffer": 0, "byteOffset": 112, "byteLength": 24}
+  ],
+  "buffers": [{"byteLength": 136}]
 }`
+		glb := buildGLBWithBin(jsonStr, bin)
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "unnamed_anim.glb")
+		suite.Require().NoError(os.WriteFile(path, glb, 0644))
 
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("fallback", bytes.NewReader([]byte(jsonStr)), false, nil)
+		m, err := l.Load(path)
 		suite.NoError(err)
-		suite.NotNil(m)
-		suite.Equal("MySceneName", m.Name())
+
+		anims := m.Animations()
+		suite.Require().Len(anims, 1)
+		suite.Equal("animation_0", anims[0].Name)
 	})
 }
 
-func (suite *loaderTest) TestLoadReaderEmptyMeshName() {
-	suite.Run("mesh with empty name gets auto-generated name", func() {
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		posLen := buf.Len()
-		for _, idx := range []uint16{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [{"mesh": 0}],
-"meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": 6}
-],
-"buffers": [{"byteLength": %d}]
-}`, posLen, posLen, len(buf.Bytes()))
-
-		glb := buildGLBWithBin(jsonStr, buf.Bytes())
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("empty_name", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-	})
-}
-
-func (suite *loaderTest) TestLoadMeshOnlyWithTempGLTFFile() {
-	suite.Run("LoadMeshOnly from an actual gltf file on disk", func() {
-		tmpDir, err := os.MkdirTemp("", "loader_meshonly_*")
-		suite.NoError(err)
-		defer os.RemoveAll(tmpDir)
-
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		posLen := buf.Len()
-		for _, idx := range []uint16{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-		binData := buf.Bytes()
-
-		err = os.WriteFile(filepath.Join(tmpDir, "mesh.bin"), binData, 0644)
-		suite.NoError(err)
-
-		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [{"mesh": 0}],
-"meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": 6}
-],
-"buffers": [{"uri": "mesh.bin", "byteLength": %d}],
-"materials": [{"name": "SimpleMat", "pbrMetallicRoughness": {"baseColorFactor": [1,0,0,1]}}]
-}`, posLen, posLen, len(binData))
-
-		err = os.WriteFile(filepath.Join(tmpDir, "mesh.gltf"), []byte(jsonStr), 0644)
-		suite.NoError(err)
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadMeshOnly(filepath.Join(tmpDir, "mesh.gltf"), nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-		suite.False(m.Skinned())
-		suite.Len(m.ImportedMaterials(), 1)
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderSkeletonWithAnonymousBones() {
-	suite.Run("bones without names get auto-generated names", func() {
-		buf := &bytes.Buffer{}
-		for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
-			binary.Write(buf, binary.LittleEndian, p)
-		}
-		posLen := buf.Len()
-		for _, idx := range []uint16{0, 1, 2} {
-			binary.Write(buf, binary.LittleEndian, idx)
-		}
-		idxLen := buf.Len() - posLen
-
-		ibmOffset := buf.Len()
-		ibm := [16]float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}
-		binary.Write(buf, binary.LittleEndian, ibm)
-		ibmLen := buf.Len() - ibmOffset
-
-		jointsOffset := buf.Len()
-		for i := 0; i < 3; i++ {
-			binary.Write(buf, binary.LittleEndian, [4]uint8{0, 0, 0, 0})
-		}
-		jointsLen := buf.Len() - jointsOffset
-
-		weightsOffset := buf.Len()
-		for i := 0; i < 3; i++ {
-			binary.Write(buf, binary.LittleEndian, [4]float32{1, 0, 0, 0})
-		}
-		weightsLen := buf.Len() - weightsOffset
-
-		for buf.Len()%4 != 0 {
-			buf.WriteByte(0)
-		}
-
-		jsonStr := fmt.Sprintf(`{
-"asset": {"version": "2.0"},
-"scene": 0,
-"scenes": [{"nodes": [0]}],
-"nodes": [
-{"mesh": 0, "skin": 0},
-{"translation": [0, 0, 0]}
-],
-"meshes": [{"primitives": [{"attributes": {"POSITION": 0, "JOINTS_0": 3, "WEIGHTS_0": 4}, "indices": 1}]}],
-"skins": [{"joints": [1], "inverseBindMatrices": 2}],
-"accessors": [
-{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1,1,0], "min": [0,0,0]},
-{"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"},
-{"bufferView": 2, "componentType": 5126, "count": 1, "type": "MAT4"},
-{"bufferView": 3, "componentType": 5121, "count": 3, "type": "VEC4"},
-{"bufferView": 4, "componentType": 5126, "count": 3, "type": "VEC4"}
-],
-"bufferViews": [
-{"buffer": 0, "byteOffset": 0, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d},
-{"buffer": 0, "byteOffset": %d, "byteLength": %d}
-],
-"buffers": [{"byteLength": %d}]
-}`, posLen, posLen, idxLen, ibmOffset, ibmLen, jointsOffset, jointsLen, weightsOffset, weightsLen, buf.Len())
-
-		glb := buildGLBWithBin(jsonStr, buf.Bytes())
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("anon_bones", bytes.NewReader(glb), true, nil)
-		suite.NoError(err)
-		suite.NotNil(m)
-		suite.True(m.Skinned())
-		suite.Contains(m.Skeleton().Bones[0].Name, "bone_")
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderInvalidGLTFJSON() {
-	suite.Run("malformed JSON returns parse error", func() {
-		jsonStr := `{this is not valid json`
-
-		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("bad_json", bytes.NewReader([]byte(jsonStr)), false, nil)
-		suite.Error(err)
-		suite.Nil(m)
-	})
-}
-
-func (suite *loaderTest) TestLoadReaderBufferSizeMismatch() {
-	suite.Run("buffer with insufficient data returns error", func() {
-		buf := make([]byte, 4)
+func (suite *loaderTest) TestLoadGLBWithMultiChannelAnimation() {
+	suite.Run("animation with translation rotation and scale channels", func() {
+		bin := buildMultiChannelAnimBin()
 		jsonStr := `{
-"asset": {"version": "2.0"},
-"buffers": [{"byteLength": 1000}]
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [
+    {"mesh": 0, "skin": 0},
+    {"name": "bone"}
+  ],
+  "skins": [{"joints": [1]}],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "JOINTS_0": 1, "WEIGHTS_0": 2}, "indices": 3}]}],
+  "animations": [{"name": "multichannel",
+    "channels": [
+      {"sampler": 0, "target": {"node": 1, "path": "translation"}},
+      {"sampler": 1, "target": {"node": 1, "path": "rotation"}},
+      {"sampler": 2, "target": {"node": 1, "path": "scale"}}
+    ],
+    "samplers": [
+      {"input": 4, "output": 5},
+      {"input": 4, "output": 6},
+      {"input": 4, "output": 7}
+    ]
+  }],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+    {"bufferView": 1, "componentType": 5121, "count": 3, "type": "VEC4"},
+    {"bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC4"},
+    {"bufferView": 3, "componentType": 5123, "count": 3, "type": "SCALAR"},
+    {"bufferView": 4, "componentType": 5126, "count": 2, "type": "SCALAR"},
+    {"bufferView": 5, "componentType": 5126, "count": 2, "type": "VEC3"},
+    {"bufferView": 6, "componentType": 5126, "count": 2, "type": "VEC4"},
+    {"bufferView": 7, "componentType": 5126, "count": 2, "type": "VEC3"}
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+    {"buffer": 0, "byteOffset": 36, "byteLength": 12},
+    {"buffer": 0, "byteOffset": 48, "byteLength": 48},
+    {"buffer": 0, "byteOffset": 96, "byteLength": 6},
+    {"buffer": 0, "byteOffset": 104, "byteLength": 8},
+    {"buffer": 0, "byteOffset": 112, "byteLength": 24},
+    {"buffer": 0, "byteOffset": 136, "byteLength": 32},
+    {"buffer": 0, "byteOffset": 168, "byteLength": 24}
+  ],
+  "buffers": [{"byteLength": 192}]
 }`
+		glb := buildGLBWithBin(jsonStr, bin)
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "multichannel.glb")
+		suite.Require().NoError(os.WriteFile(path, glb, 0644))
 
-		glb := buildGLBWithBin(jsonStr, buf)
 		l := loader.NewLoader(loader.BackendTypeGLTF)
-		m, err := l.LoadReader("small_buf", bytes.NewReader(glb), true, nil)
-		suite.Error(err)
-		suite.Nil(m)
+		m, err := l.Load(path)
+		suite.NoError(err)
+
+		anims := m.Animations()
+		suite.Require().Len(anims, 1)
+		suite.Require().Len(anims[0].Channels, 1)
+		suite.NotEmpty(anims[0].Channels[0].PositionKeys)
+		suite.NotEmpty(anims[0].Channels[0].RotationKeys)
+		suite.NotEmpty(anims[0].Channels[0].ScaleKeys)
 	})
+}
+
+func (suite *loaderTest) TestLoadGLBWithMorphWeightsAnimation() {
+	suite.Run("animation with weights channel is skipped gracefully", func() {
+		bin := buildAnimationWithWeightsBin()
+		jsonStr := `{
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [
+    {"mesh": 0, "skin": 0},
+    {"name": "bone"}
+  ],
+  "skins": [{"joints": [1]}],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "JOINTS_0": 1, "WEIGHTS_0": 2}, "indices": 3}]}],
+  "animations": [{"name": "morph",
+    "channels": [
+      {"sampler": 0, "target": {"node": 1, "path": "translation"}},
+      {"sampler": 1, "target": {"node": 1, "path": "weights"}}
+    ],
+    "samplers": [
+      {"input": 4, "output": 5},
+      {"input": 4, "output": 6}
+    ]
+  }],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+    {"bufferView": 1, "componentType": 5121, "count": 3, "type": "VEC4"},
+    {"bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC4"},
+    {"bufferView": 3, "componentType": 5123, "count": 3, "type": "SCALAR"},
+    {"bufferView": 4, "componentType": 5126, "count": 2, "type": "SCALAR"},
+    {"bufferView": 5, "componentType": 5126, "count": 2, "type": "VEC3"},
+    {"bufferView": 6, "componentType": 5126, "count": 2, "type": "SCALAR"}
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+    {"buffer": 0, "byteOffset": 36, "byteLength": 12},
+    {"buffer": 0, "byteOffset": 48, "byteLength": 48},
+    {"buffer": 0, "byteOffset": 96, "byteLength": 6},
+    {"buffer": 0, "byteOffset": 104, "byteLength": 8},
+    {"buffer": 0, "byteOffset": 112, "byteLength": 24},
+    {"buffer": 0, "byteOffset": 136, "byteLength": 8}
+  ],
+  "buffers": [{"byteLength": 144}]
+}`
+		glb := buildGLBWithBin(jsonStr, bin)
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "weights_anim.glb")
+		suite.Require().NoError(os.WriteFile(path, glb, 0644))
+
+		l := loader.NewLoader(loader.BackendTypeGLTF)
+		m, err := l.Load(path)
+		suite.NoError(err)
+
+		anims := m.Animations()
+		suite.Require().Len(anims, 1)
+		suite.Require().Len(anims[0].Channels, 1)
+		suite.NotEmpty(anims[0].Channels[0].PositionKeys)
+	})
+}
+
+func (suite *loaderTest) TestLoadGLBWithMeshNoNormals() {
+	suite.Run("mesh without normals generates normals automatically", func() {
+		bin := buildTriangleWithIndicesOnly()
+		jsonStr := `{
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [{"mesh": 0}],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+    {"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"}
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+    {"buffer": 0, "byteOffset": 36, "byteLength": 6}
+  ],
+  "buffers": [{"byteLength": 44}]
+}`
+		glb := buildGLBWithBin(jsonStr, bin)
+		dir := suite.T().TempDir()
+		path := filepath.Join(dir, "no_normals.glb")
+		suite.Require().NoError(os.WriteFile(path, glb, 0644))
+
+		l := loader.NewLoader(loader.BackendTypeGLTF)
+		m, err := l.Load(path)
+		suite.NoError(err)
+		suite.NotNil(m)
+	})
+}
+
+// buildAnimationWithScaleBin constructs binary data for a skinned mesh with a scale animation.
+// Layout: 36 pos + 12 joints + 48 weights + 6 idx + 2 pad + 8 timestamps + 24 scale values = 136 bytes.
+func buildAnimationWithScaleBin() []byte {
+	buf := &bytes.Buffer{}
+	for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
+		binary.Write(buf, binary.LittleEndian, p)
+	}
+	for range 3 {
+		buf.Write([]byte{0, 0, 0, 0})
+	}
+	for range 3 {
+		binary.Write(buf, binary.LittleEndian, [4]float32{1, 0, 0, 0})
+	}
+	for _, idx := range []uint16{0, 1, 2} {
+		binary.Write(buf, binary.LittleEndian, idx)
+	}
+	for buf.Len()%4 != 0 {
+		buf.WriteByte(0)
+	}
+	binary.Write(buf, binary.LittleEndian, [2]float32{0.0, 1.0})
+	binary.Write(buf, binary.LittleEndian, [2][3]float32{{1, 1, 1}, {2, 2, 2}})
+	return buf.Bytes()
+}
+
+// buildMultiChannelAnimBin constructs binary data for a skinned mesh with translation, rotation, and scale animations.
+// Layout: 36 pos + 12 joints + 48 weights + 6 idx + 2 pad + 8 timestamps + 24 translation + 32 rotation + 24 scale = 192 bytes.
+func buildMultiChannelAnimBin() []byte {
+	buf := &bytes.Buffer{}
+	for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
+		binary.Write(buf, binary.LittleEndian, p)
+	}
+	for range 3 {
+		buf.Write([]byte{0, 0, 0, 0})
+	}
+	for range 3 {
+		binary.Write(buf, binary.LittleEndian, [4]float32{1, 0, 0, 0})
+	}
+	for _, idx := range []uint16{0, 1, 2} {
+		binary.Write(buf, binary.LittleEndian, idx)
+	}
+	for buf.Len()%4 != 0 {
+		buf.WriteByte(0)
+	}
+	binary.Write(buf, binary.LittleEndian, [2]float32{0.0, 1.0})
+	binary.Write(buf, binary.LittleEndian, [2][3]float32{{0, 0, 0}, {1, 2, 3}})
+	binary.Write(buf, binary.LittleEndian, [2][4]float32{{0, 0, 0, 1}, {0, 0.707, 0, 0.707}})
+	binary.Write(buf, binary.LittleEndian, [2][3]float32{{1, 1, 1}, {2, 2, 2}})
+	return buf.Bytes()
+}
+
+// buildAnimationWithWeightsBin constructs binary data for a skinned mesh with translation and morph weights data.
+// Layout: 36 pos + 12 joints + 48 weights + 6 idx + 2 pad + 8 timestamps + 24 translation + 8 morph weights = 144 bytes.
+func buildAnimationWithWeightsBin() []byte {
+	buf := &bytes.Buffer{}
+	for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
+		binary.Write(buf, binary.LittleEndian, p)
+	}
+	for range 3 {
+		buf.Write([]byte{0, 0, 0, 0})
+	}
+	for range 3 {
+		binary.Write(buf, binary.LittleEndian, [4]float32{1, 0, 0, 0})
+	}
+	for _, idx := range []uint16{0, 1, 2} {
+		binary.Write(buf, binary.LittleEndian, idx)
+	}
+	for buf.Len()%4 != 0 {
+		buf.WriteByte(0)
+	}
+	binary.Write(buf, binary.LittleEndian, [2]float32{0.0, 1.0})
+	binary.Write(buf, binary.LittleEndian, [2][3]float32{{0, 0, 0}, {0, 1, 0}})
+	binary.Write(buf, binary.LittleEndian, [2]float32{0.5, 1.0})
+	return buf.Bytes()
+}
+
+// buildTriangleWithIndicesOnly constructs binary data for a basic triangle with only positions and uint16 indices.
+// Layout: 36 bytes positions + 6 bytes indices + 2 bytes padding = 44 bytes.
+func buildTriangleWithIndicesOnly() []byte {
+	buf := &bytes.Buffer{}
+	for _, p := range [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}} {
+		binary.Write(buf, binary.LittleEndian, p)
+	}
+	for _, idx := range []uint16{0, 1, 2} {
+		binary.Write(buf, binary.LittleEndian, idx)
+	}
+	for buf.Len()%4 != 0 {
+		buf.WriteByte(0)
+	}
+	return buf.Bytes()
 }

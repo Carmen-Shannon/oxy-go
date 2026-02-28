@@ -23,6 +23,11 @@ type TextureStagingData struct {
 	Width uint32
 	// Height is the height of the texture in pixels. This is required to correctly create the GPU texture and interpret the pixel data.
 	Height uint32
+	// Linear indicates that the texture contains non-color data (e.g. normal maps,
+	// metallic-roughness maps) and must NOT undergo sRGB gamma-to-linear conversion
+	// on the GPU. When true the texture is created with RGBA8Unorm instead of
+	// RGBA8UnormSrgb.
+	Linear bool
 }
 
 // SamplerStagingData holds the configuration for a sampler binding pending GPU creation.

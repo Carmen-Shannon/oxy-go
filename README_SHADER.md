@@ -10,10 +10,14 @@ The `engine/renderer/shader` package handles WGSL shader loading, parsing, annot
 
 ```
 Shader (public interface)
+ ├─ common.Delegate[Shader]   ← mock / test delegation
  └─ shader (unexported struct)
-        └─ PreProcessor (public interface)
-              └─ preProcessor (unexported struct)
+      ├─ common.DelegateImpl[Shader]
+      └─ PreProcessor (public interface)
+            └─ preProcessor (unexported struct)
 ```
+
+The `Shader` embeds `common.Delegate[Shader]` for mock/test delegation support. Every instance sets `s.Delegate = s` at construction so calls route to itself by default.
 
 The `Shader` holds a `PreProcessor` internally. During construction, the pre-processor scans the WGSL source for `@oxy:` annotations, replaces them with generated WGSL code (struct injections, bind group declarations), and records a declarations list. The parsed shader then exposes everything the Renderer and Scene need to create pipelines and wire bind groups.
 
@@ -31,33 +35,39 @@ The `Shader` holds a `PreProcessor` internally. During construction, the pre-pro
 
 ## Shader Interface
 
+### Delegation
+
+| Method                          | Description                                                |
+| ------------------------------- | ---------------------------------------------------------- |
+| `SetDelegate(delegate Shader)`  | Inherited from `common.Delegate[Shader]`; reroutes calls   |
+
 ### Source & Identity
 
-| Method                    | Description                                            |
-| ------------------------- | ------------------------------------------------------ |
-| `Key() string`            | Unique identifier for caching and lookups              |
-| `Source() string`         | Processed WGSL source (annotations replaced)           |
-| `ShaderType() ShaderType` | The shader stage type                                  |
-| `EntryPoint() string`     | Entry point function name (e.g. `"vs_main"`)           |
-| `Module()`                | `*wgpu.ShaderModuleDescriptor` for GPU module creation |
+| Method                                          | Description                                            |
+| ----------------------------------------------- | ------------------------------------------------------ |
+| `Key() string`                                  | Unique identifier for caching and lookups              |
+| `Source() string`                                | Processed WGSL source (annotations replaced)           |
+| `ShaderType() ShaderType`                        | The shader stage type                                  |
+| `EntryPoint() string`                            | Entry point function name (e.g. `"vs_main"`)           |
+| `Module() *wgpu.ShaderModuleDescriptor`          | Descriptor for GPU module creation                     |
 
 ### Bind Group Metadata
 
-| Method                                         | Description                                      |
-| ---------------------------------------------- | ------------------------------------------------ |
-| `BindGroupLayoutDescriptor(key int)`           | Layout descriptor for a specific group index     |
-| `BindGroupLayoutDescriptors()`                 | All layout descriptors keyed by group index      |
-| `BindGroupVarName(group, binding int) string`  | Variable name at a given group/binding           |
-| `BindGroupFromVarName(group int, name string)` | Reverse lookup: binding index from variable name |
-| `BindGroupVarNames()`                          | All variable names keyed by group and binding    |
+| Method                                                                        | Description                                      |
+| ----------------------------------------------------------------------------- | ------------------------------------------------ |
+| `BindGroupLayoutDescriptor(bindingKey int) wgpu.BindGroupLayoutDescriptor`    | Layout descriptor for a specific group index     |
+| `BindGroupLayoutDescriptors() map[int]wgpu.BindGroupLayoutDescriptor`         | All layout descriptors keyed by group index      |
+| `BindGroupVarName(group, binding int) string`                                 | Variable name at a given group/binding           |
+| `BindGroupFromVarName(group int, varName string) (int, bool)`                 | Reverse lookup: binding index from variable name |
+| `BindGroupVarNames() map[int]map[int]string`                                  | All variable names keyed by group and binding    |
 
 ### Vertex & Compute Metadata
 
-| Method                      | Description                              |
-| --------------------------- | ---------------------------------------- |
-| `VertexLayout(key int)`     | Vertex buffer layout for a specific key  |
-| `VertexLayouts()`           | All vertex buffer layouts                |
-| `WorkgroupSize() [3]uint32` | Compute workgroup dimensions `[x, y, z]` |
+| Method                                                       | Description                              |
+| ------------------------------------------------------------ | ---------------------------------------- |
+| `VertexLayout(key int) []wgpu.VertexBufferLayout`            | Vertex buffer layout for a specific key  |
+| `VertexLayouts() map[int][]wgpu.VertexBufferLayout`          | All vertex buffer layouts                |
+| `WorkgroupSize() [3]uint32`                                  | Compute workgroup dimensions `[x, y, z]` |
 
 ### Declarations
 
@@ -81,6 +91,7 @@ Creates a new `Shader` by reading the WGSL file at `sourcePath`, running it thro
 4. Parses vertex buffer layouts (vertex shaders only)
 5. Parses workgroup size (compute shaders only)
 6. Parses bind group layout descriptors with `MinBindingSize` resolution
+7. Sets `s.Delegate = s` so delegation routes to itself by default
 
 Panics if `sourcePath` is empty or the file cannot be read.
 
@@ -90,10 +101,18 @@ Panics if `sourcePath` is empty or the file cannot be read.
 
 The `PreProcessor` interface scans WGSL source for `@oxy:` annotations and produces processed output.
 
-| Method                        | Description                                                     |
-| ----------------------------- | --------------------------------------------------------------- |
-| `Process(source string)`      | Returns processed WGSL and error; resets declarations each call |
-| `Declarations() []Annotation` | Annotations collected during the last `Process` call            |
+| Method                                          | Description                                                     |
+| ----------------------------------------------- | --------------------------------------------------------------- |
+| `Process(source string) (string, error)`         | Returns processed WGSL and error; resets declarations each call |
+| `Declarations() []Annotation`                    | Annotations collected during the last `Process` call            |
+
+### NewPreProcessor Constructor
+
+```go
+func NewPreProcessor() PreProcessor
+```
+
+Creates a standalone `PreProcessor` instance with the full struct and address-space registries loaded. Useful when pre-processing must be done outside of `NewShader`.
 
 ### Annotation Types
 
@@ -102,6 +121,36 @@ The `PreProcessor` interface scans WGSL source for `@oxy:` annotations and produ
 | `include`  | `//@oxy:include <struct_type>`                                | Injects embedded WGSL struct source at annotation site |
 | `group`    | `//@oxy:group <group> <binding> <addr_space> <var> <type>`    | Generates `@group/@binding var<...>` declaration       |
 | `provider` | `//@oxy:provider <group> <binding> <identity> [binding_role]` | Registers provider identity; no WGSL output            |
+
+### Provider Identities
+
+The `<identity>` field in a `provider` annotation must be one of the following valid values:
+
+| Constant                       | Value                 |
+| ------------------------------ | --------------------- |
+| `AnnotationArgCamera`          | `"camera"`            |
+| `AnnotationArgMaterial`        | `"material"`          |
+| `AnnotationArgLights`          | `"lights"`            |
+| `AnnotationArgShadow`          | `"shadow"`            |
+| `AnnotationArgTiles`           | `"tiles"`             |
+| `AnnotationArgEffect`          | `"effect"`            |
+| `AnnotationArgAnimator`        | `"animator"`          |
+| `AnnotationArgAnimatorOutput`  | `"animator_output"`   |
+| `AnnotationArgAnimatorPacked`  | `"animator_packed"`   |
+| `AnnotationArgAnimatorScratch` | `"animator_scratch"`  |
+
+### Binding Roles
+
+The optional `[binding_role]` field in a `provider` annotation may be one of:
+
+| Constant                                   | Value                            |
+| ------------------------------------------ | -------------------------------- |
+| `AnnotationArgDiffuseTexture`              | `"diffuse_texture"`              |
+| `AnnotationArgDiffuseSampler`              | `"diffuse_sampler"`              |
+| `AnnotationArgNormalTexture`               | `"normal_texture"`               |
+| `AnnotationArgNormalSampler`               | `"normal_sampler"`               |
+| `AnnotationArgMetallicRoughnessTexture`    | `"metallic_roughness_texture"`   |
+| `AnnotationArgMetallicRoughnessSampler`    | `"metallic_roughness_sampler"`   |
 
 ### Struct Registry
 
@@ -129,6 +178,11 @@ The pre-processor maps annotation argument keys to embedded WGSL sources from GP
 | `bone_info`               | `BoneInfo`              | `animator`     |
 | `instance_data`           | `InstanceData`          | `animator`     |
 | `model_data`              | `ModelData`             | `model`        |
+| `physics_body`            | `Body`                  | `physics`      |
+| `physics_particle`        | `Particle`              | `physics`      |
+| `physics_grid`            | `GridCell`              | `physics`      |
+| `physics_globals`         | `PhysicsGlobals`        | `physics`      |
+| `physics_grid_params`     | `GridParams`            | `physics`      |
 
 ---
 

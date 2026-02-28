@@ -158,26 +158,31 @@ These are the valid `struct_type` values for `@oxy:include` and `@oxy:group` ann
 
 | Argument Key              | WGSL Type Name          | Go Source                           | Asset File                                                     |
 | ------------------------- | ----------------------- | ----------------------------------- | -------------------------------------------------------------- |
-| `camera`                  | `CameraUniform`         | `camera.GPUCameraUniform`           | `engine/camera/assets/camera_uniform.wgsl`                     |
+| `camera`                  | `CameraUniform`         | `camera.GPUCameraUniform`           | `engine/camera/assets/camera-uniform.wgsl`                     |
 | `vertex`\*                | `VertexInput`           | `model.GPUVertex`                   | `engine/model/assets/vertex.wgsl`                              |
-| `skinned_vertex`\*        | `VertexInput`           | `model.GPUSkinnedVertex`            | `engine/model/assets/skinned_vertex.wgsl`                      |
-| `overlay_params`          | `OverlayParams`         | `material.GPUOverlayParams`         | `engine/renderer/material/assets/overlay_params.wgsl`          |
-| `effect_params`           | `EffectParams`          | `material.GPUEffectParams`          | `engine/renderer/material/assets/effect_params.wgsl`           |
+| `skinned_vertex`\*        | `VertexInput`           | `model.GPUSkinnedVertex`            | `engine/model/assets/skinned-vertex.wgsl`                      |
+| `overlay_params`          | `OverlayParams`         | `material.GPUOverlayParams`         | `engine/renderer/material/assets/overlay-params.wgsl`          |
+| `effect_params`           | `EffectParams`          | `material.GPUEffectParams`          | `engine/renderer/material/assets/effect-params.wgsl`           |
 | `light`                   | `Light`                 | `light.GPULight`                    | `engine/light/assets/light.wgsl`                               |
-| `light_header`            | `LightHeader`           | `light.GPULightHeader`              | `engine/light/assets/light_header.wgsl`                        |
-| `light_cull_uniforms`\*   | `LightCullUniforms`     | `light.GPULightCullUniforms`        | `engine/light/assets/light_cull_uniforms.wgsl`                 |
-| `shadow_data`             | `ShadowData`            | `light.GPUShadowData`               | `engine/light/assets/shadow_data.wgsl`                         |
-| `shadow_uniform`          | `ShadowUniform`         | `light.GPUShadowUniform`            | `engine/light/assets/shadow_uniform.wgsl`                      |
-| `tile_uniforms`           | `TileUniforms`          | `light.GPUTileUniforms`             | `engine/light/assets/tile_uniforms.wgsl`                       |
-| `model_data`              | `ModelData`             | `model.GPUModelData`                | `engine/model/assets/model_data.wgsl`                          |
-| `instance_data`           | `InstanceData`          | `animator.GPUInstanceData`          | `engine/renderer/animator/assets/instance_data.wgsl`           |
-| `animation_data`          | `AnimationData`         | `animator.GPUAnimationData`         | `engine/renderer/animator/assets/animation_data.wgsl`          |
-| `skeletal_animation_data` | `SkeletalAnimationData` | `animator.GPUSkeletalAnimationData` | `engine/renderer/animator/assets/skeletal_animation_data.wgsl` |
-| `animation_globals`       | `AnimationGlobals`      | `animator.GPUAnimationGlobals`      | `engine/renderer/animator/assets/animation_globals.wgsl`       |
-| `frustum_plane`\*         | `FrustumPlane`          | `animator.GPUFrustumPlane`          | `engine/renderer/animator/assets/frustum_plane.wgsl`           |
-| `global_data`             | `GlobalData`            | `animator.GPUGlobalData`            | `engine/renderer/animator/assets/simple_globals.wgsl`          |
-| `indirect_args`           | `IndirectArgs`          | `animator.GPUIndirectArgs`          | `engine/renderer/animator/assets/indirect_args.wgsl`           |
-| `bone_info`               | `BoneInfo`              | `animator.GPUBoneInfo`              | `engine/renderer/animator/assets/bone_info.wgsl`               |
+| `light_header`            | `LightHeader`           | `light.GPULightHeader`              | `engine/light/assets/light-header.wgsl`                        |
+| `light_cull_uniforms`\*   | `LightCullUniforms`     | `light.GPULightCullUniforms`        | `engine/light/assets/light-cull-uniforms.wgsl`                 |
+| `shadow_data`             | `ShadowData`            | `light.GPUShadowData`               | `engine/light/assets/shadow-data.wgsl`                         |
+| `shadow_uniform`          | `ShadowUniform`         | `light.GPUShadowUniform`            | `engine/light/assets/shadow-uniform.wgsl`                      |
+| `tile_uniforms`           | `TileUniforms`          | `light.GPUTileUniforms`             | `engine/light/assets/tile-uniforms.wgsl`                       |
+| `model_data`              | `ModelData`             | `model.GPUModelData`                | `engine/model/assets/model-data.wgsl`                          |
+| `instance_data`           | `InstanceData`          | `animator.GPUInstanceData`          | `engine/renderer/animator/assets/instance-data.wgsl`           |
+| `animation_data`          | `AnimationData`         | `animator.GPUAnimationData`         | `engine/renderer/animator/assets/animation-data.wgsl`          |
+| `skeletal_animation_data` | `SkeletalAnimationData` | `animator.GPUSkeletalAnimationData` | `engine/renderer/animator/assets/skeletal-animation-data.wgsl` |
+| `animation_globals`       | `AnimationGlobals`      | `animator.GPUAnimationGlobals`      | `engine/renderer/animator/assets/animation-globals.wgsl`       |
+| `frustum_plane`\*         | `FrustumPlane`          | `animator.GPUFrustumPlane`          | `engine/renderer/animator/assets/frustum-plane.wgsl`           |
+| `global_data`             | `GlobalData`            | `animator.GPUGlobalData`            | `engine/renderer/animator/assets/simple-globals.wgsl`          |
+| `indirect_args`           | `IndirectArgs`          | `animator.GPUIndirectArgs`          | `engine/renderer/animator/assets/indirect-args.wgsl`           |
+| `bone_info`               | `BoneInfo`              | `animator.GPUBoneInfo`              | `engine/renderer/animator/assets/bone-info.wgsl`               |
+| `physics_body`            | `Body`                  | `physics.GPUBody`                   | `engine/physics/assets/body.wgsl`                              |
+| `physics_particle`        | `Particle`              | `physics.GPUParticle`               | `engine/physics/assets/particle.wgsl`                          |
+| `physics_grid`            | `GridCell`              | `physics.GPUGridCell`               | `engine/physics/assets/grid-cell.wgsl`                         |
+| `physics_globals`         | `PhysicsGlobals`        | `physics.GPUPhysicsGlobals`         | `engine/physics/assets/physics-globals.wgsl`                   |
+| `physics_grid_params`     | `GridParams`            | `physics.GPUGridParams`             | `engine/physics/assets/grid-params.wgsl`                       |
 
 \* Unexported keys — used internally by the pre-processor but cannot be matched from outside the shader package.
 
@@ -373,5 +378,19 @@ The Scene matches group 0 to the camera provider and group 1 to the animator out
 4. `AnnotationTypeBindingGroup` — group=0, binding=3, type=`indirect_args`
 
 The Scene's `createAnimator` uses these declarations to resolve buffer sizing and provider wiring without any `BindGroupFromVarName` string lookups.
+
+---
+
+## Adding a New Struct Type
+
+To register a new GPU struct for use with `@oxy:include` and `@oxy:group` annotations:
+
+1. **Create the GPU struct** in the appropriate package (e.g. `engine/physics/gpu_types.go`) with `Size() int` and `Marshal() []byte` methods.
+2. **Create the `.wgsl` asset file** in the package's `assets/` directory with the WGSL struct definition. Embed it via `//go:embed` and export the source string.
+3. **Add the argument constant** in `engine/renderer/shader/annotations.go`:
+   - Export a new `AnnotationArg` constant (e.g. `AnnotationArgPhysicsBody AnnotationArg = "physics_body"`).
+   - Append the key to the `validStructTypes` slice.
+4. **Register the struct source** in `engine/renderer/shader/pre_processor.go`'s `structRegistry` map, mapping the key to the embedded WGSL source string.
+5. **Use the annotation** in your `.wgsl` shader files with `@oxy:include <key>` or `@oxy:group ... <key>`.
 
 ---

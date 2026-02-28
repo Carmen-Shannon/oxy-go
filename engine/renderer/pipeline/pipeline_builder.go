@@ -73,6 +73,22 @@ func WithDepthWriteEnabled(enabled bool) PipelineBuilderOption {
 	}
 }
 
+// WithDepthCompare sets an explicit depth comparison function for this pipeline,
+// overriding the default derived from DepthTestEnabled (Less when enabled, Always
+// when disabled). Use wgpu.CompareFunctionLessEqual for overlay passes that render
+// at the same depth as the base geometry.
+//
+// Parameters:
+//   - fn: the depth comparison function to use (e.g., wgpu.CompareFunctionLessEqual)
+//
+// Returns:
+//   - PipelineBuilderOption: a function that sets the depth compare function for this pipeline
+func WithDepthCompare(fn wgpu.CompareFunction) PipelineBuilderOption {
+	return func(p *pipeline) {
+		p.depthCompare = fn
+	}
+}
+
 // WithDepthBias sets the depth bias parameters for this pipeline.
 //
 // Parameters:

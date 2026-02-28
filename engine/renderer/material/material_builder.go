@@ -124,3 +124,17 @@ func WithBindGroupProvider(provider bind_group_provider.BindGroupProvider) Mater
 		m.bindGroupProvider = provider
 	}
 }
+
+// WithFragmentShaderPath is an option builder that sets the fragment shader asset path for the material.
+// An empty path (the default) tells the engine to use its standard textured fragment shader.
+//
+// Parameters:
+//   - path: the fragment shader asset path relative to the project root
+//
+// Returns:
+//   - MaterialBuilderOption: a function that applies the fragment shader path option to a material
+func WithFragmentShaderPath(path string) MaterialBuilderOption {
+	return func(m *material) {
+		m.fragmentShaderPath = path
+	}
+}

@@ -168,3 +168,35 @@ func WithIndexCount(count int) ModelBuilderOption {
 		m.indexCount = count
 	}
 }
+
+// WithCastsShadows is an option builder that sets whether this model should be
+// rendered into the shadow depth map. Defaults to true. Disable for small or
+// numerous objects (e.g. particles) whose individual shadows are imperceptible
+// and whose shadow-pass draw calls dominate GPU time.
+//
+// Parameters:
+//   - casts: true to enable shadow casting, false to skip
+//
+// Returns:
+//   - ModelBuilderOption: a function that applies the casts shadows option to a model
+func WithCastsShadows(casts bool) ModelBuilderOption {
+	return func(m *model) {
+		m.castsShadows = casts
+	}
+}
+
+// WithShadowCullMode is an option builder that sets the face culling mode used
+// when rendering this model into the shadow depth map. The default is
+// ShadowCullModeBack which renders front faces into the shadow map, preventing
+// shadow bleed-through on thin or concave geometry.
+//
+// Parameters:
+//   - mode: the shadow cull mode to use for this model
+//
+// Returns:
+//   - ModelBuilderOption: a function that applies the shadow cull mode option to a model
+func WithShadowCullMode(mode ShadowCullMode) ModelBuilderOption {
+	return func(m *model) {
+		m.shadowCullMode = mode
+	}
+}
