@@ -75,6 +75,30 @@ jobs:
           fi
           echo "color=${COLOR}" >> "$GITHUB_OUTPUT"
 
+      - name: Fetch main branch coverage
+        if: github.event_name == 'pull_request'
+        id: main_cov
+        run: |
+          MAIN_PCT=$(curl -sS "https://gist.githubusercontent.com/${{ github.repository_owner }}/${{ secrets.GIST_ID }}/raw/oxy-go-coverage.json" \
+            | grep -oP '"message"\s*:\s*"[\d.]+' | grep -oP '[\d.]+$') || true
+          if [ -z "$MAIN_PCT" ]; then MAIN_PCT="0"; fi
+          echo "pct=${MAIN_PCT}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute coverage diff
+        if: github.event_name == 'pull_request'
+        id: diff
+        run: |
+          BRANCH=${{ steps.cov.outputs.pct }}
+          MAIN=${{ steps.main_cov.outputs.pct }}
+          DIFF=$(awk "BEGIN {d=$BRANCH-$MAIN; printf \"%+.2f\", d}")
+          if   echo "$DIFF" | grep -q '^+'; then ICON="📈"
+          elif echo "$DIFF" | grep -q '^-[^0]'; then ICON="📉"
+          else ICON="➡️"; fi
+          # Treat exactly +0.00 as neutral
+          if [ "$DIFF" = "+0.00" ]; then ICON="➡️"; fi
+          echo "diff=${DIFF}" >> "$GITHUB_OUTPUT"
+          echo "icon=${ICON}" >> "$GITHUB_OUTPUT"
+
       - name: Comment coverage on PR
         if: github.event_name == 'pull_request'
         uses: thollander/actions-comment-pull-request@v3
@@ -82,6 +106,10 @@ jobs:
           message: |
             ### Coverage Report
             **Total coverage: ${{ steps.cov.outputs.pct }}%**
+
+            | Branch | Main | Diff |
+            | ------ | ---- | ---- |
+            | ${{ steps.cov.outputs.pct }}% | ${{ steps.main_cov.outputs.pct }}% | ${{ steps.diff.outputs.icon }} ${{ steps.diff.outputs.diff }}% |
           comment-tag: coverage-report
 
       - name: Update Gist badge endpoint
@@ -94,7 +122,3 @@ jobs:
           label: coverage
           message: ${{ steps.cov.outputs.pct }}%
           color: ${{ steps.badge.outputs.color }}
-
-      - name: Refresh Go Report Card
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: curl -sS -X POST -F 'repo=github.com/Carmen-Shannon/oxy-go' https://goreportcard.com/checks

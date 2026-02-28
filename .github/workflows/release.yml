@@ -1,0 +1,28 @@
+# Release Workflow
+#
+# Triggered when a version tag (v*) is pushed. Refreshes the Go module proxy,
+# pkg.go.dev documentation, and Go Report Card so external consumers see the
+# new release immediately instead of waiting 20-30 minutes for natural propagation.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refresh Go module proxy
+        run: curl -sS "https://proxy.golang.org/github.com/Carmen-Shannon/oxy-go/@v/${{ github.ref_name }}"
+
+      - name: Refresh pkg.go.dev
+        run: curl -sS "https://pkg.go.dev/fetch/github.com/Carmen-Shannon/oxy-go@${{ github.ref_name }}"
+
+      - name: Refresh Go Report Card
+        run: curl -sS -X POST -F 'repo=github.com/Carmen-Shannon/oxy-go' https://goreportcard.com/checks
