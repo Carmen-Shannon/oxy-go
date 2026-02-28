@@ -39,6 +39,10 @@ func (suite *sceneTest) SetupSuite() {
 	dir, err := os.Getwd()
 	suite.Require().NoError(err)
 	suite.origDir = dir
+
+	// Change to the project root so that relative asset paths used by the engine
+	// (e.g. "engine/model/assets/simple-vert.wgsl") resolve correctly.
+	suite.Require().NoError(os.Chdir("../.."))
 }
 
 func (suite *sceneTest) TearDownSuite() {
