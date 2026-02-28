@@ -2,8 +2,11 @@
 
 A 3D game engine written in pure Go, powered by WebGPU via [cogentcore/webgpu](https://github.com/cogentcore/webgpu).
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/Carmen-Shannon/oxy-go.svg)](https://pkg.go.dev/github.com/Carmen-Shannon/oxy-go)
-[![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Carmen-Shannon/ee61b5b222c6fcd2db9a71c9e75374c9/raw/oxy-go-coverage.json)](https://github.com/Carmen-Shannon/oxy-go/actions/workflows/coverage.yml)
+<p align="center">
+  <a href="https://pkg.go.dev/github.com/Carmen-Shannon/oxy-go"><img src="https://pkg.go.dev/badge/github.com/Carmen-Shannon/oxy-go.svg" alt="Go Reference"></a>
+  <a href="https://github.com/Carmen-Shannon/oxy-go/actions/workflows/coverage.yml"><img src="https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Carmen-Shannon/ee61b5b222c6fcd2db9a71c9e75374c9/raw/oxy-go-coverage.json" alt="Coverage"></a>
+  <a href="https://goreportcard.com/report/github.com/Carmen-Shannon/oxy-go"><img src="https://goreportcard.com/badge/github.com/Carmen-Shannon/oxy-go" alt="Go Report Card"></a>
+</p>
 
 ```
 go get github.com/Carmen-Shannon/oxy-go
@@ -57,15 +60,12 @@ common/              Shared types, math utilities, key codes, frustum culling
 
 The repository includes several runnable example scenes in the `examples` directory:
 
-| File                | Description                                                     |
-| ------------------- | --------------------------------------------------------------- |
-| `scene.go`          | Basic unlit scene with a rotating cube                          |
-| `scene_fox.go`      | Animated fox model with skeletal animation                      |
-| `scene_lit.go`      | Full forward+ lit scene with shadows and multiple lights        |
-| `many_cubes.go`     | Instanced rendering stress test (unlit)                         |
-| `many_foxes.go`     | Instanced skeletal animation stress test (unlit)                |
-| `many_cubes_lit.go` | Lit instanced cube stress test with shadows and orbiting sun    |
-| `many_foxes_lit.go` | Lit instanced skeletal animation stress test with full lighting |
+| File               | Description                                              |
+| ------------------ | -------------------------------------------------------- |
+| `scene.go`         | Basic unlit scene with a rotating cube                   |
+| `scene_fox.go`     | Animated fox model with skeletal animation               |
+| `scene_lit.go`     | Full forward+ lit scene with shadows and multiple lights |
+| `physics_scene.go` | Physics simulation with rigid bodies and lighting        |
 
 Run any example with:
 

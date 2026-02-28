@@ -20,6 +20,7 @@ struct FragmentInput {
 // struct EffectParams {
 //     tint_color: vec4<f32>,
 // };
+//@oxy:provider 2 0 material
 //@oxy:group 2 0 storage_uniform effect_tint effect_params
 // @group(2) @binding(0) var<uniform> effect_tint: EffectParams;
 

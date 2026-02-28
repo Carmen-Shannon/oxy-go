@@ -41,6 +41,7 @@ type pipeline struct {
 
 	depthTestEnabled    bool
 	depthWriteEnabled   bool
+	depthCompare        wgpu.CompareFunction
 	depthBias           int32
 	depthBiasSlopeScale float32
 	blendEnabled        bool
@@ -96,6 +97,14 @@ type Pipeline interface {
 	// Returns:
 	//   - bool: true if depth writing is enabled, false otherwise
 	DepthWriteEnabled() bool
+
+	// DepthCompare returns the explicit depth comparison function for this pipeline.
+	// When set to wgpu.CompareFunctionUndefined the backend derives the function
+	// from DepthTestEnabled (Less when enabled, Always when disabled).
+	//
+	// Returns:
+	//   - wgpu.CompareFunction: the depth comparison function for this pipeline
+	DepthCompare() wgpu.CompareFunction
 
 	// DepthBias returns the depth bias value configured for this pipeline.
 	//
@@ -225,6 +234,10 @@ func (p *pipeline) DepthTestEnabled() bool {
 
 func (p *pipeline) DepthWriteEnabled() bool {
 	return p.depthWriteEnabled
+}
+
+func (p *pipeline) DepthCompare() wgpu.CompareFunction {
+	return p.depthCompare
 }
 
 func (p *pipeline) DepthBias() int32 {

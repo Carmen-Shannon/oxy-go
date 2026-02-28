@@ -2,7 +2,6 @@ package loader
 
 import (
 	"fmt"
-	"io"
 
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
@@ -24,29 +23,6 @@ type gltfImporter interface {
 	//   - *model.ImportedModel: the fully populated imported model
 	//   - error: error if import fails
 	Import(path string) (*model.ImportedModel, error)
-
-	// ImportReader loads a glTF document from a reader and extracts all data.
-	// The reader should provide a complete glTF JSON or GLB binary stream.
-	//
-	// Parameters:
-	//   - r: the reader providing glTF/GLB data
-	//   - isGLB: true if the reader provides GLB binary data, false for glTF JSON
-	//
-	// Returns:
-	//   - *model.ImportedModel: the fully populated imported model
-	//   - error: error if import fails
-	ImportReader(r io.Reader, isGLB bool) (*model.ImportedModel, error)
-
-	// ImportMeshOnly loads a glTF/GLB file and extracts only mesh and material data.
-	// Skeleton and animation extraction is skipped for faster loading of static models.
-	//
-	// Parameters:
-	//   - path: the file path to the glTF or GLB file
-	//
-	// Returns:
-	//   - *model.ImportedModel: the imported model with meshes and materials only
-	//   - error: error if import fails
-	ImportMeshOnly(path string) (*model.ImportedModel, error)
 }
 
 var _ gltfImporter = &gltfImporterImpl{}
@@ -66,53 +42,6 @@ func (imp *gltfImporterImpl) Import(path string) (*model.ImportedModel, error) {
 	}
 
 	return imp.importFromParser(parser, path)
-}
-
-func (imp *gltfImporterImpl) ImportReader(r io.Reader, isGLB bool) (*model.ImportedModel, error) {
-	parser := newGLTFParser()
-	if err := parser.ParseReader(r, isGLB); err != nil {
-		return nil, fmt.Errorf("failed to parse from reader: %w", err)
-	}
-
-	return imp.importFromParser(parser, "")
-}
-
-func (imp *gltfImporterImpl) ImportMeshOnly(path string) (*model.ImportedModel, error) {
-	parser := newGLTFParser()
-	if err := parser.Parse(path); err != nil {
-		return nil, fmt.Errorf("failed to parse %s: %w", path, err)
-	}
-
-	doc := parser.Document()
-	if doc == nil {
-		return nil, fmt.Errorf("no document after parsing")
-	}
-
-	meshExtractor := newGLTFMeshExtractor(parser)
-	materialExtractor := newGLTFMaterialExtractor(parser)
-
-	// Extract meshes
-	meshes, err := meshExtractor.ExtractAllMeshes()
-	if err != nil {
-		return nil, fmt.Errorf("mesh extraction failed: %w", err)
-	}
-
-	// Extract materials
-	var materials []*common.ImportedMaterial
-	if len(doc.Materials) > 0 {
-		materials, err = materialExtractor.ExtractAllMaterials()
-		if err != nil {
-			return nil, fmt.Errorf("material extraction failed: %w", err)
-		}
-	}
-
-	name := gltfExtractModelName(doc, path)
-
-	return &model.ImportedModel{
-		Name:      name,
-		Meshes:    meshes,
-		Materials: gltfFlattenMaterials(materials),
-	}, nil
 }
 
 // importFromParser performs a full import from a parser that has already loaded a document.

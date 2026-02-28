@@ -22,6 +22,8 @@ type model struct {
 	boundingRadius        float32
 	vertexData, indexData []byte
 	indexCount            int
+	shadowCullMode        ShadowCullMode
+	castsShadows          bool
 }
 
 // Model defines the interface for a loaded 3D model.
@@ -154,6 +156,36 @@ type Model interface {
 	//   - provider: the effect bind group provider to associate
 	SetEffectProvider(provider bind_group_provider.BindGroupProvider)
 
+	// CastsShadows reports whether this model should be rendered into the shadow
+	// depth map. Defaults to true. Disable for small or numerous objects (e.g.
+	// particles) whose individual shadows are imperceptible and whose shadow-pass
+	// draw calls dominate GPU time.
+	//
+	// Returns:
+	//   - bool: true if this model participates in shadow map rendering
+	CastsShadows() bool
+
+	// SetCastsShadows sets whether this model should be rendered into the shadow
+	// depth map.
+	//
+	// Parameters:
+	//   - casts: true to enable shadow casting, false to skip
+	SetCastsShadows(casts bool)
+
+	// ShadowCullMode returns the face culling mode used when rendering this model
+	// into the shadow depth map.
+	//
+	// Returns:
+	//   - ShadowCullMode: the shadow cull mode for this model
+	ShadowCullMode() ShadowCullMode
+
+	// SetShadowCullMode sets the face culling mode used when rendering this model
+	// into the shadow depth map.
+	//
+	// Parameters:
+	//   - mode: the shadow cull mode to use
+	SetShadowCullMode(mode ShadowCullMode)
+
 	// SetVertexData sets the raw vertex data for this model's mesh.
 	//
 	// Parameters:
@@ -183,7 +215,9 @@ var _ Model = &model{}
 // Returns:
 //   - Model: a new instance of Model configured with the provided options
 func NewModel(options ...ModelBuilderOption) Model {
-	m := &model{}
+	m := &model{
+		castsShadows: true,
+	}
 	for _, opt := range options {
 		opt(m)
 	}
@@ -286,4 +320,20 @@ func (m *model) EffectProvider() bind_group_provider.BindGroupProvider {
 
 func (m *model) SetEffectProvider(provider bind_group_provider.BindGroupProvider) {
 	m.effectProvider = provider
+}
+
+func (m *model) CastsShadows() bool {
+	return m.castsShadows
+}
+
+func (m *model) SetCastsShadows(casts bool) {
+	m.castsShadows = casts
+}
+
+func (m *model) ShadowCullMode() ShadowCullMode {
+	return m.shadowCullMode
+}
+
+func (m *model) SetShadowCullMode(mode ShadowCullMode) {
+	m.shadowCullMode = mode
 }

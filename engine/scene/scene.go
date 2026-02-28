@@ -1,6 +1,7 @@
 package scene
 
 import (
+	"encoding/binary"
 	"fmt"
 	"runtime"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/game_object"
 	"github.com/Carmen-Shannon/oxy-go/engine/light"
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
+	"github.com/Carmen-Shannon/oxy-go/engine/physics"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/animator"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
@@ -21,6 +23,28 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 	"github.com/cogentcore/webgpu/wgpu"
 )
+
+// physicsSyncGroup tracks one Animator's physics sync dispatch state. Each unique
+// Animator that has rigid body objects gets its own group with a dedicated sync_map
+// buffer (initialized to sentinel 0xFFFFFFFF for non-member bodies) and an
+// AnimationData reference bound at binding 2.
+type physicsSyncGroup struct {
+	groupID uint32
+	bgp     bind_group_provider.BindGroupProvider
+}
+
+// boneParticleUpdateGroup tracks the GPU resources needed to transform a kinematic
+// body's particles through the skeletal animator's bone matrices each frame. Each
+// kinematic-animated body gets its own group with a BGP that binds the shared
+// particle/body buffers from physics and the scratch_matrices buffer from the
+// owning Animator.
+type boneParticleUpdateGroup struct {
+	bgp           bind_group_provider.BindGroupProvider
+	particleStart uint32
+	particleCount uint32
+	boneCount     uint32
+	instanceIndex uint32
+}
 
 type scene struct {
 	common.DelegateImpl[Scene]
@@ -34,40 +58,37 @@ type scene struct {
 	registry     map[uint64]game_object.GameObject // non-ephemeral objects by ID
 	nextID       uint64
 
+	physicsHandler  physics.Physics
+	physicsGPUReady bool // true once initPhysicsGPU has run
+
+	// Per-animator sync dispatch state. Each unique Animator that has physics
+	// bodies gets its own physicsSyncGroup with a dedicated sync_map buffer and
+	// AnimationData reference. This allows the sync shader to write each body's
+	// transform to the correct Animator's AnimationData slot without cross-group
+	// interference (bodies not belonging to a group are masked by a sentinel).
+	physicsSyncGroups  []*physicsSyncGroup
+	physicsSyncAnimMap map[animator.Animator]int         // animator → index in physicsSyncGroups
+	physicsSyncWrites  []bind_group_provider.BufferWrite // staged per-group sync_map writes
+	physicsAnimBinding int                               // cached AnimationData binding in compute shader (-1 = not resolved)
+
+	// Per-kinematic-body bone particle update state. Each kinematic body with
+	// skeletal animation gets a boneParticleUpdateGroup that dispatches the
+	// bone_particle_update shader after animator compute to transform particles
+	// through the current bone matrices.
+	boneParticleUpdateGroups []*boneParticleUpdateGroup
+	boneUpdateGPUReady       bool // true once the bone_update pipeline is registered
+
 	cam camera.Camera
 	r   renderer.Renderer
 
+	screenWidth  int
+	screenHeight int
+
 	cullingDisabled bool // when true, skips frustum plane distribution to animators
 
-	// Lighting state.
-	lights       []light.Light
+	// Lighting subsystem — manages lights, shadow mapping, and Forward+ culling state.
+	lightHandler light.LightingHandler
 	lightObjects []game_object.GameObject // objects with attached lights (ephemeral and non-ephemeral)
-	ambientColor [3]float32
-	lightsBGP    bind_group_provider.BindGroupProvider
-
-	// Shadow mapping state.
-	shadowDepthTexture     *wgpu.Texture
-	shadowDepthTextureView *wgpu.TextureView
-	shadowComparisonSamp   *wgpu.Sampler
-	shadowDataBGP          bind_group_provider.BindGroupProvider // used during the shadow depth pass
-	shadowLitBGP           bind_group_provider.BindGroupProvider // used during the lit pass (texture + sampler + uniform)
-	shadowPipelineKey      string                                // pipeline key for static models
-	shadowSkinnedPipeKey   string                                // pipeline key for skinned models
-	shadowHalfExtent       float32
-	shadowNear             float32
-	shadowFar              float32
-	shadowBias             float32
-	shadowNormalBiasScale  float32
-	shadowMapResolution    int
-
-	// Forward+ light culling state.
-	lightCullBGP         bind_group_provider.BindGroupProvider // compute shader BGP
-	tileLitBGP           bind_group_provider.BindGroupProvider // fragment shader BGP (@group(5))
-	lightCullPipelineKey string
-	tileCountX           uint32
-	tileCountY           uint32
-	screenWidth          int
-	screenHeight         int
 
 	// Pre-allocated slices reused each frame to avoid per-frame allocations.
 	writePool          []bind_group_provider.BufferWrite       // reusable coalesced buffer write slice
@@ -78,6 +99,10 @@ type scene struct {
 	// per-frame goroutine spawn/teardown overhead.
 	computePool    worker.DynamicWorkerPool
 	computeWorkers int // stored so we can log/inspect the configured count
+
+	// instanceLookup provides O(1) reverse lookup from (Animator, instanceSlot) → objID.
+	// Maintained by Add/Remove so the swap-remove fixup in Remove avoids an O(N) registry scan.
+	instanceLookup map[animator.Animator]map[uint32]uint64
 }
 
 // Scene manages a collection of Animators (registered implicitly via Add) and an
@@ -119,6 +144,14 @@ type Scene interface {
 	//   - r: the new renderer
 	SetRenderer(r renderer.Renderer)
 
+	// SetPhysicsHandler replaces the scene's physics handler. This should be called
+	// before adding any rigid body objects. If not set, a default handler is created
+	// lazily when the first rigid body object is added.
+	//
+	// Parameters:
+	//   - ph: the pre-configured Physics instance
+	SetPhysicsHandler(ph physics.Physics)
+
 	// Count returns the number of persisted GameObjects in the scene's registry. Does not include ephemeral objects.
 	//
 	// Returns:
@@ -138,18 +171,18 @@ type Scene interface {
 	// initial transform data. If the object is not ephemeral it is also persisted
 	// in the registry for later lookup or removal by ID.
 	//
+	// Compute, vertex, and fragment shaders are resolved automatically from the
+	// engine's standard shader assets based on whether the model is skinned.
+	//
 	// Panics if the scene has no Renderer or the object has no Model.
 	//
 	// Parameters:
 	//   - obj: the GameObject to add
-	//   - computeShader: the compute shader to use for this object's Animator
-	//   - vertexShader: the vertex shader to use for this object's render pipeline
-	//   - fragmentShader: the fragment shader to use for this object's render pipeline
 	//   - pipelineOpts: optional pipeline builder options for the render pipeline (e.g., blending)
 	//
 	// Returns:
 	//   - uint64: the assigned object ID
-	Add(obj game_object.GameObject, computeShader, vertexShader, fragmentShader shader.Shader, pipelineOpts ...pipeline.PipelineBuilderOption) uint64
+	Add(obj game_object.GameObject, pipelineOpts ...pipeline.PipelineBuilderOption) uint64
 
 	// Get retrieves a non-ephemeral GameObject by its ID.
 	// Returns nil if not found.
@@ -167,10 +200,6 @@ type Scene interface {
 	// Parameters:
 	//   - id: the object's unique ID
 	Remove(id uint64)
-
-	// Clear removes all objects and animators from the scene.
-	// Does not release GPU resources.
-	Clear()
 
 	// PrepareCompute updates camera matrices, advances animation state,
 	// uploads staged buffer writes, and dispatches all compute shaders for this scene.
@@ -203,12 +232,27 @@ type Scene interface {
 	//   - error: error if a draw call fails
 	DrawCalls() error
 
-	// AddLight adds a light source to the scene. Lights are marshaled into a GPU
-	// storage buffer each frame and passed to lit fragment shaders.
+	// AddLight adds a light source to the scene and lazily initializes the full
+	// lighting pipeline (light storage buffer, shadow map, Forward+ culling) on
+	// the first call. Subsequent calls simply append the light without
+	// re-initializing GPU resources. The lighting shaders are loaded internally
+	// from the engine's standard light shader assets. Screen dimensions for
+	// Forward+ tile culling are taken from the scene's stored screen size
+	// (set via Resize or WithScreenSize).
 	//
 	// Parameters:
 	//   - l: the Light to add
 	AddLight(l light.Light)
+
+	// Resize updates the scene's stored screen dimensions and propagates the
+	// change to the renderer surface, camera aspect ratio, and (when lighting
+	// is enabled) the Forward+ tile grid. Call this from the window's resize
+	// callback or whenever the surface dimensions change.
+	//
+	// Parameters:
+	//   - width: the new width in pixels
+	//   - height: the new height in pixels
+	Resize(width, height int)
 
 	// RemoveLight removes a light source from the scene by reference.
 	//
@@ -244,33 +288,6 @@ type Scene interface {
 	//   - color: the ambient RGB color
 	SetAmbientColor(color [3]float32)
 
-	// LightBindGroupProvider returns the bind group provider holding the GPU light
-	// buffer resources, or nil if no light shader has been configured.
-	//
-	// Returns:
-	//   - bind_group_provider.BindGroupProvider: the light BGP or nil
-	LightBindGroupProvider() bind_group_provider.BindGroupProvider
-
-	// InitLightBindGroup initializes the GPU resources for the light storage buffer
-	// using the layout descriptor from the given fragment shader's light group.
-	// The fragment shader is scanned for variable names containing "light" to locate
-	// the appropriate bind group index.
-	//
-	// Parameters:
-	//   - fragmentShader: the lit fragment shader providing the light bind group layout
-	InitLightBindGroup(fragmentShader shader.Shader)
-
-	// InitShadowMap initializes the shadow mapping resources for the scene. Creates
-	// the shadow depth texture, comparison sampler, shadow data uniform BGP, and
-	// registers shadow pipelines for both static and skinned models. The shadow
-	// depth vertex shaders are used to build pipelines that render depth-only passes
-	// from the directional light's perspective.
-	//
-	// Parameters:
-	//   - shadowVertexShader: the shadow depth vertex shader for static models
-	//   - shadowSkinnedVertexShader: the shadow depth vertex shader for skinned models (may be nil if no skinned models)
-	InitShadowMap(shadowVertexShader, shadowSkinnedVertexShader shader.Shader)
-
 	// PrepareShadows computes the directional light's view-projection, updates the
 	// shadow uniform buffer, and renders the depth-only shadow pass for all drawables.
 	// Must be called after PrepareCompute and before BeginFrame each frame.
@@ -278,117 +295,50 @@ type Scene interface {
 	// light exists.
 	PrepareShadows()
 
-	// ShadowDepthTextureView returns the shadow map depth texture view, or nil if
-	// shadow mapping has not been initialized.
-	//
-	// Returns:
-	//   - *wgpu.TextureView: the shadow depth texture view or nil
-	ShadowDepthTextureView() *wgpu.TextureView
-
-	// ShadowDataBindGroupProvider returns the BGP holding the shadow uniform data
-	// (light VP matrix, texel size, bias), or nil if not initialized.
-	//
-	// Returns:
-	//   - bind_group_provider.BindGroupProvider: the shadow data BGP or nil
-	ShadowDataBindGroupProvider() bind_group_provider.BindGroupProvider
-
-	// ShadowLitBindGroupProvider returns the BGP used by lit fragment shaders
-	// to sample the shadow map. It holds the shadow depth texture, comparison
-	// sampler, and shadow uniform buffer. Returns nil if not initialized.
-	//
-	// Returns:
-	//   - bind_group_provider.BindGroupProvider: the shadow lit BGP or nil
-	ShadowLitBindGroupProvider() bind_group_provider.BindGroupProvider
-
-	// InitShadowLitBindGroup initializes the bind group provider that lit fragment
-	// shaders use to sample the shadow map. It pre-sets the shadow depth texture view
-	// and comparison sampler from InitShadowMap, then creates a uniform buffer for the
-	// shadow data. Must be called after InitShadowMap.
-	//
-	// Parameters:
-	//   - litFragmentShader: the lit fragment shader providing the shadow bind group layout
-	InitShadowLitBindGroup(litFragmentShader shader.Shader)
-
-	// InitLightCullResources initializes the Forward+ light culling pipeline and
-	// buffer resources. Creates the cull compute pipeline, the compute BGP (sharing
-	// the lights buffer from InitLightBindGroup), and the fragment-side tile BGP
-	// (@group(5)) whose storage buffers are shared with the compute output. Must be
-	// called after InitLightBindGroup.
-	//
-	// Parameters:
-	//   - cullComputeShader: the light culling compute shader
-	//   - litFragmentShader: the lit fragment shader (for tile bind group layout at @group(5))
-	//   - screenWidth: screen width in pixels (determines tile grid sizing)
-	//   - screenHeight: screen height in pixels
-	InitLightCullResources(cullComputeShader, litFragmentShader shader.Shader, screenWidth, screenHeight int)
-
 	// PrepareLightCulling updates the light cull uniform buffer and dispatches the
 	// light culling compute shader. Must be called after PrepareCompute (so lights
 	// are uploaded) and before DrawCalls.
 	PrepareLightCulling()
-
-	// InitLighting is a convenience method that initializes the entire lighting
-	// pipeline in the correct order: light storage buffer, shadow map resources,
-	// shadow lit bind group, and Forward+ light culling. Equivalent to calling
-	// InitLightBindGroup, InitShadowMap, InitShadowLitBindGroup, and
-	// InitLightCullResources individually in that order.
-	//
-	// Parameters:
-	//   - litFragShader: the lit fragment shader (provides light, shadow, and tile bind group layouts)
-	//   - shadowVertShader: the shadow depth vertex shader for static models
-	//   - shadowSkinnedVertShader: the shadow depth vertex shader for skinned models (may be nil)
-	//   - cullComputeShader: the Forward+ light culling compute shader
-	//   - screenWidth: screen width in pixels
-	//   - screenHeight: screen height in pixels
-	InitLighting(litFragShader, shadowVertShader, shadowSkinnedVertShader, cullComputeShader shader.Shader, screenWidth, screenHeight int)
 }
 
 // Ensure scene implements Scene interface.
 var _ Scene = &scene{}
 
-// NewScene creates a new Scene with the given camera, renderer, and a vertex shader
-// used to discover the camera's bind group layout. All three are required and NewScene
-// panics if any of them is nil. The vertex shader's BindGroupVarNames are scanned for
-// a group containing "camera" and its layout descriptor is used to initialize the
-// camera's BindGroupProvider on the GPU.
+// NewScene creates a new Scene with the given camera and renderer. Both are
+// required and NewScene panics if either is nil. The camera's bind group layout
+// is resolved from the pre-processor declarations of the engine's standard
+// vertex shader (engine/model/assets/simple-vert.wgsl).
 //
 // Parameters:
 //   - name: the name of the scene
 //   - cam: the camera to attach (must not be nil)
 //   - r: the renderer to attach (must not be nil)
-//   - vertexShader: a vertex shader whose bind groups include the camera uniform layout (must not be nil)
 //   - options: functional options to further configure the scene
 //
 // Returns:
 //   - Scene: the newly created scene
-func NewScene(name string, cam camera.Camera, r renderer.Renderer, vertexShader shader.Shader, options ...SceneBuilderOption) Scene {
+func NewScene(name string, cam camera.Camera, r renderer.Renderer, options ...SceneBuilderOption) Scene {
 	if cam == nil {
 		panic("scene: NewScene requires a non-nil Camera")
 	}
 	if r == nil {
 		panic("scene: NewScene requires a non-nil Renderer")
 	}
-	if vertexShader == nil {
-		panic("scene: NewScene requires a non-nil vertex shader for camera BGP init")
-	}
 
 	s := &scene{
-		mu:                    &sync.RWMutex{},
-		name:                  name,
-		active:                false,
-		cam:                   cam,
-		r:                     r,
-		animatorPool:          make(map[model.Model][]animator.Animator),
-		registry:              make(map[uint64]game_object.GameObject),
-		nextID:                1,
-		computeWorkers:        max(runtime.NumCPU()-1, 1),
-		drawBindGroupsPool:    make([]bind_group_provider.BindGroupProvider, 0, 3),
-		shadowHalfExtent:      light.DefaultShadowHalfExtent,
-		shadowNear:            light.DefaultShadowNear,
-		shadowFar:             light.DefaultShadowFar,
-		shadowBias:            light.DefaultShadowBias,
-		shadowNormalBiasScale: light.DefaultShadowNormalBiasScale,
-		shadowMapResolution:   light.ShadowMapResolution,
+		mu:                 &sync.RWMutex{},
+		name:               name,
+		active:             false,
+		cam:                cam,
+		r:                  r,
+		animatorPool:       make(map[model.Model][]animator.Animator),
+		registry:           make(map[uint64]game_object.GameObject),
+		instanceLookup:     make(map[animator.Animator]map[uint32]uint64),
+		nextID:             1,
+		computeWorkers:     max(runtime.NumCPU()-1, 1),
+		drawBindGroupsPool: make([]bind_group_provider.BindGroupProvider, 0, 3),
+		lightHandler:       light.NewLightingHandler(),
+		physicsAnimBinding: -1,
 	}
 
 	for _, option := range options {
@@ -399,18 +349,20 @@ func NewScene(name string, cam camera.Camera, r renderer.Renderer, vertexShader 
 	// Queue size of 256 accommodates typical animator group counts with headroom.
 	s.computePool = worker.NewDynamicWorkerPool(s.computeWorkers, 256, 1*time.Second)
 
-	// Initialize the camera's bind group on the GPU using the layout from the vertex shader.
+	// Initialize the camera's bind group on the GPU using the layout from the
+	// engine's standard vertex shader. The shader is loaded internally so the
+	// caller never needs to supply one. The camera group index is resolved from
+	// the shader's pre-processor declarations rather than fuzzy var-name matching.
+	cameraVertShader := shader.NewShader("_camera_init_vert", shader.ShaderTypeVertex, "engine/model/assets/simple-vert.wgsl")
 	cameraGroup := 0
-	for i, names := range vertexShader.BindGroupVarNames() {
-		for _, name := range names {
-			if strings.Contains(strings.ToLower(name), "camera") {
-				cameraGroup = i
-				break
-			}
+	for _, decl := range cameraVertShader.Declarations() {
+		if decl.Type == shader.AnnotationTypeBindingGroup && decl.Group != nil && decl.Args[2] == shader.AnnotationArgCamera {
+			cameraGroup = *decl.Group
+			break
 		}
 	}
 	if bgp := cam.BindGroupProvider(); bgp != nil {
-		if err := r.InitBindGroup(bgp, vertexShader.BindGroupLayoutDescriptor(cameraGroup), nil, nil); err != nil {
+		if err := r.InitBindGroup(bgp, cameraVertShader.BindGroupLayoutDescriptor(cameraGroup), nil, nil); err != nil {
 			panic(fmt.Sprintf("scene: failed to init camera bind group: %v", err))
 		}
 	}
@@ -467,6 +419,12 @@ func (s *scene) SetRenderer(r renderer.Renderer) {
 	s.r = r
 }
 
+func (s *scene) SetPhysicsHandler(ph physics.Physics) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.physicsHandler = ph
+}
+
 func (s *scene) CullingDisabled() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -480,20 +438,37 @@ func (s *scene) SetCullingDisabled(disabled bool) {
 }
 
 func (s *scene) AddLight(l light.Light) {
+	if !s.lightHandler.Enabled() {
+		s.initLighting(s.screenWidth, s.screenHeight)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.lights = append(s.lights, l)
+	s.lightHandler.AddLight(l)
+}
+
+func (s *scene) Resize(width, height int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.screenWidth = width
+	s.screenHeight = height
+
+	if s.r != nil {
+		s.r.Resize(width, height)
+	}
+	if s.cam != nil && height > 0 {
+		s.cam.SetAspect(float32(width) / float32(height))
+	}
+	if s.lightHandler.Enabled() {
+		s.lightHandler.Resize(width, height)
+	}
 }
 
 func (s *scene) RemoveLight(l light.Light) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for i, existing := range s.lights {
-		if existing == l {
-			s.lights = append(s.lights[:i], s.lights[i+1:]...)
-			return
-		}
-	}
+	s.lightHandler.RemoveLight(l)
 }
 
 func (s *scene) DetachLight(obj game_object.GameObject) {
@@ -503,12 +478,7 @@ func (s *scene) DetachLight(obj game_object.GameObject) {
 	if l == nil {
 		return
 	}
-	for i, existing := range s.lights {
-		if existing == l {
-			s.lights = append(s.lights[:i], s.lights[i+1:]...)
-			break
-		}
-	}
+	s.lightHandler.RemoveLight(l)
 	for i, o := range s.lightObjects {
 		if o == obj {
 			s.lightObjects = append(s.lightObjects[:i], s.lightObjects[i+1:]...)
@@ -520,30 +490,24 @@ func (s *scene) DetachLight(obj game_object.GameObject) {
 func (s *scene) Lights() []light.Light {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	out := make([]light.Light, len(s.lights))
-	copy(out, s.lights)
-	return out
+	return s.lightHandler.Lights()
 }
 
 func (s *scene) AmbientColor() [3]float32 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.ambientColor
+	return s.lightHandler.AmbientColor()
 }
 
 func (s *scene) SetAmbientColor(color [3]float32) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.ambientColor = color
+	s.lightHandler.SetAmbientColor(color)
 }
 
-func (s *scene) LightBindGroupProvider() bind_group_provider.BindGroupProvider {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.lightsBGP
-}
-
-func (s *scene) InitLightBindGroup(fragmentShader shader.Shader) {
+// initLightBindGroup initializes the GPU resources for the light storage buffer
+// using the layout descriptor from the given fragment shader's light group.
+func (s *scene) initLightBindGroup(fragmentShader shader.Shader) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -551,18 +515,12 @@ func (s *scene) InitLightBindGroup(fragmentShader shader.Shader) {
 		return
 	}
 
-	// Find the bind group index that contains light-related variables.
-	// After renaming tile vars to avoid "light" substring, a simple search
-	// for "light" unambiguously matches only the lights group (@group(3)).
+	// Resolve the lights bind group index from the shader's pre-processor
+	// declarations by matching the LightHeader struct type annotation.
 	lightGroup := -1
-	for groupIdx, bindings := range fragmentShader.BindGroupVarNames() {
-		for _, name := range bindings {
-			if strings.Contains(strings.ToLower(name), "light") {
-				lightGroup = groupIdx
-				break
-			}
-		}
-		if lightGroup >= 0 {
+	for _, decl := range fragmentShader.Declarations() {
+		if decl.Type == shader.AnnotationTypeBindingGroup && decl.Group != nil && decl.Args[2] == shader.AnnotationArgLightHeader {
+			lightGroup = *decl.Group
 			break
 		}
 	}
@@ -570,7 +528,7 @@ func (s *scene) InitLightBindGroup(fragmentShader shader.Shader) {
 		return
 	}
 
-	bgp := bind_group_provider.NewBindGroupProvider(s.name + "_lights")
+	bgp := s.lightHandler.Bgp("lights")
 
 	// Build buffer size overrides: the light storage buffer (binding 1) must hold
 	// MaxGPULights entries so it can accommodate dynamic light counts each frame.
@@ -580,17 +538,17 @@ func (s *scene) InitLightBindGroup(fragmentShader shader.Shader) {
 		binding := int(entry.Binding)
 		if entry.Buffer.Type == wgpu.BufferBindingTypeReadOnlyStorage || entry.Buffer.Type == wgpu.BufferBindingTypeStorage {
 			// Storage buffer: size it for max lights (header is in a separate uniform binding).
-			sizeOverrides[binding] = uint64(light.MaxGPULights) * 64 // 64 bytes per GPULight
+			sizeOverrides[binding] = uint64(light.MaxGPULights * (&light.GPULight{}).Size())
 		}
 	}
 
 	if err := s.r.InitBindGroup(bgp, descriptor, nil, sizeOverrides); err != nil {
 		panic(fmt.Sprintf("scene: failed to init light bind group: %v", err))
 	}
-	s.lightsBGP = bgp
 }
 
-func (s *scene) InitShadowMap(shadowVertexShader, shadowSkinnedVertexShader shader.Shader) {
+// initShadowMap initializes the shadow mapping resources for the scene.
+func (s *scene) initShadowMap(shadowVertexShader, shadowSkinnedVertexShader shader.Shader) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -599,113 +557,122 @@ func (s *scene) InitShadowMap(shadowVertexShader, shadowSkinnedVertexShader shad
 	}
 
 	// Create shadow depth texture.
-	res := s.shadowMapResolution
+	res := s.lightHandler.ShadowMapResolution()
 	view, tex, err := s.r.CreateShadowDepthTexture(res, res)
 	if err != nil {
 		panic(fmt.Sprintf("scene: failed to create shadow depth texture: %v", err))
 	}
-	s.shadowDepthTexture = tex
-	s.shadowDepthTextureView = view
+	s.lightHandler.SetShadowDepthTexture(tex)
+	s.lightHandler.SetShadowDepthTextureView(view)
 
 	// Create comparison sampler for PCF in the lit fragment shader.
 	samp, err := s.r.CreateComparisonSampler()
 	if err != nil {
 		panic(fmt.Sprintf("scene: failed to create comparison sampler: %v", err))
 	}
-	s.shadowComparisonSamp = samp
+	s.lightHandler.SetShadowComparisonSampler(samp)
 
 	// Create shadow data BGP — holds the light VP matrix + texel size + bias.
-	// The layout is derived from the shadow vertex shader's group(0) which has the
-	// shadow_uniform binding.
+	// The layout is derived from the shadow vertex shader's group containing the
+	// ShadowUniform struct, resolved via pre-processor declarations.
 	shadowGroup := 0
-	for i, names := range shadowVertexShader.BindGroupVarNames() {
-		for _, name := range names {
-			if strings.Contains(strings.ToLower(name), "shadow") {
-				shadowGroup = i
-				break
-			}
+	for _, decl := range shadowVertexShader.Declarations() {
+		if decl.Type == shader.AnnotationTypeBindingGroup && decl.Group != nil && decl.Args[2] == shader.AnnotationArgShadowUniform {
+			shadowGroup = *decl.Group
+			break
 		}
 	}
-	bgp := bind_group_provider.NewBindGroupProvider(s.name + "_shadow_data")
+	bgp := s.lightHandler.Bgp("shadow_data")
 	desc := shadowVertexShader.BindGroupLayoutDescriptor(shadowGroup)
-	// Override buffer size to 80 bytes (GPUShadowData: mat4x4 + vec2 + f32 + f32).
 	sizeOverrides := make(map[int]uint64)
 	for _, entry := range desc.Entries {
 		if entry.Buffer.Type == wgpu.BufferBindingTypeUniform {
-			sizeOverrides[int(entry.Binding)] = 80
+			sizeOverrides[int(entry.Binding)] = uint64((&light.GPUShadowData{}).Size())
 		}
 	}
 	if err := s.r.InitBindGroup(bgp, desc, nil, sizeOverrides); err != nil {
 		panic(fmt.Sprintf("scene: failed to init shadow data bind group: %v", err))
 	}
-	s.shadowDataBGP = bgp
 
-	// Register shadow pipeline for static models.
-	staticKey := "shadow_depth_static"
-	sp := pipeline.NewPipeline(staticKey, pipeline.PipelineTypeRender,
-		pipeline.WithVertexShader(shadowVertexShader),
-		pipeline.WithDepthBias(2, 1.5),
-		pipeline.WithCullMode(wgpu.CullModeFront), // CullModeFront: all static meshes should be closed geometry
-	)
-	if err := s.r.RegisterShadowPipeline(sp); err != nil {
-		panic(fmt.Sprintf("scene: failed to register static shadow pipeline: %v", err))
+	// Register shadow pipelines for each ShadowCullMode variant. Each model
+	// can choose its own cull mode via model.WithShadowCullMode, so the scene
+	// pre-registers one pipeline per cull mode for both static and skinned shaders.
+	cullModes := []struct {
+		mode model.ShadowCullMode
+		wgpu wgpu.CullMode
+		tag  string
+	}{
+		{model.ShadowCullModeBack, wgpu.CullModeBack, "back"},
+		{model.ShadowCullModeFront, wgpu.CullModeFront, "front"},
+		{model.ShadowCullModeNone, wgpu.CullModeNone, "none"},
 	}
-	s.shadowPipelineKey = staticKey
 
-	// Register shadow pipeline for skinned models if a skinned shader is provided.
-	if shadowSkinnedVertexShader != nil {
-		skinnedKey := "shadow_depth_skinned"
-		ssp := pipeline.NewPipeline(skinnedKey, pipeline.PipelineTypeRender,
-			pipeline.WithVertexShader(shadowSkinnedVertexShader),
+	for _, cm := range cullModes {
+		key := "shadow_depth_static_" + cm.tag
+		sp := pipeline.NewPipeline(key, pipeline.PipelineTypeRender,
+			pipeline.WithVertexShader(shadowVertexShader),
 			pipeline.WithDepthBias(2, 1.5),
-			pipeline.WithCullMode(wgpu.CullModeFront), // CullModeFront prevents self-shadowing on closed skinned meshes
+			pipeline.WithCullMode(cm.wgpu),
 		)
-		if err := s.r.RegisterShadowPipeline(ssp); err != nil {
-			panic(fmt.Sprintf("scene: failed to register skinned shadow pipeline: %v", err))
+		if err := s.r.RegisterShadowPipeline(sp); err != nil {
+			panic(fmt.Sprintf("scene: failed to register static shadow pipeline (%s): %v", cm.tag, err))
 		}
-		s.shadowSkinnedPipeKey = skinnedKey
+		s.lightHandler.SetPipelineKey("shadow_static_"+cm.tag, key)
+	}
+
+	// Register shadow pipelines for skinned models if a skinned shader is provided.
+	if shadowSkinnedVertexShader != nil {
+		for _, cm := range cullModes {
+			key := "shadow_depth_skinned_" + cm.tag
+			ssp := pipeline.NewPipeline(key, pipeline.PipelineTypeRender,
+				pipeline.WithVertexShader(shadowSkinnedVertexShader),
+				pipeline.WithDepthBias(2, 1.5),
+				pipeline.WithCullMode(cm.wgpu),
+			)
+			if err := s.r.RegisterShadowPipeline(ssp); err != nil {
+				panic(fmt.Sprintf("scene: failed to register skinned shadow pipeline (%s): %v", cm.tag, err))
+			}
+			s.lightHandler.SetPipelineKey("shadow_skinned_"+cm.tag, key)
+		}
 	}
 }
 
-func (s *scene) ShadowDepthTextureView() *wgpu.TextureView {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.shadowDepthTextureView
+// shadowPipelineKey resolves the shadow depth pipeline key for the given model
+// type and cull mode from the lighting handler's pipeline key map.
+func (s *scene) shadowPipelineKey(skinned bool, mode model.ShadowCullMode) string {
+	prefix := "shadow_static_"
+	if skinned && s.lightHandler.PipelineKey("shadow_skinned_back") != "" {
+		prefix = "shadow_skinned_"
+	}
+	tag := "back"
+	switch mode {
+	case model.ShadowCullModeFront:
+		tag = "front"
+	case model.ShadowCullModeNone:
+		tag = "none"
+	}
+	return s.lightHandler.PipelineKey(prefix + tag)
 }
 
-func (s *scene) ShadowDataBindGroupProvider() bind_group_provider.BindGroupProvider {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.shadowDataBGP
-}
-
-func (s *scene) ShadowLitBindGroupProvider() bind_group_provider.BindGroupProvider {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.shadowLitBGP
-}
-
-func (s *scene) InitShadowLitBindGroup(litFragmentShader shader.Shader) {
+// initShadowLitBindGroup initializes the bind group provider that lit fragment
+// shaders use to sample the shadow map.
+func (s *scene) initShadowLitBindGroup(litFragmentShader shader.Shader) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if s.r == nil || litFragmentShader == nil {
 		return
 	}
-	if s.shadowDepthTextureView == nil || s.shadowComparisonSamp == nil {
+	if s.lightHandler.ShadowDepthTextureView() == nil || s.lightHandler.ShadowComparisonSampler() == nil {
 		return // InitShadowMap must be called first
 	}
 
-	// Find the bind group index that contains shadow-related variables.
+	// Resolve the shadow bind group index from the shader's pre-processor
+	// declarations by matching the shadow provider identity annotation.
 	shadowGroup := -1
-	for groupIdx, bindings := range litFragmentShader.BindGroupVarNames() {
-		for _, name := range bindings {
-			if strings.Contains(strings.ToLower(name), "shadow") {
-				shadowGroup = groupIdx
-				break
-			}
-		}
-		if shadowGroup >= 0 {
+	for _, decl := range litFragmentShader.Declarations() {
+		if decl.Type == shader.AnnotationTypeProvider && decl.Group != nil && decl.Args[0] == shader.AnnotationArgShadow {
+			shadowGroup = *decl.Group
 			break
 		}
 	}
@@ -713,7 +680,7 @@ func (s *scene) InitShadowLitBindGroup(litFragmentShader shader.Shader) {
 		return
 	}
 
-	bgp := bind_group_provider.NewBindGroupProvider(s.name + "_shadow_lit")
+	bgp := s.lightHandler.Bgp("shadow_lit")
 
 	// Pre-set the shadow depth texture view and comparison sampler on the BGP
 	// so that InitBindGroup can find them when creating the bind group entries.
@@ -721,10 +688,10 @@ func (s *scene) InitShadowLitBindGroup(litFragmentShader shader.Shader) {
 	for _, entry := range desc.Entries {
 		binding := int(entry.Binding)
 		if entry.Texture.SampleType != wgpu.TextureSampleTypeUndefined {
-			bgp.SetTextureView(binding, s.shadowDepthTextureView)
+			bgp.SetTextureView(binding, s.lightHandler.ShadowDepthTextureView())
 		}
 		if entry.Sampler.Type != wgpu.SamplerBindingTypeUndefined {
-			bgp.SetSampler(binding, s.shadowComparisonSamp)
+			bgp.SetSampler(binding, s.lightHandler.ShadowComparisonSampler())
 		}
 	}
 
@@ -732,27 +699,26 @@ func (s *scene) InitShadowLitBindGroup(litFragmentShader shader.Shader) {
 	sizeOverrides := make(map[int]uint64)
 	for _, entry := range desc.Entries {
 		if entry.Buffer.Type == wgpu.BufferBindingTypeUniform {
-			sizeOverrides[int(entry.Binding)] = 80
+			sizeOverrides[int(entry.Binding)] = uint64((&light.GPUShadowData{}).Size())
 		}
 	}
 
 	if err := s.r.InitBindGroup(bgp, desc, nil, sizeOverrides); err != nil {
 		panic(fmt.Sprintf("scene: failed to init shadow lit bind group: %v", err))
 	}
-	s.shadowLitBGP = bgp
 }
 
 func (s *scene) PrepareShadows() {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if s.shadowDepthTextureView == nil || s.shadowDataBGP == nil || s.r == nil {
+	if !s.lightHandler.Enabled() || s.r == nil {
 		return
 	}
 
 	// Find the first enabled, shadow-casting directional light.
 	var shadowLight light.Light
-	for _, l := range s.lights {
+	for _, l := range s.lightHandler.Lights() {
 		if l.Enabled() && l.CastsShadows() && l.Type() == light.LightTypeDirectional {
 			shadowLight = l
 			break
@@ -772,38 +738,38 @@ func (s *scene) PrepareShadows() {
 		}
 	}
 	// Build and write shadow uniform data.
-	texelSize := 1.0 / float32(s.shadowMapResolution)
+	texelSize := 1.0 / float32(s.lightHandler.ShadowMapResolution())
 	shadowData := light.GPUShadowData{
 		TexelSize: [2]float32{texelSize, texelSize},
-		Bias:      s.shadowBias,
+		Bias:      s.lightHandler.ShadowBias(),
 	}
 	shadowData.ComputeDirectionalLightVP(
 		shadowLight.Direction(),
 		centerX, centerY, centerZ,
-		s.shadowHalfExtent, s.shadowNear, s.shadowFar,
+		s.lightHandler.ShadowHalfExtent(), s.lightHandler.ShadowNear(), s.lightHandler.ShadowFar(),
 	)
-	shadowData.ComputeNormalBias(s.shadowHalfExtent, s.shadowNormalBiasScale, s.shadowMapResolution)
+	shadowData.ComputeNormalBias(s.lightHandler.ShadowHalfExtent(), s.lightHandler.ShadowNormalBiasScale(), s.lightHandler.ShadowMapResolution())
 	shadowBytes := shadowData.Marshal()
+	shadowDataBGP := s.lightHandler.Bgp("shadow_data")
 	writes := []bind_group_provider.BufferWrite{
 		{
-			Provider: s.shadowDataBGP,
+			Provider: shadowDataBGP,
 			Binding:  0,
 			Offset:   0,
 			Data:     shadowBytes,
 		},
 	}
 	// Also write to the lit-pass shadow BGP if it has a uniform buffer.
-	if s.shadowLitBGP != nil {
-		for binding, buf := range s.shadowLitBGP.Buffers() {
-			if buf != nil {
-				writes = append(writes, bind_group_provider.BufferWrite{
-					Provider: s.shadowLitBGP,
-					Binding:  binding,
-					Offset:   0,
-					Data:     shadowBytes,
-				})
-				break // only one uniform buffer expected
-			}
+	shadowLitBGP := s.lightHandler.Bgp("shadow_lit")
+	for binding, buf := range shadowLitBGP.Buffers() {
+		if buf != nil {
+			writes = append(writes, bind_group_provider.BufferWrite{
+				Provider: shadowLitBGP,
+				Binding:  binding,
+				Offset:   0,
+				Data:     shadowBytes,
+			})
+			break // only one uniform buffer expected
 		}
 	}
 	s.r.WriteBuffers(writes)
@@ -812,7 +778,7 @@ func (s *scene) PrepareShadows() {
 	if err := s.r.BeginShadowFrame(); err != nil {
 		return
 	}
-	s.r.BeginShadowPass(s.shadowDepthTextureView)
+	s.r.BeginShadowPass(s.lightHandler.ShadowDepthTextureView())
 
 	for _, anim := range s.animatorPool {
 		for _, a := range anim {
@@ -824,16 +790,18 @@ func (s *scene) PrepareShadows() {
 			if mdl == nil {
 				continue
 			}
+			if !mdl.CastsShadows() {
+				continue
+			}
 			meshProvider := mdl.MeshProvider()
 			if meshProvider == nil {
 				continue
 			}
 
-			// Select the appropriate shadow pipeline.
-			pipeKey := s.shadowPipelineKey
-			if mdl.Skinned() && s.shadowSkinnedPipeKey != "" {
-				pipeKey = s.shadowSkinnedPipeKey
-			}
+			// Select the appropriate shadow pipeline based on the model's
+			// shadow cull mode (Back/Front/None) and whether it is skinned.
+			cullMode := mdl.ShadowCullMode()
+			pipeKey := s.shadowPipelineKey(mdl.Skinned(), cullMode)
 			if pipeKey == "" {
 				continue
 			}
@@ -842,7 +810,7 @@ func (s *scene) PrepareShadows() {
 			//   group(0) = shadow data BGP (light VP uniform)
 			//   group(1) = output BGP (instance/bone matrices from compute shader)
 			shadowBindGroups := []bind_group_provider.BindGroupProvider{
-				s.shadowDataBGP,
+				shadowDataBGP,
 				a.OutputBindGroupProvider(),
 			}
 
@@ -854,23 +822,25 @@ func (s *scene) PrepareShadows() {
 			// count would read uninitialised / stale slots.
 			if a.CullingEnabled() {
 				if key := mdl.ComputePipelineKey(); key != "" {
-					if cs := s.r.Pipeline(key).Shader(shader.ShaderTypeCompute); cs != nil {
-						indirectBinding := 0
-						for _, decl := range cs.Declarations() {
-							if decl.Type == shader.AnnotationTypeBindingGroup && decl.Binding != nil {
-								typeArg := string(decl.Args[2])
-								if stripped, ok := strings.CutPrefix(typeArg, "array<"); ok {
-									typeArg = strings.TrimSuffix(stripped, ">")
-								}
-								if shader.AnnotationArg(typeArg) == shader.AnnotationArgIndirectArgs {
-									indirectBinding = *decl.Binding
-									break
+					if rp := s.r.Pipeline(key); rp != nil {
+						if cs := rp.Shader(shader.ShaderTypeCompute); cs != nil {
+							indirectBinding := 0
+							for _, decl := range cs.Declarations() {
+								if decl.Type == shader.AnnotationTypeBindingGroup && decl.Binding != nil {
+									typeArg := string(decl.Args[2])
+									if stripped, ok := strings.CutPrefix(typeArg, "array<"); ok {
+										typeArg = strings.TrimSuffix(stripped, ">")
+									}
+									if shader.AnnotationArg(typeArg) == shader.AnnotationArgIndirectArgs {
+										indirectBinding = *decl.Binding
+										break
+									}
 								}
 							}
-						}
-						if indBuf := a.IndirectBuffer(indirectBinding); indBuf != nil {
-							_ = s.r.ShadowDrawCallIndirect(pipeKey, meshProvider, indBuf, shadowBindGroups)
-							continue
+							if indBuf := a.IndirectBuffer(indirectBinding); indBuf != nil {
+								_ = s.r.ShadowDrawCallIndirect(pipeKey, meshProvider, indBuf, shadowBindGroups)
+								continue
+							}
 						}
 					}
 				}
@@ -884,22 +854,22 @@ func (s *scene) PrepareShadows() {
 	s.r.EndShadowFrame()
 }
 
-func (s *scene) InitLightCullResources(cullComputeShader, litFragmentShader shader.Shader, screenWidth, screenHeight int) {
+// initLightCullResources initializes the Forward+ light culling pipeline and buffer resources.
+func (s *scene) initLightCullResources(cullComputeShader, litFragmentShader shader.Shader, screenWidth, screenHeight int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if s.r == nil || cullComputeShader == nil || litFragmentShader == nil {
 		return
 	}
-	if s.lightsBGP == nil {
-		return // InitLightBindGroup must be called first
+	lightsBGP := s.lightHandler.Bgp("lights")
+	if lightsBGP.Buffer(1) == nil {
+		return // initLightBindGroup must be called first
 	}
 
-	s.screenWidth = screenWidth
-	s.screenHeight = screenHeight
-	tileCountX, tileCountY := light.TileCounts(screenWidth, screenHeight)
-	s.tileCountX = tileCountX
-	s.tileCountY = tileCountY
+	s.lightHandler.Resize(screenWidth, screenHeight)
+	tileCountX := s.lightHandler.TileCountX()
+	tileCountY := s.lightHandler.TileCountY()
 
 	numTiles := uint64(tileCountX) * uint64(tileCountY)
 
@@ -908,16 +878,16 @@ func (s *scene) InitLightCullResources(cullComputeShader, litFragmentShader shad
 	// binding 1: cull_lights (storage, read) — shared from lightsBGP binding 1
 	// binding 2: tile_light_counts (storage, rw) — new buffer
 	// binding 3: tile_light_indices (storage, rw) — new buffer
-	cullBGP := bind_group_provider.NewBindGroupProvider(s.name + "_light_cull")
+	cullBGP := s.lightHandler.Bgp("light_cull")
 
 	// Pre-set the lights buffer from lightsBGP so InitBindGroup reuses it.
-	if lightsBuffer := s.lightsBGP.Buffer(1); lightsBuffer != nil {
+	if lightsBuffer := lightsBGP.Buffer(1); lightsBuffer != nil {
 		cullBGP.SetBuffer(1, lightsBuffer)
 	}
 
 	cullDesc := cullComputeShader.BindGroupLayoutDescriptor(0)
 	sizeOverrides := map[int]uint64{
-		0: 160,                                           // LightCullUniforms
+		0: uint64((&light.GPULightCullUniforms{}).Size()), // LightCullUniforms
 		2: numTiles * 4,                                  // tile_light_counts: one u32 per tile
 		3: numTiles * uint64(light.MaxLightsPerTile) * 4, // tile_light_indices
 	}
@@ -925,7 +895,6 @@ func (s *scene) InitLightCullResources(cullComputeShader, litFragmentShader shad
 	if err := s.r.InitBindGroup(cullBGP, cullDesc, nil, sizeOverrides); err != nil {
 		panic(fmt.Sprintf("scene: failed to init light cull bind group: %v", err))
 	}
-	s.lightCullBGP = cullBGP
 
 	// ── 2. Register the cull compute pipeline ──────────────────────────
 	pipeKey := "light_cull_compute"
@@ -935,13 +904,13 @@ func (s *scene) InitLightCullResources(cullComputeShader, litFragmentShader shad
 	if err := s.r.RegisterPipelines(cp); err != nil {
 		panic(fmt.Sprintf("scene: failed to register light cull compute pipeline: %v", err))
 	}
-	s.lightCullPipelineKey = pipeKey
+	s.lightHandler.SetPipelineKey("light_cull", pipeKey)
 
 	// ── 3. Create fragment tile BGP (lit frag shader's @group(5)) ──────
 	// binding 0: tile_uniforms (uniform, 8 bytes)
 	// binding 1: tile_light_counts (storage, read) — shared from cullBGP binding 2
 	// binding 2: tile_light_indices (storage, read) — shared from cullBGP binding 3
-	tileBGP := bind_group_provider.NewBindGroupProvider(s.name + "_tile_lit")
+	tileBGP := s.lightHandler.Bgp("tile_lit")
 
 	if countsBuf := cullBGP.Buffer(2); countsBuf != nil {
 		tileBGP.SetBuffer(1, countsBuf)
@@ -950,16 +919,12 @@ func (s *scene) InitLightCullResources(cullComputeShader, litFragmentShader shad
 		tileBGP.SetBuffer(2, indicesBuf)
 	}
 
-	// Find the tile bind group index in the lit fragment shader.
+	// Resolve the tile bind group index from the shader's pre-processor
+	// declarations by matching the TileUniforms struct type annotation.
 	tileGroup := -1
-	for groupIdx, bindings := range litFragmentShader.BindGroupVarNames() {
-		for _, name := range bindings {
-			if strings.Contains(strings.ToLower(name), "tile") {
-				tileGroup = groupIdx
-				break
-			}
-		}
-		if tileGroup >= 0 {
+	for _, decl := range litFragmentShader.Declarations() {
+		if decl.Type == shader.AnnotationTypeBindingGroup && decl.Group != nil && decl.Args[2] == shader.AnnotationArgTileUniforms {
+			tileGroup = *decl.Group
 			break
 		}
 	}
@@ -969,12 +934,11 @@ func (s *scene) InitLightCullResources(cullComputeShader, litFragmentShader shad
 
 	tileDesc := litFragmentShader.BindGroupLayoutDescriptor(tileGroup)
 	tileSizeOverrides := map[int]uint64{
-		0: 8, // TileUniforms (tile_count_x + max_lights_per_tile)
+		0: uint64((&light.GPUTileUniforms{}).Size()), // TileUniforms
 	}
 	if err := s.r.InitBindGroup(tileBGP, tileDesc, nil, tileSizeOverrides); err != nil {
 		panic(fmt.Sprintf("scene: failed to init tile lit bind group: %v", err))
 	}
-	s.tileLitBGP = tileBGP
 
 	// ── 4. Write initial tile uniforms ─────────────────────────────────
 	tileUniforms := light.GPUTileUniforms{
@@ -1005,16 +969,12 @@ func (s *scene) reinitCameraBGPForLitPipeline(litFragShader shader.Shader) {
 		return
 	}
 
-	// Find the camera group in the lit fragment shader.
+	// Resolve the camera group index from the shader's pre-processor
+	// declarations by matching the Camera struct type annotation.
 	cameraGroup := -1
-	for groupIdx, bindings := range litFragShader.BindGroupVarNames() {
-		for _, name := range bindings {
-			if strings.Contains(strings.ToLower(name), "camera") {
-				cameraGroup = groupIdx
-				break
-			}
-		}
-		if cameraGroup >= 0 {
+	for _, decl := range litFragShader.Declarations() {
+		if decl.Type == shader.AnnotationTypeBindingGroup && decl.Group != nil && decl.Args[2] == shader.AnnotationArgCamera {
+			cameraGroup = *decl.Group
 			break
 		}
 	}
@@ -1051,7 +1011,7 @@ func (s *scene) PrepareLightCulling() {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if s.lightCullBGP == nil || s.r == nil || s.cam == nil {
+	if !s.lightHandler.Enabled() || s.r == nil || s.cam == nil {
 		return
 	}
 
@@ -1059,48 +1019,58 @@ func (s *scene) PrepareLightCulling() {
 	// shader so that tile counts are zeroed out — otherwise stale tile data
 	// from the previous frame causes disabled lights to keep rendering.
 	var lightCount uint32
-	for _, l := range s.lights {
+	for _, l := range s.lightHandler.Lights() {
 		if l.Enabled() {
 			lightCount++
 		}
 	}
 
 	// Build and write cull uniforms.
+	cullBGP := s.lightHandler.Bgp("light_cull")
 	uniforms := light.GPULightCullUniforms{
 		InvProj:      s.cam.InverseProjectionMatrix(),
 		ViewMatrix:   s.cam.ViewMatrix(),
-		TileCountX:   s.tileCountX,
-		TileCountY:   s.tileCountY,
-		ScreenWidth:  uint32(s.screenWidth),
-		ScreenHeight: uint32(s.screenHeight),
+		TileCountX:   s.lightHandler.TileCountX(),
+		TileCountY:   s.lightHandler.TileCountY(),
+		ScreenWidth:  uint32(s.lightHandler.ScreenWidth()),
+		ScreenHeight: uint32(s.lightHandler.ScreenHeight()),
 		LightCount:   lightCount,
 		Near:         s.cam.Near(),
 		Far:          s.cam.Far(),
 	}
 	s.r.WriteBuffers([]bind_group_provider.BufferWrite{
-		{Provider: s.lightCullBGP, Binding: 0, Offset: 0, Data: uniforms.Marshal()},
+		{Provider: cullBGP, Binding: 0, Offset: 0, Data: uniforms.Marshal()},
 	})
 
 	// Dispatch the light culling compute shader.
 	if err := s.r.BeginComputeFrame(); err != nil {
 		return
 	}
-	s.r.DispatchCompute(s.lightCullPipelineKey, s.lightCullBGP, [3]uint32{s.tileCountX, s.tileCountY, 1})
+	s.r.DispatchCompute(s.lightHandler.PipelineKey("light_cull"), cullBGP, [3]uint32{s.lightHandler.TileCountX(), s.lightHandler.TileCountY(), 1})
 	s.r.EndComputeFrame()
 }
 
-func (s *scene) InitLighting(litFragShader, shadowVertShader, shadowSkinnedVertShader, cullComputeShader shader.Shader, screenWidth, screenHeight int) {
+// initLighting initializes the entire lighting pipeline in the correct order:
+// light storage buffer, shadow map resources, shadow lit bind group, and Forward+
+// light culling. All lighting shaders are loaded internally from the engine's
+// standard light shader assets.
+func (s *scene) initLighting(screenWidth, screenHeight int) {
+	litFragShader := shader.NewShader("_lit_frag", shader.ShaderTypeFragment, "engine/light/assets/lit-frag.wgsl")
+	shadowVertShader := shader.NewShader("_shadow_depth_vert", shader.ShaderTypeVertex, "engine/light/assets/shadow-depth-vert.wgsl")
+	shadowSkinnedVertShader := shader.NewShader("_shadow_depth_skinned_vert", shader.ShaderTypeVertex, "engine/light/assets/shadow-depth-skinned-vert.wgsl")
+	cullComputeShader := shader.NewShader("_light_cull_compute", shader.ShaderTypeCompute, "engine/light/assets/light-cull-compute.wgsl")
+
 	// 1. Light storage buffer (must be first — other steps share this buffer).
-	s.InitLightBindGroup(litFragShader)
+	s.initLightBindGroup(litFragShader)
 
 	// 2. Shadow depth texture, comparison sampler, shadow data BGP, shadow pipelines.
-	s.InitShadowMap(shadowVertShader, shadowSkinnedVertShader)
+	s.initShadowMap(shadowVertShader, shadowSkinnedVertShader)
 
 	// 3. Shadow lit BGP (fragment-side shadow sampling — references shadow resources from step 2).
-	s.InitShadowLitBindGroup(litFragShader)
+	s.initShadowLitBindGroup(litFragShader)
 
 	// 4. Forward+ tile culling pipeline and shared tile buffers (references lights buffer from step 1).
-	s.InitLightCullResources(cullComputeShader, litFragShader, screenWidth, screenHeight)
+	s.initLightCullResources(cullComputeShader, litFragShader, screenWidth, screenHeight)
 
 	// 5. Re-create the camera bind group with merged VERTEX|FRAGMENT visibility.
 	//
@@ -1110,6 +1080,9 @@ func (s *scene) InitLighting(litFragShader, shadowVertShader, shadowSkinnedVertS
 	// VERTEX|FRAGMENT. WebGPU requires exact bind group layout equivalence, so the
 	// camera BGL must be recreated with the combined visibility to pass validation.
 	s.reinitCameraBGPForLitPipeline(litFragShader)
+
+	// 6. Mark the lighting subsystem as GPU-initialized.
+	s.lightHandler.SetEnabled(true)
 }
 
 func (s *scene) Count() int {
@@ -1130,7 +1103,7 @@ func (s *scene) CountEphemeral() int {
 	return count
 }
 
-func (s *scene) Add(obj game_object.GameObject, computeShader, vertexShader, fragmentShader shader.Shader, pipelineOpts ...pipeline.PipelineBuilderOption) uint64 {
+func (s *scene) Add(obj game_object.GameObject, pipelineOpts ...pipeline.PipelineBuilderOption) uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1142,6 +1115,39 @@ func (s *scene) Add(obj game_object.GameObject, computeShader, vertexShader, fra
 	if mdl == nil {
 		panic("scene: cannot Add a GameObject without a Model")
 	}
+
+	// Auto-resolve standard shaders based on whether the model uses skeletal animation
+	// and whether the scene has lighting enabled.
+	var computeShader, vertexShader, fragmentShader shader.Shader
+	lit := s.lightHandler.Enabled()
+	if mdl.Skinned() {
+		computeShader = shader.NewShader(mdl.Name()+"_compute", shader.ShaderTypeCompute, "engine/renderer/animator/assets/skeletal-compute.wgsl")
+		if lit {
+			vertexShader = shader.NewShader(mdl.Name()+"_vertex", shader.ShaderTypeVertex, "engine/light/assets/lit-skinned-vert.wgsl")
+		} else {
+			vertexShader = shader.NewShader(mdl.Name()+"_vertex", shader.ShaderTypeVertex, "engine/model/assets/skinned-vert.wgsl")
+		}
+	} else {
+		computeShader = shader.NewShader(mdl.Name()+"_compute", shader.ShaderTypeCompute, "engine/renderer/animator/assets/simple-compute.wgsl")
+		if lit {
+			vertexShader = shader.NewShader(mdl.Name()+"_vertex", shader.ShaderTypeVertex, "engine/light/assets/lit-vert.wgsl")
+		} else {
+			vertexShader = shader.NewShader(mdl.Name()+"_vertex", shader.ShaderTypeVertex, "engine/model/assets/simple-vert.wgsl")
+		}
+	}
+	// Resolve fragment shader path: use the first material's custom path if set,
+	// otherwise fall back to the lit or standard textured fragment shader.
+	fragShaderPath := "engine/model/assets/textured-frag.wgsl"
+	if lit {
+		fragShaderPath = "engine/light/assets/lit-frag.wgsl"
+	}
+	for _, mat := range mdl.RenderMaterials() {
+		if p := mat.FragmentShaderPath(); p != "" {
+			fragShaderPath = p
+			break
+		}
+	}
+	fragmentShader = shader.NewShader(mdl.Name()+"_fragment", shader.ShaderTypeFragment, fragShaderPath)
 
 	if obj.ID() == 0 {
 		obj.SetID(atomic.AddUint64(&s.nextID, 1) - 1)
@@ -1185,16 +1191,62 @@ func (s *scene) Add(obj game_object.GameObject, computeShader, vertexShader, fra
 	// Push initial transform data from the GameObject into the animator slot
 	anim.SetInstanceData(idx, pos, scale, rotSpeed, rot)
 
+	// Update reverse-index so Remove() can find the swapped object in O(1).
+	if s.instanceLookup[anim] == nil {
+		s.instanceLookup[anim] = make(map[uint32]uint64)
+	}
+	s.instanceLookup[anim][idx] = obj.ID()
+
 	// Persist non-ephemeral objects in the registry
 	if !obj.Ephemeral() {
 		s.registry[obj.ID()] = obj
 	}
 
 	// If the object has an attached light, track it for automatic position sync
-	// and register the light with the scene's light list.
+	// and register the light with the handler's light list.
 	if l := obj.Light(); l != nil {
 		s.lightObjects = append(s.lightObjects, obj)
-		s.lights = append(s.lights, l)
+		s.lightHandler.AddLight(l)
+	}
+
+	if obj.RigidBody() != nil && s.physicsHandler != nil {
+		bodyIndex := s.physicsHandler.RegisterBody(obj.ID(), [3]float32{pos[0], pos[1], pos[2]}, [3]float32{rot[0], rot[1], rot[2]}, obj.RigidBody(), uint32(obj.AnimatorInstanceID()))
+		if !s.physicsGPUReady {
+			s.initPhysicsGPU()
+			s.physicsGPUReady = true
+		}
+
+		// Ensure this animator has a sync group. Each unique Animator that
+		// owns physics bodies gets its own sync dispatch with a per-group
+		// sync_map buffer (sentinel-initialized) and the animator's own
+		// AnimationData buffer. Bodies not belonging to a group are skipped
+		// by the shader via the 0xFFFFFFFF sentinel.
+		if s.physicsSyncAnimMap == nil {
+			s.physicsSyncAnimMap = make(map[animator.Animator]int)
+		}
+		sgIdx, exists := s.physicsSyncAnimMap[anim]
+		if !exists {
+			sgIdx = s.createPhysicsSyncGroup(anim)
+		}
+
+		// Stage a write of this body's instance_id into the group's sync_map buffer.
+		instanceData := make([]byte, 4)
+		binary.LittleEndian.PutUint32(instanceData, uint32(obj.AnimatorInstanceID()))
+		s.physicsSyncWrites = append(s.physicsSyncWrites, bind_group_provider.BufferWrite{
+			Provider: s.physicsSyncGroups[sgIdx].bgp,
+			Binding:  1,
+			Offset:   uint64(bodyIndex) * 4,
+			Data:     instanceData,
+		})
+
+		// For kinematic bodies on skeletal animators, create a bone particle
+		// update group so the bone_particle_update shader transforms their
+		// particles through the current bone matrices each frame.
+		rb := obj.RigidBody()
+		mdl := obj.Model()
+		if rb.Kinematic() && mdl != nil && mdl.Skinned() && mdl.Skeleton() != nil {
+			s.createBoneParticleUpdateGroup(anim, bodyIndex, mdl, uint32(obj.AnimatorInstanceID()))
+		}
 	}
 
 	return obj.ID()
@@ -1219,12 +1271,7 @@ func (s *scene) Remove(id uint64) {
 
 	// Remove attached light from scene tracking lists
 	if l := obj.Light(); l != nil {
-		for i, existing := range s.lights {
-			if existing == l {
-				s.lights = append(s.lights[:i], s.lights[i+1:]...)
-				break
-			}
-		}
+		s.lightHandler.RemoveLight(l)
 		for i, o := range s.lightObjects {
 			if o == obj {
 				s.lightObjects = append(s.lightObjects[:i], s.lightObjects[i+1:]...)
@@ -1233,33 +1280,417 @@ func (s *scene) Remove(id uint64) {
 		}
 	}
 
-	// Swap-remove the instance data from the animator
-	if anim := obj.Animator(); anim != nil {
+	// Swap-remove the instance data from the animator and patch the physics
+	// sync_map so the sync shader writes each body's transform to the correct
+	// Animator instance slot after the swap.
+	anim := obj.Animator()
+	if anim != nil {
 		removedIdx := obj.AnimatorInstanceID()
 		if removedIdx >= 0 {
 			swappedFrom, swapped := anim.RemoveInstance(uint32(removedIdx))
+
+			// Remove the deleted object's entry from the reverse-index.
+			if lut := s.instanceLookup[anim]; lut != nil {
+				delete(lut, uint32(removedIdx))
+			}
+
 			if swapped {
-				// The instance at swappedFrom was moved into removedIdx — find the
-				// registry object that owned that slot and update its stored index.
-				for _, o := range s.registry {
-					if o.Animator() == anim && o.AnimatorInstanceID() == int(swappedFrom) {
-						o.SetAnimatorInstanceID(removedIdx)
-						break
+				// The instance at swappedFrom was moved into removedIdx.
+				// Use the reverse-index for O(1) lookup instead of scanning
+				// the entire registry.
+				if lut := s.instanceLookup[anim]; lut != nil {
+					if swappedObjID, ok := lut[swappedFrom]; ok {
+						if o, exists := s.registry[swappedObjID]; exists {
+							o.SetAnimatorInstanceID(removedIdx)
+							s.patchSyncMapEntry(anim, o.ID(), uint32(removedIdx))
+						}
+						// Update the reverse-index: swappedFrom is gone, now lives at removedIdx.
+						delete(lut, swappedFrom)
+						lut[uint32(removedIdx)] = swappedObjID
 					}
 				}
 			}
 			obj.SetAnimatorInstanceID(-1)
 		}
 	}
+
+	// Sentinel the removed body's sync_map entry and deactivate its GPU slot.
+	if s.physicsHandler != nil {
+		s.patchSyncMapEntry(anim, obj.ID(), 0xFFFFFFFF)
+		s.physicsHandler.RemoveBody(obj.ID())
+	}
 }
 
-func (s *scene) Clear() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// initPhysicsGPU creates GPU buffers, bind groups, and compute pipelines for the
+// physics simulation. Called once when the first rigid body is added to the scene.
+// Follows the same InitBindGroup + shared buffer + pipeline registration pattern
+// used by createAnimator. Caller must hold s.mu write lock.
+func (s *scene) initPhysicsGPU() {
+	ph := s.physicsHandler
 
-	s.animatorPool = make(map[model.Model][]animator.Animator)
-	s.registry = make(map[uint64]game_object.GameObject)
-	s.lightObjects = nil
+	type stageEntry struct {
+		name string
+		path string
+	}
+
+	stages := []stageEntry{
+		{"particle_values", "engine/physics/assets/particle-values.wgsl"},
+		{"aabb_reduce", "engine/physics/assets/aabb-reduce.wgsl"},
+		{"grid_build_params", "engine/physics/assets/grid-build-params.wgsl"},
+		{"grid_clear", "engine/physics/assets/grid-clear.wgsl"},
+		{"grid_insert", "engine/physics/assets/grid-insert.wgsl"},
+		{"collision", "engine/physics/assets/collision-reaction.wgsl"},
+		{"momenta", "engine/physics/assets/compute-momenta.wgsl"},
+		{"integrate", "engine/physics/assets/integrate.wgsl"},
+		{"sync", "engine/physics/assets/physics-sync.wgsl"},
+	}
+
+	shaders := make(map[string]shader.Shader, len(stages))
+	for _, st := range stages {
+		shaders[st.name] = shader.NewShader("physics_"+st.name, shader.ShaderTypeCompute, st.path)
+	}
+
+	// Canonical buffer indices on the buffers BGP. These are the contract between
+	// physics.go staged writes and the GPU buffer layout.
+	annotatedBufferIndex := map[shader.AnnotationArg]int{
+		shader.AnnotationArgPhysicsBody:       0,
+		shader.AnnotationArgPhysicsParticle:   1,
+		shader.AnnotationArgPhysicsGrid:       2,
+		shader.AnnotationArgPhysicsGlobals:    3,
+		shader.AnnotationArgPhysicsGridParams: 4,
+	}
+
+	// Manually declared WGSL bindings (atomic types not expressible via annotations)
+	// are matched by their variable name from the parsed shader source.
+	manualVarBufferIndex := map[string]int{
+		"aabb":     5, // AABB atomics (6 × atomic<u32>)
+		"grid":     2, // atomic view of the grid cell buffer
+		"sync_map": 7, // sync mapping (body index → animator instance ID)
+	}
+
+	// Derive per-shader binding→canonical buffer index maps from declarations and
+	// var names. Simultaneously collect layout entries for the unified buffers BGP.
+	bufferMaps := make(map[string]map[int]int, len(stages))
+	collected := make(map[int]wgpu.BindGroupLayoutEntry)
+
+	for _, st := range stages {
+		sh := shaders[st.name]
+		desc := sh.BindGroupLayoutDescriptor(0)
+		bmap := make(map[int]int, len(desc.Entries))
+
+		// Resolve annotated bindings via the declaration list
+		for _, decl := range sh.Declarations() {
+			if decl.Type != shader.AnnotationTypeBindingGroup || decl.Binding == nil {
+				continue
+			}
+			typeArg := string(decl.Args[2])
+			if stripped, ok := strings.CutPrefix(typeArg, "array<"); ok {
+				typeArg = strings.TrimSuffix(stripped, ">")
+			}
+			if bufIdx, ok := annotatedBufferIndex[shader.AnnotationArg(typeArg)]; ok {
+				bmap[*decl.Binding] = bufIdx
+			}
+		}
+
+		// Resolve remaining (manually-declared) bindings by WGSL variable name
+		for _, entry := range desc.Entries {
+			b := int(entry.Binding)
+			if _, done := bmap[b]; done {
+				continue
+			}
+			if bufIdx, ok := manualVarBufferIndex[sh.BindGroupVarName(0, b)]; ok {
+				bmap[b] = bufIdx
+			}
+		}
+
+		// Collect layout entries at canonical indices for the buffers BGP descriptor.
+		// Prefer entries with larger MinBindingSize so the struct-based entry (e.g.
+		// GridCell=16) wins over the atomic element size (u32=4).
+		for _, entry := range desc.Entries {
+			if canonIdx, ok := bmap[int(entry.Binding)]; ok {
+				if existing, exists := collected[canonIdx]; !exists || entry.Buffer.MinBindingSize > existing.Buffer.MinBindingSize {
+					e := entry
+					e.Binding = uint32(canonIdx)
+					collected[canonIdx] = e
+				}
+			}
+		}
+
+		bufferMaps[st.name] = bmap
+	}
+
+	// The sync mapping buffer is referenced by the sync shader at binding 1 (manual
+	// var) and populated via staged writes during RegisterBody. Add it manually to the
+	// buffers BGP descriptor since its canonical index (7) is not discovered from other
+	// annotated stages.
+	collected[7] = wgpu.BindGroupLayoutEntry{
+		Binding: 7, Visibility: wgpu.ShaderStageCompute,
+		Buffer: wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeStorage, MinBindingSize: 4},
+	}
+
+	// Assemble the buffers BGP descriptor from collected entries, sorted by binding.
+	buffersEntries := make([]wgpu.BindGroupLayoutEntry, 0, len(collected))
+	for i := range 8 {
+		if e, ok := collected[i]; ok {
+			buffersEntries = append(buffersEntries, e)
+		}
+	}
+
+	maxBodies := uint64(ph.MaxBodies())
+	maxParticles := uint64(ph.MaxParticles())
+	maxGridCells := uint64(ph.MaxGridCells())
+
+	buffersDesc := wgpu.BindGroupLayoutDescriptor{
+		Label:   "physics_buffers",
+		Entries: buffersEntries,
+	}
+
+	buffersSizeOverrides := map[int]uint64{
+		0: maxBodies * uint64((&physics.GPUBody{}).Size()),
+		1: maxParticles * uint64((&physics.GPUParticle{}).Size()),
+		2: maxGridCells * uint64((&physics.GPUGridCell{}).Size()),
+		3: uint64((&physics.GPUPhysicsGlobals{}).Size()),
+		4: uint64((&physics.GPUGridParams{}).Size()),
+		5: 24,            // aabbAtomics: 6 × u32 (no struct type)
+		7: maxBodies * 4, // syncMapping: u32 per body
+	}
+
+	buffersUsageOverrides := map[int]wgpu.BufferUsage{
+		0: wgpu.BufferUsageCopySrc, // allow copy-to-staging for readback
+	}
+
+	if err := s.r.InitBindGroup(ph.Buffers(), buffersDesc, buffersUsageOverrides, buffersSizeOverrides); err != nil {
+		panic(fmt.Sprintf("scene: failed to init physics buffers BGP: %v", err))
+	}
+
+	// Wire shared physical buffers from the buffers BGP into each per-shader BGP,
+	// then create bind groups. InitBindGroup skips buffer creation for bindings
+	// that already have a buffer set via SetBuffer.
+	for _, st := range stages {
+		bgp := ph.Bgp(st.name)
+		for shaderBinding, canonIdx := range bufferMaps[st.name] {
+			bgp.SetBuffer(shaderBinding, ph.Buffers().Buffer(canonIdx))
+		}
+		// Sync InitBindGroup is deferred to Add() because binding 2
+		// (AnimationData) comes from the Animator, not the physics buffers.
+		if st.name == "sync" {
+			continue
+		}
+		desc := shaders[st.name].BindGroupLayoutDescriptor(0)
+		if err := s.r.InitBindGroup(bgp, desc, nil, nil); err != nil {
+			panic(fmt.Sprintf("scene: failed to init physics BGP %q: %v", st.name, err))
+		}
+	}
+
+	// Register compute pipelines and store their keys on the physics handler.
+	for _, st := range stages {
+		sh := shaders[st.name]
+		p := pipeline.NewPipeline(sh.Key(), pipeline.PipelineTypeCompute, pipeline.WithComputeShader(sh))
+		if err := s.r.RegisterPipelines(p); err != nil {
+			panic(fmt.Sprintf("scene: failed to register physics pipeline %q: %v", st.name, err))
+		}
+		ph.SetPipelineKey(st.name, p.PipelineKey())
+	}
+
+	// Register the bone_particle_update pipeline separately. Its BGP is created
+	// per-group in createBoneParticleUpdateGroup because it requires buffers from
+	// both the physics handler and a specific Animator.
+	{
+		boneUpdateShader := shader.NewShader("physics_bone_update", shader.ShaderTypeCompute,
+			"engine/physics/assets/bone-particle-update.wgsl")
+		boneUpdatePipe := pipeline.NewPipeline(boneUpdateShader.Key(), pipeline.PipelineTypeCompute,
+			pipeline.WithComputeShader(boneUpdateShader))
+		if err := s.r.RegisterPipelines(boneUpdatePipe); err != nil {
+			panic(fmt.Sprintf("scene: failed to register bone_update pipeline: %v", err))
+		}
+		ph.SetPipelineKey("bone_update", boneUpdatePipe.PipelineKey())
+	}
+
+	// Create a staging buffer for GPU→CPU readback of body positions and quaternions.
+	// Sized for the full body buffer so any number of bodies up to maxBodies can be read back.
+	stagingSize := maxBodies * uint64((&physics.GPUBody{}).Size())
+	stagingBuf, err := s.r.CreateBuffer("physics_staging", stagingSize, wgpu.BufferUsageMapRead|wgpu.BufferUsageCopyDst)
+	if err != nil {
+		panic(fmt.Sprintf("scene: failed to create physics staging buffer: %v", err))
+	}
+	ph.SetStagingBuffer(stagingBuf)
+}
+
+// createPhysicsSyncGroup creates a per-animator sync bind group provider for the
+// physics sync shader dispatch. Each group has its own sync_map buffer (initialized
+// to the 0xFFFFFFFF sentinel so the shader skips non-member bodies) and references
+// the animator's AnimationData buffer at binding 2. The bodies and globals buffers
+// are shared from the physics handler. Caller must hold s.mu write lock.
+//
+// Parameters:
+//   - anim: the Animator that owns the bodies in this sync group
+//   - computeShader: the compute shader used by the Animator (for AnimationData binding discovery)
+//
+// Returns:
+//   - int: the index of the new sync group in s.physicsSyncGroups
+func (s *scene) createPhysicsSyncGroup(anim animator.Animator) int {
+	ph := s.physicsHandler
+
+	// Discover the AnimationData binding index from the standard simple compute shader (cached).
+	if s.physicsAnimBinding < 0 {
+		syncComputeShader := shader.NewShader("_sync_compute_init", shader.ShaderTypeCompute, "engine/renderer/animator/assets/simple-compute.wgsl")
+		for _, decl := range syncComputeShader.Declarations() {
+			if decl.Type != shader.AnnotationTypeBindingGroup || decl.Binding == nil {
+				continue
+			}
+			typeArg := string(decl.Args[2])
+			if stripped, ok := strings.CutPrefix(typeArg, "array<"); ok {
+				typeArg = strings.TrimSuffix(stripped, ">")
+			}
+			if shader.AnnotationArg(typeArg) == shader.AnnotationArgAnimationData {
+				s.physicsAnimBinding = *decl.Binding
+				break
+			}
+		}
+	}
+	if s.physicsAnimBinding < 0 {
+		panic("scene: AnimationData binding not found in compute shader declarations")
+	}
+
+	groupID := uint32(len(s.physicsSyncGroups))
+	bgpLabel := fmt.Sprintf("physics_sync_group_%d", groupID)
+	bgp := bind_group_provider.NewBindGroupProvider(bgpLabel)
+
+	// Wire shared physics buffers (bodies=0, globals=3) from the central buffers BGP.
+	bgp.SetBuffer(0, ph.Buffers().Buffer(0))
+	bgp.SetBuffer(3, ph.Buffers().Buffer(3))
+
+	// Wire this animator's AnimationData buffer at binding 2.
+	animDataBuf := anim.ComputeBindGroupProvider().Buffer(s.physicsAnimBinding)
+	bgp.SetBuffer(2, animDataBuf)
+
+	// Binding 1 (sync_map) is left unset so InitBindGroup creates a new per-group buffer.
+	syncShader := s.r.Pipeline(ph.PipelineKey("sync")).Shader(shader.ShaderTypeCompute)
+	syncDesc := syncShader.BindGroupLayoutDescriptor(0)
+
+	sizeOverrides := map[int]uint64{
+		1: uint64(ph.MaxBodies()) * 4,
+	}
+	if err := s.r.InitBindGroup(bgp, syncDesc, nil, sizeOverrides); err != nil {
+		panic(fmt.Sprintf("scene: failed to init physics sync BGP for group %d: %v", groupID, err))
+	}
+
+	// Initialize the sync_map buffer to all 0xFFFFFFFF (sentinel). The shader
+	// checks this value and skips bodies not belonging to the group.
+	sentinelData := make([]byte, ph.MaxBodies()*4)
+	for i := 0; i < len(sentinelData); i += 4 {
+		binary.LittleEndian.PutUint32(sentinelData[i:i+4], 0xFFFFFFFF)
+	}
+	s.r.WriteBuffers([]bind_group_provider.BufferWrite{
+		{Provider: bgp, Binding: 1, Offset: 0, Data: sentinelData},
+	})
+
+	sg := &physicsSyncGroup{
+		groupID: groupID,
+		bgp:     bgp,
+	}
+	s.physicsSyncGroups = append(s.physicsSyncGroups, sg)
+	s.physicsSyncAnimMap[anim] = int(groupID)
+
+	return int(groupID)
+}
+
+// patchSyncMapEntry stages a write to the per-group sync_map buffer that maps the
+// given object's physics body slot to a new Animator instance ID. Pass 0xFFFFFFFF
+// as instanceID to sentinel the entry (disabling sync for that body). Caller must
+// hold s.mu write lock. No-op if the object has no physics body or its Animator has
+// no sync group.
+func (s *scene) patchSyncMapEntry(anim animator.Animator, objID uint64, instanceID uint32) {
+	if s.physicsHandler == nil || anim == nil {
+		return
+	}
+	bodyIdx, ok := s.physicsHandler.BodyIndex(objID)
+	if !ok {
+		return
+	}
+	sgIdx, exists := s.physicsSyncAnimMap[anim]
+	if !exists {
+		return
+	}
+	data := make([]byte, 4)
+	binary.LittleEndian.PutUint32(data, instanceID)
+	s.physicsSyncWrites = append(s.physicsSyncWrites, bind_group_provider.BufferWrite{
+		Provider: s.physicsSyncGroups[sgIdx].bgp,
+		Binding:  1,
+		Offset:   uint64(bodyIdx) * 4,
+		Data:     data,
+	})
+}
+
+// createBoneParticleUpdateGroup sets up a per-kinematic-body bind group provider
+// for the bone_particle_update compute shader. The BGP wires the shared particle and
+// body buffers from the physics handler with the scratch_matrices buffer from the
+// Animator's compute bind group (binding 5 in skeletal-compute.wgsl). A small uniform
+// at binding 3 carries the particle range, bone count, and animator instance index.
+// Caller must hold s.mu write lock.
+//
+// Parameters:
+//   - anim: the skeletal Animator owning the bone matrices
+//   - bodyIndex: the GPU body slot returned by RegisterBody
+//   - mdl: the Model with skeleton data (for bone count)
+//   - instanceIndex: the Animator instance slot for scratch_matrices indexing
+func (s *scene) createBoneParticleUpdateGroup(anim animator.Animator, bodyIndex int, mdl model.Model, instanceIndex uint32) {
+	ph := s.physicsHandler
+
+	particleStart, particleCount := ph.BodyParticleInfo(bodyIndex)
+	if particleCount == 0 {
+		return
+	}
+
+	boneCount := uint32(len(mdl.Skeleton().Bones))
+
+	// scratch_matrices lives at binding 5 in the skeletal-compute shader's BGP.
+	// This is a manually-declared WGSL binding (no @oxy:group annotation).
+	const scratchBinding = 5
+
+	bgpLabel := fmt.Sprintf("bone_particle_update_%d", len(s.boneParticleUpdateGroups))
+	bgp := bind_group_provider.NewBindGroupProvider(bgpLabel)
+
+	// Wire shared physics buffers and the animator's scratch_matrices buffer.
+	// model_data lives at binding 6 in the skeletal-compute shader's BGP.
+	const modelDataBinding = 6
+
+	bgp.SetBuffer(0, ph.Buffers().Buffer(1))                                 // particles
+	bgp.SetBuffer(1, ph.Buffers().Buffer(0))                                 // bodies
+	bgp.SetBuffer(2, anim.ComputeBindGroupProvider().Buffer(scratchBinding)) // scratch_matrices
+	// Binding 3 (params uniform) is left unset so InitBindGroup creates a new buffer.
+	bgp.SetBuffer(4, anim.ComputeBindGroupProvider().Buffer(modelDataBinding)) // model_data
+
+	// Use the bone_update shader's layout descriptor to initialize the bind group.
+	boneUpdateKey := ph.PipelineKey("bone_update")
+	boneUpdatePipe := s.r.Pipeline(boneUpdateKey)
+	if boneUpdatePipe == nil {
+		panic("scene: bone_update pipeline not registered")
+	}
+	boneUpdateShader := boneUpdatePipe.Shader(shader.ShaderTypeCompute)
+	boneUpdateDesc := boneUpdateShader.BindGroupLayoutDescriptor(0)
+
+	if err := s.r.InitBindGroup(bgp, boneUpdateDesc, nil, nil); err != nil {
+		panic(fmt.Sprintf("scene: failed to init bone particle update BGP: %v", err))
+	}
+
+	// Upload the constant params uniform (does not change frame-to-frame).
+	paramsData := make([]byte, 16)
+	binary.LittleEndian.PutUint32(paramsData[0:4], particleStart)
+	binary.LittleEndian.PutUint32(paramsData[4:8], particleCount)
+	binary.LittleEndian.PutUint32(paramsData[8:12], boneCount)
+	binary.LittleEndian.PutUint32(paramsData[12:16], instanceIndex)
+	s.r.WriteBuffers([]bind_group_provider.BufferWrite{
+		{Provider: bgp, Binding: 3, Offset: 0, Data: paramsData},
+	})
+
+	s.boneParticleUpdateGroups = append(s.boneParticleUpdateGroups, &boneParticleUpdateGroup{
+		bgp:           bgp,
+		particleStart: particleStart,
+		particleCount: particleCount,
+		boneCount:     boneCount,
+		instanceIndex: instanceIndex,
+	})
 }
 
 // createAnimator creates a new Animator for the given Model, registers its compute
@@ -1548,6 +1979,19 @@ func (s *scene) createAnimator(mdl model.Model, computeShader, vertexShader, fra
 		panic(fmt.Sprintf("scene: failed to register render pipeline for model %q: %v", mdl.Name(), err))
 	}
 
+	// Init material GPU resources (textures, samplers, bind groups) for each material
+	// that doesn't already have a bind group provider set (loader-produced materials
+	// will not have GPU resources yet since the loader is CPU-only).
+	for i, mat := range mdl.RenderMaterials() {
+		if mat.BindGroupProvider() != nil {
+			continue
+		}
+		providerName := fmt.Sprintf("%s_material_%d", mdl.Name(), i)
+		if err := s.r.RegisterMaterial(mat, providerName); err != nil {
+			panic(fmt.Sprintf("scene: failed to init material GPU for model %q material %d: %v", mdl.Name(), i, err))
+		}
+	}
+
 	return anim
 }
 
@@ -1599,12 +2043,13 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 		}
 	}
 
-	// Write light buffer to GPU each frame when a light BGP is initialized.
-	if s.lightsBGP != nil {
-		lightData := light.MarshalLightBuffer(s.lights, s.ambientColor)
+	// Write light buffer to GPU each frame when lighting is initialized.
+	if s.lightHandler.Enabled() {
+		lightsBGP := s.lightHandler.Bgp("lights")
+		lightData := light.MarshalLightBuffer(s.lightHandler.Lights(), s.lightHandler.AmbientColor())
 		writes := []bind_group_provider.BufferWrite{
 			{
-				Provider: s.lightsBGP,
+				Provider: lightsBGP,
 				Binding:  0, // light_header uniform
 				Offset:   0,
 				Data:     lightData[:16], // GPULightHeader is 16 bytes
@@ -1612,7 +2057,7 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 		}
 		if len(lightData) > 16 {
 			writes = append(writes, bind_group_provider.BufferWrite{
-				Provider: s.lightsBGP,
+				Provider: lightsBGP,
 				Binding:  1, // lights storage array
 				Offset:   0,
 				Data:     lightData[16:],
@@ -1654,7 +2099,19 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 				continue
 			}
 
-			shdr := s.r.Pipeline(a.Model().ComputePipelineKey()).Shader(shader.ShaderTypeCompute)
+			mdl := a.Model()
+			if mdl == nil {
+				continue
+			}
+			pipeKey := mdl.ComputePipelineKey()
+			if pipeKey == "" {
+				continue
+			}
+			pipe := s.r.Pipeline(pipeKey)
+			if pipe == nil {
+				continue
+			}
+			shdr := pipe.Shader(shader.ShaderTypeCompute)
 			if shdr == nil {
 				continue
 			}
@@ -1717,7 +2174,15 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 			if a.CullingEnabled() {
 				if m := a.Model(); m != nil {
 					if mp := m.MeshProvider(); mp != nil {
-						shdr := s.r.Pipeline(a.Model().ComputePipelineKey()).Shader(shader.ShaderTypeCompute)
+						pipeKey := m.ComputePipelineKey()
+						if pipeKey == "" {
+							continue
+						}
+						pipe := s.r.Pipeline(pipeKey)
+						if pipe == nil {
+							continue
+						}
+						shdr := pipe.Shader(shader.ShaderTypeCompute)
 						if shdr == nil {
 							continue
 						}
@@ -1750,14 +2215,237 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 		s.r.WriteBuffers(allWrites)
 	}
 
-	// Dispatch compute shaders for each registered animator with instances
+	// ── Physics compute dispatch ───────────────────────────────────────
+	// Runs BEFORE the animator compute dispatches so the sync shader's writes to
+	// AnimationData are visible when the animator reads it for model-matrix
+	// generation and frustum culling. The 8-stage GPU rigid body pipeline uses a
+	// fixed-timestep accumulator. PrepareStep returns the number of substeps for
+	// this frame and the marshaled globals uniform. Each substep dispatches the full
+	// pipeline: particle values → AABB reduce → grid build params → grid clear →
+	// grid insert → collision → compute momenta → integrate. Between substeps,
+	// only the AABB atomics buffer is reset; body and particle data persist in the
+	// storage buffers across stages.
+	if ph := s.physicsHandler; ph != nil && ph.Enabled() {
+		// Process any pending GPU→CPU readback from the previous frame's copy command.
+		// By this point the compute command buffer containing the CopyBufferToBuffer has
+		// been submitted (EndComputeFrame from the prior frame), so the staging buffer is
+		// safe to map synchronously. This only runs when game logic called RequestReadback.
+		if ph.ReadbackPending() {
+			bodySize := uint64((&physics.GPUBody{}).Size())
+			readSize := uint64(ph.BodiesCount()) * bodySize
+			if readSize > 0 {
+				data, err := s.r.ReadMappedBuffer(ph.StagingBuffer(), 0, readSize)
+				if err == nil {
+					ph.ProcessReadback(data)
+				}
+			}
+			ph.ClearReadbackPending()
+		}
+
+		// Collect staged writes (body registrations, removals, force drains).
+		// PrepareStep MUST be called first so that force drains from ApplyForce()
+		// are staged into the same write batch as body registrations. Without this,
+		// newly spawned bodies spend their first physics frame with zero external
+		// force (no gravity), causing them to sit at the spawn point while collision
+		// forces from overlapping neighbors fling them apart.
+		substeps, globalsData := ph.PrepareStep(deltaTime)
+		physWrites := ph.StagedWriteData()
+
+		// Append per-group sync_map writes staged during Add() calls.
+		if len(s.physicsSyncWrites) > 0 {
+			physWrites = append(physWrites, s.physicsSyncWrites...)
+			s.physicsSyncWrites = s.physicsSyncWrites[:0]
+		}
+
+		if substeps > 0 {
+			// Write globals uniform once — it is constant across all substeps
+			// since fixedDt does not change within a frame.
+			physWrites = append(physWrites, bind_group_provider.BufferWrite{
+				Provider: ph.Buffers(),
+				Binding:  3,
+				Offset:   0,
+				Data:     globalsData,
+			})
+
+			if len(physWrites) > 0 {
+				s.r.WriteBuffers(physWrites)
+			}
+
+			// physDispatchGroups computes the number of work groups needed to cover
+			// itemCount invocations for the shader behind the given pipeline key.
+			// The workgroup size is read from the parsed WGSL source, not hardcoded.
+			physDispatchGroups := func(pipeKey string, itemCount uint32) [3]uint32 {
+				pipe := s.r.Pipeline(pipeKey)
+				if pipe == nil {
+					return [3]uint32{1, 1, 1}
+				}
+				shdr := pipe.Shader(shader.ShaderTypeCompute)
+				if shdr == nil {
+					return [3]uint32{1, 1, 1}
+				}
+				wgSize := shdr.WorkgroupSize()
+				xSize := wgSize[0]
+				if xSize == 0 {
+					xSize = 1
+				}
+				groups := (itemCount + xSize - 1) / xSize
+				if groups == 0 {
+					groups = 1
+				}
+				return [3]uint32{groups, 1, 1}
+			}
+
+			particleCount := uint32(ph.ParticleCount())
+			bodyCount := uint32(ph.BodiesCount())
+
+			// Pre-build AABB atomics reset payload (6 × u32):
+			//   indices 0–2 (min): 0xFFFFFFFF (largest sortable uint → will be atomicMin'd down)
+			//   indices 3–5 (max): 0x00000000 (smallest sortable uint → will be atomicMax'd up)
+			aabbReset := make([]byte, 24)
+			binary.LittleEndian.PutUint32(aabbReset[0:4], 0xFFFFFFFF)
+			binary.LittleEndian.PutUint32(aabbReset[4:8], 0xFFFFFFFF)
+			binary.LittleEndian.PutUint32(aabbReset[8:12], 0xFFFFFFFF)
+			// indices 3–5 are already zero from make()
+
+			for sub := 0; sub < substeps; sub++ {
+				// Stage 1: Particle value computation (world pos, velocity, rel pos)
+				pvKey := ph.PipelineKey("particle_values")
+				s.r.DispatchCompute(pvKey, ph.Bgp("particle_values"),
+					physDispatchGroups(pvKey, particleCount))
+
+				// Reset AABB atomics before the reduction pass.
+				s.r.WriteBuffers([]bind_group_provider.BufferWrite{
+					{Provider: ph.Buffers(), Binding: 5, Offset: 0, Data: aabbReset},
+				})
+
+				// Stage 1.5a: AABB reduction (parallel atomicMin/Max over particle positions)
+				arKey := ph.PipelineKey("aabb_reduce")
+				s.r.DispatchCompute(arKey, ph.Bgp("aabb_reduce"),
+					physDispatchGroups(arKey, particleCount))
+
+				// Stage 1.5b: Grid build params (single invocation derives grid origin + dims)
+				gbKey := ph.PipelineKey("grid_build_params")
+				s.r.DispatchCompute(gbKey, ph.Bgp("grid_build_params"),
+					physDispatchGroups(gbKey, 1))
+
+				// Stage 2a: Grid clear (fill all cells with sentinel 0xFFFFFFFF)
+				gcKey := ph.PipelineKey("grid_clear")
+				s.r.DispatchCompute(gcKey, ph.Bgp("grid_clear"),
+					physDispatchGroups(gcKey, ph.MaxGridCells()))
+
+				// Stage 2b: Grid insert (hash particles into cells via atomic CAS)
+				giKey := ph.PipelineKey("grid_insert")
+				s.r.DispatchCompute(giKey, ph.Bgp("grid_insert"),
+					physDispatchGroups(giKey, particleCount))
+
+				// Stage 3: Collision detection & DEM force computation
+				crKey := ph.PipelineKey("collision")
+				s.r.DispatchCompute(crKey, ph.Bgp("collision"),
+					physDispatchGroups(crKey, particleCount))
+
+				// Stage 4: Momentum accumulation (sum particle forces → body momenta)
+				cmKey := ph.PipelineKey("momenta")
+				s.r.DispatchCompute(cmKey, ph.Bgp("momenta"),
+					physDispatchGroups(cmKey, bodyCount))
+
+				// Stage 5: Integration (update position & quaternion from momenta)
+				iKey := ph.PipelineKey("integrate")
+				s.r.DispatchCompute(iKey, ph.Bgp("integrate"),
+					physDispatchGroups(iKey, bodyCount))
+			}
+
+			// After all substeps, sync physics results back to each Animator's
+			// AnimationData buffer. Each sync group dispatches the sync shader with
+			// its own BGP that binds the correct AnimationData buffer and per-group
+			// sync_map (sentinel-filtered so non-member bodies are skipped).
+			if len(s.physicsSyncGroups) > 0 {
+				syncKey := ph.PipelineKey("sync")
+				wg := physDispatchGroups(syncKey, bodyCount)
+				for _, sg := range s.physicsSyncGroups {
+					s.r.DispatchCompute(syncKey, sg.bgp, wg)
+				}
+			}
+
+			// If game logic requested a readback, encode a GPU→GPU copy of the bodies
+			// buffer into the staging buffer. The next frame will map and process it.
+			if ph.ConsumeReadbackRequest() {
+				if staging := ph.StagingBuffer(); staging != nil {
+					copySize := uint64(bodyCount) * uint64((&physics.GPUBody{}).Size())
+					s.r.CopyBufferToBuffer(ph.Buffers().Buffer(0), staging, 0, 0, copySize)
+				}
+			}
+		} else if len(physWrites) > 0 {
+			// No substeps this frame (accumulator hasn't reached fixedDt yet),
+			// but we still need to flush registration/removal writes.
+			s.r.WriteBuffers(physWrites)
+		}
+	}
+
+	// Dispatch compute shaders for each registered animator with instances.
+	// This runs AFTER the physics block so the sync shader's writes to
+	// AnimationData (positions/rotations of physics-controlled bodies) are
+	// visible when the animator's compute shader builds model matrices and
+	// performs frustum culling.
 	for _, anim := range s.animatorPool {
 		for _, a := range anim {
 			if a.InstanceCount() == 0 {
 				continue
 			}
-			if key := a.Model().ComputePipelineKey(); key != "" {
-				s.r.DispatchCompute(key, a.ComputeBindGroupProvider(), s.r.Pipeline(key).Shader(shader.ShaderTypeCompute).WorkgroupSize())
+			mdl := a.Model()
+			if mdl == nil {
+				continue
+			}
+			key := mdl.ComputePipelineKey()
+			if key == "" {
+				continue
+			}
+			pipe := s.r.Pipeline(key)
+			if pipe == nil {
+				continue
+			}
+			shdr := pipe.Shader(shader.ShaderTypeCompute)
+			if shdr == nil {
+				continue
+			}
+			// Dispatch the correct number of workgroups to cover all instances.
+			// shdr.WorkgroupSize() returns the per-workgroup thread count (e.g. 256),
+			// NOT the number of groups. We need ceil(instanceCount / workgroupSize).
+			wgSize := shdr.WorkgroupSize()
+			xSize := wgSize[0]
+			if xSize == 0 {
+				xSize = 1
+			}
+			instCount := a.InstanceCount()
+			groups := (instCount + xSize - 1) / xSize
+			if groups == 0 {
+				groups = 1
+			}
+			s.r.DispatchCompute(key, a.ComputeBindGroupProvider(), [3]uint32{groups, 1, 1})
+		}
+	}
+
+	// Dispatch bone particle update for kinematic bodies after animator compute.
+	// The animator has populated scratch_matrices with current bone world matrices;
+	// this shader transforms each kinematic particle through its bone matrix so the
+	// next frame's physics collision pipeline sees the animated pose.
+	if ph := s.physicsHandler; ph != nil && len(s.boneParticleUpdateGroups) > 0 {
+		boneUpdateKey := ph.PipelineKey("bone_update")
+		boneUpdatePipe := s.r.Pipeline(boneUpdateKey)
+		if boneUpdatePipe != nil {
+			boneUpdateShader := boneUpdatePipe.Shader(shader.ShaderTypeCompute)
+			if boneUpdateShader != nil {
+				wgSize := boneUpdateShader.WorkgroupSize()
+				xSize := wgSize[0]
+				if xSize == 0 {
+					xSize = 1
+				}
+				for _, bg := range s.boneParticleUpdateGroups {
+					groups := (bg.particleCount + xSize - 1) / xSize
+					if groups == 0 {
+						groups = 1
+					}
+					s.r.DispatchCompute(boneUpdateKey, bg.bgp, [3]uint32{groups, 1, 1})
+				}
 			}
 		}
 	}
@@ -1839,18 +2527,22 @@ func (s *scene) DrawCalls() error {
 								provider = s.cam.BindGroupProvider()
 							}
 						case shader.AnnotationArgMaterial:
-							provider = mat.BindGroupProvider()
+							if mp := mat.Provider(g); mp != nil {
+								provider = mp
+							} else {
+								provider = mat.BindGroupProvider()
+							}
 						case shader.AnnotationArgLights:
-							if s.lightsBGP != nil {
-								provider = s.lightsBGP
+							if s.lightHandler.Enabled() {
+								provider = s.lightHandler.Bgp("lights")
 							}
 						case shader.AnnotationArgShadow:
-							if s.shadowLitBGP != nil {
-								provider = s.shadowLitBGP
+							if s.lightHandler.Enabled() {
+								provider = s.lightHandler.Bgp("shadow_lit")
 							}
 						case shader.AnnotationArgTiles:
-							if s.tileLitBGP != nil {
-								provider = s.tileLitBGP
+							if s.lightHandler.Enabled() {
+								provider = s.lightHandler.Bgp("tile_lit")
 							}
 						case shader.AnnotationArgEffect:
 							if ep := mdl.EffectProvider(); ep != nil {
@@ -1872,20 +2564,28 @@ func (s *scene) DrawCalls() error {
 						case shader.AnnotationArgInstanceData:
 							provider = a.OutputBindGroupProvider()
 						case shader.AnnotationArgLight, shader.AnnotationArgLightHeader:
-							if s.lightsBGP != nil {
-								provider = s.lightsBGP
+							if s.lightHandler.Enabled() {
+								provider = s.lightHandler.Bgp("lights")
 							}
 						case shader.AnnotationArgShadowData, shader.AnnotationArgShadowUniform:
-							if s.shadowLitBGP != nil {
-								provider = s.shadowLitBGP
+							if s.lightHandler.Enabled() {
+								provider = s.lightHandler.Bgp("shadow_lit")
 							}
 						case shader.AnnotationArgTileUniforms:
-							if s.tileLitBGP != nil {
-								provider = s.tileLitBGP
+							if s.lightHandler.Enabled() {
+								provider = s.lightHandler.Bgp("tile_lit")
 							}
-						case shader.AnnotationArgEffectParams, shader.AnnotationArgOverlayParams:
+						case shader.AnnotationArgOverlayParams:
+							if bp := mat.BindGroupProvider(); bp != nil {
+								provider = bp
+							} else if ep := mdl.EffectProvider(); ep != nil {
+								provider = ep
+							}
+						case shader.AnnotationArgEffectParams:
 							if ep := mdl.EffectProvider(); ep != nil {
 								provider = ep
+							} else if mp := mat.Provider(g); mp != nil {
+								provider = mp
 							}
 						}
 					}
@@ -1914,7 +2614,11 @@ func (s *scene) DrawCalls() error {
 				if a.CullingEnabled() {
 					var indirectBinding int
 					if key := mdl.ComputePipelineKey(); key != "" {
-						if cs := s.r.Pipeline(key).Shader(shader.ShaderTypeCompute); cs != nil {
+						rp := s.r.Pipeline(key)
+						if rp == nil {
+							continue
+						}
+						if cs := rp.Shader(shader.ShaderTypeCompute); cs != nil {
 							for _, d := range cs.Declarations() {
 								if d.Type == shader.AnnotationTypeBindingGroup && d.Binding != nil {
 									arg := string(d.Args[2])

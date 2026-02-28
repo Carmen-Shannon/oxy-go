@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/Carmen-Shannon/oxy-go/engine"
-	cameramocks "github.com/Carmen-Shannon/oxy-go/tests/mocks/camera"
 	renderermocks "github.com/Carmen-Shannon/oxy-go/tests/mocks/renderer"
 	scenemocks "github.com/Carmen-Shannon/oxy-go/tests/mocks/scene"
 	windowmocks "github.com/Carmen-Shannon/oxy-go/tests/mocks/window"
@@ -102,22 +101,15 @@ func (suite *engineTest) TestNewEngine() {
 		})
 	})
 
-	suite.Run("resize callback invokes renderer resize and camera set aspect", func() {
+	suite.Run("resize callback invokes scene resize", func() {
 		var capturedCallback func(int, int)
 		w := &windowmocks.MockWindow{}
 		w.EXPECT().SetResizeCallback(mock.Anything).Run(func(cb func(int, int)) {
 			capturedCallback = cb
 		}).Once()
 
-		r := &renderermocks.MockRenderer{}
-		r.EXPECT().Resize(800, 600).Once()
-
-		c := &cameramocks.MockCamera{}
-		c.EXPECT().SetAspect(float32(800) / float32(600)).Once()
-
 		s := &scenemocks.MockScene{}
-		s.EXPECT().Renderer().Return(r).Maybe()
-		s.EXPECT().Camera().Return(c).Maybe()
+		s.EXPECT().Resize(800, 600).Once()
 
 		_ = engine.NewEngine(
 			engine.WithWindow(w),
@@ -127,30 +119,34 @@ func (suite *engineTest) TestNewEngine() {
 		suite.NotNil(capturedCallback)
 		capturedCallback(800, 600)
 		w.AssertExpectations(suite.T())
-		r.AssertExpectations(suite.T())
-		c.AssertExpectations(suite.T())
+		s.AssertExpectations(suite.T())
 	})
 
-	suite.Run("resize callback skips nil renderer and camera", func() {
+	suite.Run("resize callback calls resize on all scenes", func() {
 		var capturedCallback func(int, int)
 		w := &windowmocks.MockWindow{}
 		w.EXPECT().SetResizeCallback(mock.Anything).Run(func(cb func(int, int)) {
 			capturedCallback = cb
 		}).Once()
 
-		s := &scenemocks.MockScene{}
-		s.EXPECT().Renderer().Return(nil).Maybe()
-		s.EXPECT().Camera().Return(nil).Maybe()
+		s1 := &scenemocks.MockScene{}
+		s1.EXPECT().Resize(1024, 768).Once()
+
+		s2 := &scenemocks.MockScene{}
+		s2.EXPECT().Resize(1024, 768).Once()
 
 		_ = engine.NewEngine(
 			engine.WithWindow(w),
-			engine.WithScene(0, s),
+			engine.WithScene(0, s1),
+			engine.WithScene(1, s2),
 		)
 
 		suite.NotNil(capturedCallback)
 		suite.NotPanics(func() {
 			capturedCallback(1024, 768)
 		})
+		s1.AssertExpectations(suite.T())
+		s2.AssertExpectations(suite.T())
 	})
 }
 

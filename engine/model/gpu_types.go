@@ -60,7 +60,7 @@ func (g *GPUVertex) Marshal() []byte {
 // GPUSkinnedVertexSource is the canonical WGSL definition of the VertexInput struct for skinned mesh pipelines.
 // Matches GPUSkinnedVertex layout exactly (96 bytes, std430 aligned).
 //
-//go:embed assets/skinned_vertex.wgsl
+//go:embed assets/skinned-vertex.wgsl
 var GPUSkinnedVertexSource string
 
 // GPUSkinnedVertex is the GPU-aligned representation of a single mesh vertex for skinned (bone-animated) models.
@@ -140,7 +140,7 @@ func ComputeBoundingRadius(vertices []GPUSkinnedVertex) float32 {
 // GPUModelDataSource is the canonical WGSL definition of the ModelData struct for per-instance model matrices.
 // Matches GPUModelData layout exactly (64 bytes, std430 aligned).
 //
-//go:embed assets/model_data.wgsl
+//go:embed assets/model-data.wgsl
 var GPUModelDataSource string
 
 // GPUModelData is the GPU-aligned representation of a single per-instance model matrix.

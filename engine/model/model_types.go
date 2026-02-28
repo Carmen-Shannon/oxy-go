@@ -138,3 +138,25 @@ type ImportedMesh struct {
 	// BoundingMax is the maximum corner of the axis-aligned bounding box.
 	BoundingMax [3]float32
 }
+
+// ShadowCullMode controls which faces are culled when rendering a model into
+// the shadow depth map. Different geometry types benefit from different cull
+// modes to avoid shadow artifacts.
+type ShadowCullMode int
+
+const (
+	// ShadowCullModeBack culls back faces, rendering front faces into the
+	// shadow map. This is the default and works correctly for both thin/concave
+	// geometry and closed convex meshes, preventing shadow bleed-through.
+	ShadowCullModeBack ShadowCullMode = iota
+
+	// ShadowCullModeFront culls front faces, rendering only back faces into
+	// the shadow map. This eliminates self-shadowing acne on closed convex
+	// meshes but can cause shadow bleed-through on thin or concave geometry.
+	ShadowCullModeFront
+
+	// ShadowCullModeNone disables face culling entirely, rendering all faces
+	// into the shadow map. Use this for single-sided geometry (e.g., planes,
+	// billboards) that must cast shadows from both sides.
+	ShadowCullModeNone
+)

@@ -103,7 +103,7 @@ type AnnotationArg string
 
 const (
 	// AnnotationArgCamera identifies the CameraUniform struct.
-	// Source: engine/camera/assets/camera_uniform.wgsl
+	// Source: engine/camera/assets/camera-uniform.wgsl
 	AnnotationArgCamera AnnotationArg = "camera"
 
 	// annotationArgVertex identifies the VertexInput struct for static (non-skinned) meshes.
@@ -111,15 +111,15 @@ const (
 	annotationArgVertex AnnotationArg = "vertex"
 
 	// annotationArgSkinnedVertex identifies the VertexInput struct for skinned meshes with bone weights.
-	// Source: engine/model/assets/skinned_vertex.wgsl
+	// Source: engine/model/assets/skinned-vertex.wgsl
 	annotationArgSkinnedVertex AnnotationArg = "skinned_vertex"
 
 	// AnnotationArgOverlayParams identifies the OverlayParams material struct.
-	// Source: engine/renderer/material/assets/overlay_params.wgsl
+	// Source: engine/renderer/material/assets/overlay-params.wgsl
 	AnnotationArgOverlayParams AnnotationArg = "overlay_params"
 
 	// AnnotationArgEffectParams identifies the EffectParams material struct.
-	// Source: engine/renderer/material/assets/effect_params.wgsl
+	// Source: engine/renderer/material/assets/effect-params.wgsl
 	AnnotationArgEffectParams AnnotationArg = "effect_params"
 
 	// AnnotationArgLight identifies the Light struct for per-light GPU data.
@@ -127,60 +127,80 @@ const (
 	AnnotationArgLight AnnotationArg = "light"
 
 	// AnnotationArgLightHeader identifies the LightHeader struct containing light count and ambient color.
-	// Source: engine/light/assets/light_header.wgsl
+	// Source: engine/light/assets/light-header.wgsl
 	AnnotationArgLightHeader AnnotationArg = "light_header"
 
 	// annotationArgLightCullUniforms identifies the LightCullUniforms struct for tile-based light culling.
-	// Source: engine/light/assets/light_cull_uniforms.wgsl
+	// Source: engine/light/assets/light-cull-uniforms.wgsl
 	annotationArgLightCullUniforms AnnotationArg = "light_cull_uniforms"
 
 	// AnnotationArgShadowData identifies the ShadowData struct for the lit fragment shader's shadow sampling.
-	// Source: engine/light/assets/shadow_data.wgsl
+	// Source: engine/light/assets/shadow-data.wgsl
 	AnnotationArgShadowData AnnotationArg = "shadow_data"
 
 	// AnnotationArgShadowUniform identifies the ShadowUniform struct for the shadow depth pass.
-	// Source: engine/light/assets/shadow_uniform.wgsl
+	// Source: engine/light/assets/shadow-uniform.wgsl
 	AnnotationArgShadowUniform AnnotationArg = "shadow_uniform"
 
 	// AnnotationArgTileUniforms identifies the TileUniforms struct for Forward+ tile configuration.
-	// Source: engine/light/assets/tile_uniforms.wgsl
+	// Source: engine/light/assets/tile-uniforms.wgsl
 	AnnotationArgTileUniforms AnnotationArg = "tile_uniforms"
 
 	// AnnotationArgModelData identifies the ModelData struct holding per-instance model matrices.
-	// Source: engine/model/assets/model_data.wgsl
+	// Source: engine/model/assets/model-data.wgsl
 	AnnotationArgModelData AnnotationArg = "model_data"
 
 	// AnnotationArgInstanceData identifies the InstanceData struct for per-instance transform output.
-	// Source: engine/renderer/animator/assets/instance_data.wgsl
+	// Source: engine/renderer/animator/assets/instance-data.wgsl
 	AnnotationArgInstanceData AnnotationArg = "instance_data"
 
 	// AnnotationArgAnimationData identifies the AnimationData struct for simple (non-skeletal) animation state.
-	// Source: engine/renderer/animator/assets/animation_data.wgsl
+	// Source: engine/renderer/animator/assets/animation-data.wgsl
 	AnnotationArgAnimationData AnnotationArg = "animation_data"
 
 	// AnnotationArgSkeletalAnimationData identifies the SkeletalAnimationData struct for skeletal animation state.
-	// Source: engine/renderer/animator/assets/skeletal_animation_data.wgsl
+	// Source: engine/renderer/animator/assets/skeletal-animation-data.wgsl
 	AnnotationArgSkeletalAnimationData AnnotationArg = "skeletal_animation_data"
 
 	// AnnotationArgAnimationGlobals identifies the AnimationGlobals struct for skeletal compute uniforms.
-	// Source: engine/renderer/animator/assets/animation_globals.wgsl
+	// Source: engine/renderer/animator/assets/animation-globals.wgsl
 	AnnotationArgAnimationGlobals AnnotationArg = "animation_globals"
 
 	// annotationArgFrustumPlane identifies the FrustumPlane struct used inside uniform structs for GPU culling.
-	// Source: engine/renderer/animator/assets/frustum_plane.wgsl
+	// Source: engine/renderer/animator/assets/frustum-plane.wgsl
 	annotationArgFrustumPlane AnnotationArg = "frustum_plane"
 
 	// AnnotationArgGlobalData identifies the GlobalData struct for simple compute shader uniforms.
-	// Source: engine/renderer/animator/assets/simple_globals.wgsl
+	// Source: engine/renderer/animator/assets/simple-globals.wgsl
 	AnnotationArgGlobalData AnnotationArg = "global_data"
 
 	// AnnotationArgIndirectArgs identifies the IndirectArgs struct matching WebGPU's DrawIndexedIndirect layout.
-	// Source: engine/renderer/animator/assets/indirect_args.wgsl
+	// Source: engine/renderer/animator/assets/indirect-args.wgsl
 	AnnotationArgIndirectArgs AnnotationArg = "indirect_args"
 
 	// AnnotationArgBoneInfo identifies the BoneInfo struct holding per-bone inverse bind matrices and hierarchy data.
-	// Source: engine/renderer/animator/assets/bone_info.wgsl
+	// Source: engine/renderer/animator/assets/bone-info.wgsl
 	AnnotationArgBoneInfo AnnotationArg = "bone_info"
+
+	// AnnotationArgPhysicsBody identifies the PhysicsBody struct for rigid body simulation.
+	// Source: engine/physics/assets/body.wgsl
+	AnnotationArgPhysicsBody AnnotationArg = "physics_body"
+
+	// AnnotationArgPhysicsParticle identifies the Particle struct for particle-based fluid simulation.
+	// Source: engine/physics/assets/particle.wgsl
+	AnnotationArgPhysicsParticle AnnotationArg = "physics_particle"
+
+	// AnnotationArgPhysicsGrid identifies the GridCell struct for spatial partitioning in physics simulation.
+	// Source: engine/physics/assets/grid-cell.wgsl
+	AnnotationArgPhysicsGrid AnnotationArg = "physics_grid"
+
+	// AnnotationArgPhysicsGlobals identifies the PhysicsGlobals struct for physics simulation parameters.
+	// Source: engine/physics/assets/physics-globals.wgsl
+	AnnotationArgPhysicsGlobals AnnotationArg = "physics_globals"
+
+	// AnnotationArgPhysicsGridParams identifies the GridParams struct for GPU-writable grid origin and dimensions.
+	// Source: engine/physics/assets/grid-params.wgsl
+	AnnotationArgPhysicsGridParams AnnotationArg = "physics_grid_params"
 )
 
 // ── Address space arguments ────────────────────────────────────────────────────
@@ -282,6 +302,11 @@ var validStructTypes = []AnnotationArg{
 	AnnotationArgBoneInfo,
 	AnnotationArgInstanceData,
 	AnnotationArgModelData,
+	AnnotationArgPhysicsBody,
+	AnnotationArgPhysicsParticle,
+	AnnotationArgPhysicsGrid,
+	AnnotationArgPhysicsGlobals,
+	AnnotationArgPhysicsGridParams,
 }
 
 // validAddressSpaces lists all AnnotationArg values that are accepted as address

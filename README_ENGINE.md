@@ -9,8 +9,8 @@ The `engine` package is the **main entrypoint** of the oxy-go package. It repres
 ## Architecture
 
 ```
-Engine (public interface)
- └─ engine (unexported struct)
+Engine (public interface, embeds common.Delegate[Engine])
+ └─ engine (unexported struct, embeds common.DelegateImpl[Engine])
       ├── Window              — GLFW window, message loop, input callbacks
       ├── scenes              — map[int]Scene keyed by z-index (render order)
       ├── tickCallback        — fixed-rate game logic callback
@@ -38,7 +38,7 @@ The window's `ProcessMessages()` blocks on the main thread (required by GLFW/OS)
 func NewEngine(options ...EngineBuilderOption) Engine
 ```
 
-Creates a new Engine with sensible defaults, applies each option in order, and wires the window's resize callback to propagate dimension changes to all scenes' renderers and cameras.
+Creates a new Engine with sensible defaults, applies each option in order, sets the delegation target to itself (`e.Delegate = e`), and wires the window's resize callback to call `Scene.Resize(width, height)` on all registered scenes.
 
 **Defaults:**
 
@@ -64,6 +64,10 @@ Creates a new Engine with sensible defaults, applies each option in order, and w
 ---
 
 ## Engine Interface
+
+### Delegation
+
+The `Engine` interface embeds `common.Delegate[Engine]`, exposing `SetDelegate(delegate Engine)`. In production code the delegate is set to the instance itself during construction. In test code the delegate can be replaced with a mock.
 
 ### Lifecycle
 

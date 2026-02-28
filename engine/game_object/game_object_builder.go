@@ -3,6 +3,7 @@ package game_object
 import (
 	"github.com/Carmen-Shannon/oxy-go/engine/light"
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
+	"github.com/Carmen-Shannon/oxy-go/engine/physics"
 )
 
 // GameObjectBuilderOption is a functional option for configuring a GameObject during construction.
@@ -134,5 +135,20 @@ func WithRotationSpeed(rx, ry, rz float32) GameObjectBuilderOption {
 func WithLight(l light.Light) GameObjectBuilderOption {
 	return func(obj *gameObject) {
 		obj.attachedLight = l
+	}
+}
+
+// WithRigidBody attaches a RigidBody to the GameObject. When added to a scene, the
+// scene will automatically sync the rigid body's position and rotation from the
+// object's transform each frame, and apply physics simulation to the rigid body.
+//
+// Parameters:
+//   - rb: the RigidBody to attach
+//
+// Returns:
+//   - GameObjectBuilderOption: functional option to set the attached rigid body
+func WithRigidBody(rb physics.RigidBody) GameObjectBuilderOption {
+	return func(obj *gameObject) {
+		obj.rigidBody = rb
 	}
 }

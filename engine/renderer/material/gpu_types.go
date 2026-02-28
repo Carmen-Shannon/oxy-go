@@ -10,7 +10,7 @@ import (
 // GPUOverlayParamsSource is the canonical WGSL definition of the OverlayParams struct.
 // Matches GPUOverlayParams layout exactly (16 bytes, std430 aligned).
 //
-//go:embed assets/overlay_params.wgsl
+//go:embed assets/overlay-params.wgsl
 var GPUOverlayParamsSource string
 
 // GPUOverlayParams is the GPU-aligned uniform for the overlay fragment shader.
@@ -44,7 +44,7 @@ func (g *GPUOverlayParams) Marshal() []byte {
 // GPUEffectParamsSource is the canonical WGSL definition of the EffectParams struct.
 // Matches GPUEffectParams layout exactly (16 bytes, std430 aligned).
 //
-//go:embed assets/effect_params.wgsl
+//go:embed assets/effect-params.wgsl
 var GPUEffectParamsSource string
 
 // GPUEffectParams is the GPU-aligned uniform for the textured and skinned-rainbow fragment shaders.

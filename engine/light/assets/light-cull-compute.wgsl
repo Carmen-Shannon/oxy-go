@@ -17,54 +17,20 @@ const TILE_SIZE: u32 = 16u;
 const MAX_LIGHTS_PER_TILE: u32 = 256u;
 const NUM_THREADS: u32 = 256u; // TILE_SIZE * TILE_SIZE
 
-// ── Light struct ───────────────────────────────────────────────────
-// Must match Go's light.GPULight and the fragment shader's Light struct.
 //@oxy:include light
-// struct Light {
-//     position:       vec3<f32>,
-//     light_type:     u32,
-//     color:          vec3<f32>,
-//     intensity:      f32,
-//     direction:      vec3<f32>,
-//     light_range:    f32,
-//     inner_cone:     f32,
-//     outer_cone:     f32,
-//     casts_shadows:  u32,
-//     _pad:           u32,
-// };
-
-// ── Per-frame uniforms ─────────────────────────────────────────────
-// Must match Go's light.GPULightCullUniforms (160 bytes).
 //@oxy:include light_cull_uniforms
-// struct LightCullUniforms {
-//     inv_proj:       mat4x4<f32>,
-//     view_matrix:    mat4x4<f32>,
-//     tile_count_x:   u32,
-//     tile_count_y:   u32,
-//     screen_width:   u32,
-//     screen_height:  u32,
-//     light_count:    u32,
-//     near:           f32,
-//     far:            f32,
-//     _pad:           u32,
-// };
 
 // Light type constants matching the fragment shader.
 const LIGHT_TYPE_DIRECTIONAL: u32 = 0u;
 
-// ── Bind group 0 ───────────────────────────────────────────────────
 //@oxy:group 0 0 storage_uniform cull_uniforms light_cull_uniforms
-// @group(0) @binding(0) var<uniform> cull_uniforms: LightCullUniforms;
 //@oxy:group 0 1 storage_read cull_lights array<light>
-// @group(0) @binding(1) var<storage, read> cull_lights: array<Light>;
 @group(0) @binding(2) var<storage, read_write> tile_counts: array<u32>;
 @group(0) @binding(3) var<storage, read_write> tile_indices: array<u32>;
 
-// ── Workgroup shared memory ────────────────────────────────────────
 var<workgroup> shared_count: atomic<u32>;
 var<workgroup> shared_list: array<u32, 256>; // MAX_LIGHTS_PER_TILE
 
-// ── Tile frustum (4 planes + near/far) ─────────────────────────────
 struct TileFrustum {
     planes: array<vec4<f32>, 4>, // normal.xyz, d=0 (planes through origin)
 };

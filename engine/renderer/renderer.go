@@ -2,11 +2,15 @@ package renderer
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/material"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 	"github.com/Carmen-Shannon/oxy-go/engine/window"
 	"github.com/cogentcore/webgpu/wgpu"
 )
@@ -18,6 +22,7 @@ type renderer struct {
 	mu *sync.Mutex
 
 	pipelineCache map[string]pipeline.Pipeline
+	materialCache map[string]material.Material
 
 	backendType RendererBackendType
 	backend     RendererBackend
@@ -136,6 +141,46 @@ type Renderer interface {
 	//   - error: an error if sampler creation fails
 	InitSampler(provider bind_group_provider.BindGroupProvider, bindingKey int, samplerStagingData common.SamplerStagingData) error
 
+	// CreateBuffer creates a GPU buffer with the specified label, size, and usage flags.
+	// This is a low-level operation for creating buffers outside of BindGroupProviders,
+	// such as staging buffers for GPU→CPU readback.
+	//
+	// Parameters:
+	//   - label: a debug label for the buffer
+	//   - size: the buffer size in bytes
+	//   - usage: the buffer usage flags (e.g. MapRead | CopyDst for staging)
+	//
+	// Returns:
+	//   - *wgpu.Buffer: the created GPU buffer
+	//   - error: an error if buffer creation fails
+	CreateBuffer(label string, size uint64, usage wgpu.BufferUsage) (*wgpu.Buffer, error)
+
+	// CopyBufferToBuffer encodes a buffer-to-buffer copy on the current compute frame encoder.
+	// Must be called between BeginComputeFrame and EndComputeFrame, outside of any compute pass.
+	//
+	// Parameters:
+	//   - src: the source buffer to copy from
+	//   - dst: the destination buffer to copy to
+	//   - srcOffset: byte offset in the source buffer
+	//   - dstOffset: byte offset in the destination buffer
+	//   - size: the number of bytes to copy
+	CopyBufferToBuffer(src, dst *wgpu.Buffer, srcOffset, dstOffset, size uint64)
+
+	// ReadMappedBuffer synchronously maps a buffer for reading, copies the data into a new
+	// byte slice, and unmaps the buffer. Blocks via Device.Poll until the mapping completes.
+	// The buffer must have been created with BufferUsageMapRead and the GPU work that wrote
+	// to it must have been submitted before this call.
+	//
+	// Parameters:
+	//   - buf: the buffer to map and read (must have MapRead usage)
+	//   - offset: byte offset to start reading from
+	//   - size: number of bytes to read
+	//
+	// Returns:
+	//   - []byte: a copy of the mapped buffer data
+	//   - error: an error if mapping fails
+	ReadMappedBuffer(buf *wgpu.Buffer, offset, size uint64) ([]byte, error)
+
 	// WriteBuffers writes all staged buffer writes to the GPU queue.
 	// Each BufferWrite targets a specific buffer on a BindGroupProvider at a given binding and offset.
 	//
@@ -236,6 +281,39 @@ type Renderer interface {
 	//   - error: an error if sampler creation fails
 	CreateComparisonSampler() (*wgpu.Sampler, error)
 
+	// RegisterMaterial creates GPU resources (textures, samplers, bind group) for a Material
+	// and optionally registers a new render pipeline from the supplied pipeline builder options.
+	// When pipelineOpts are provided and no pipeline exists for the material's PipelineKey,
+	// a new render pipeline is created, registered, and the material's PipelineKey is updated.
+	//
+	// When no pipelineOpts are provided but the pipeline does not yet exist and the material
+	// has a FragmentShaderPath set, RegisterMaterial automatically derives a new pipeline by
+	// cloning the vertex shader from the best-matching existing pipeline (longest pipeline key
+	// that is a prefix of the material's PipelineKey) and pairing it with a new fragment shader
+	// built from the material's FragmentShaderPath. This allows callers to create variant
+	// pipelines without referencing internal engine shader paths.
+	//
+	// The fragment shader from the resolved pipeline is inspected for @oxy:provider annotations
+	// with the "material" identity to determine per-binding texture and sampler assignments.
+	//
+	// Parameters:
+	//   - mat: the Material to initialize GPU resources for
+	//   - key: a unique identifier prefix for the GPU bind group provider
+	//   - pipelineOpts: optional pipeline builder options for creating and registering a new render pipeline
+	//
+	// Returns:
+	//   - error: an error if GPU resource creation or pipeline registration fails
+	RegisterMaterial(mat material.Material, key string, pipelineOpts ...pipeline.PipelineBuilderOption) error
+
+	// Material returns the associated material from the material cache by name, provided it has already been registered.
+	//
+	// Parameters:
+	//   - name: the unique identifier for the Material to retrieve
+	//
+	// Returns:
+	//   - material.Material: the Material associated with the name, or nil if not found
+	Material(name string) material.Material
+
 	// RegisterShadowPipeline registers a depth-only render pipeline for shadow map generation.
 	// Uses no fragment shader, sample count 1, Depth32Float format, and front-face culling.
 	//
@@ -307,6 +385,7 @@ func NewRenderer(backendType RendererBackendType, window window.Window, options 
 	r := &renderer{
 		mu:            &sync.Mutex{},
 		pipelineCache: make(map[string]pipeline.Pipeline),
+		materialCache: make(map[string]material.Material),
 		backendType:   backendType,
 	}
 
@@ -380,6 +459,281 @@ func (r *renderer) RegisterPipelines(pipelines ...pipeline.Pipeline) error {
 	return nil
 }
 
+func (r *renderer) RegisterMaterial(mat material.Material, key string, pipelineOpts ...pipeline.PipelineBuilderOption) error {
+	pipelineKey := mat.PipelineKey()
+	if pipelineKey == "" {
+		return fmt.Errorf("material %q has no pipeline key set", mat.Name())
+	}
+
+	// If the pipeline doesn't exist yet, create one. When the material specifies a
+	// fragment shader path, vertex and fragment shaders are auto-derived from the
+	// best-matching base pipeline so callers never need to reference internal engine
+	// shader paths. Any additional pipelineOpts (blend state, cull mode, etc.) are
+	// merged on top of the auto-derived shaders.
+	if r.Pipeline(pipelineKey) == nil {
+		var opts []pipeline.PipelineBuilderOption
+
+		// Auto-derive shaders when the material carries a fragment shader path.
+		// The derived vertex+fragment shader options are prepended so that any
+		// explicit shader options supplied by the caller take precedence.
+		if mat.FragmentShaderPath() != "" {
+			basePipeline := r.findBasePipeline(pipelineKey)
+			if basePipeline == nil {
+				return fmt.Errorf("pipeline %q not found and no base pipeline exists to derive from", pipelineKey)
+			}
+			vertShader := basePipeline.Shader(shader.ShaderTypeVertex)
+			if vertShader == nil {
+				return fmt.Errorf("base pipeline %q has no vertex shader to derive from", basePipeline.PipelineKey())
+			}
+			fragShader := shader.NewShader(pipelineKey+"_fragment", shader.ShaderTypeFragment, mat.FragmentShaderPath())
+			opts = append(opts, pipeline.WithVertexShader(vertShader), pipeline.WithFragmentShader(fragShader))
+		}
+
+		// Append caller-supplied options so they can override defaults (e.g. blend, cull mode).
+		opts = append(opts, pipelineOpts...)
+
+		if len(opts) > 0 {
+			p := pipeline.NewPipeline(pipelineKey, pipeline.PipelineTypeRender, opts...)
+			if err := r.RegisterPipelines(p); err != nil {
+				return fmt.Errorf("failed to register pipeline %q: %w", pipelineKey, err)
+			}
+		}
+	}
+
+	p := r.Pipeline(pipelineKey)
+	if p == nil {
+		return fmt.Errorf("pipeline %q not found", pipelineKey)
+	}
+	fragShader := p.Shader(shader.ShaderTypeFragment)
+	if fragShader == nil {
+		return fmt.Errorf("pipeline %q has no fragment shader", pipelineKey)
+	}
+
+	if err := r.initMaterialGPU(mat, fragShader, key); err != nil {
+		return err
+	}
+
+	// Always cache the material by name so it can be retrieved via Material(),
+	// even when initMaterialGPU is a no-op (e.g. shaders without @oxy:provider material).
+	r.mu.Lock()
+	r.materialCache[mat.Name()] = mat
+	r.mu.Unlock()
+
+	return nil
+}
+
+// findBasePipeline searches the pipeline cache for the longest-matching key that is a prefix
+// of the given pipelineKey and belongs to a render pipeline with a vertex shader. This is used
+// to derive new pipelines for materials that only differ in their fragment shader.
+func (r *renderer) findBasePipeline(pipelineKey string) pipeline.Pipeline {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var best pipeline.Pipeline
+	bestLen := 0
+	for k, p := range r.pipelineCache {
+		if p.Type() != pipeline.PipelineTypeRender {
+			continue
+		}
+		if p.Shader(shader.ShaderTypeVertex) == nil {
+			continue
+		}
+		if strings.HasPrefix(pipelineKey, k) && len(k) > bestLen {
+			best = p
+			bestLen = len(k)
+		}
+	}
+	return best
+}
+
+func (r *renderer) Material(name string) material.Material {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.materialCache[name]
+}
+
+// initMaterialGPU creates GPU resources (textures, samplers, bind group) for a single Material
+// by inspecting the fragment shader's pre-processed Declarations for @oxy:provider annotations
+// with the "material" identity. Multiple material groups are supported: each group with an
+// @oxy:provider material annotation gets its own BindGroupProvider, enabling a single material
+// to own resources across several bind groups (e.g. textures at group 2, effect uniforms at group 3).
+// Per-binding roles (diffuse_texture, normal_texture, etc.) are resolved from the declaration Args,
+// eliminating the need for variable-name string matching.
+func (r *renderer) initMaterialGPU(mat material.Material, fragmentShader shader.Shader, providerName string) error {
+	// Phase 1: Collect all groups annotated with @oxy:provider material and their binding roles.
+	type groupInfo struct {
+		bindingRoles map[int]shader.AnnotationArg
+	}
+	materialGroups := make(map[int]*groupInfo)
+
+	for _, decl := range fragmentShader.Declarations() {
+		if decl.Type != shader.AnnotationTypeProvider || decl.Group == nil {
+			continue
+		}
+		if decl.Args[0] != shader.AnnotationArgMaterial {
+			continue
+		}
+		g := *decl.Group
+		if _, exists := materialGroups[g]; !exists {
+			materialGroups[g] = &groupInfo{bindingRoles: make(map[int]shader.AnnotationArg)}
+		}
+		if len(decl.Args) > 1 && decl.Binding != nil {
+			materialGroups[g].bindingRoles[*decl.Binding] = decl.Args[1]
+		}
+	}
+
+	if len(materialGroups) == 0 {
+		return nil
+	}
+
+	// Sort group indices so the lowest group (typically the texture group) becomes the
+	// primary BindGroupProvider for backward-compatible access via mat.BindGroupProvider().
+	groupIndices := make([]int, 0, len(materialGroups))
+	for g := range materialGroups {
+		groupIndices = append(groupIndices, g)
+	}
+	sort.Ints(groupIndices)
+
+	// Texture role → material texture lookup
+	type textureBinding struct {
+		tex  *common.ImportedTexture
+		role shader.AnnotationArg
+	}
+	roleToTexture := map[shader.AnnotationArg]textureBinding{
+		shader.AnnotationArgDiffuseTexture:           {tex: mat.DiffuseTexture(), role: shader.AnnotationArgDiffuseTexture},
+		shader.AnnotationArgNormalTexture:            {tex: mat.NormalTexture(), role: shader.AnnotationArgNormalTexture},
+		shader.AnnotationArgMetallicRoughnessTexture: {tex: mat.MetallicRoughnessTexture(), role: shader.AnnotationArgMetallicRoughnessTexture},
+	}
+	textureSamplerPairs := map[shader.AnnotationArg]shader.AnnotationArg{
+		shader.AnnotationArgDiffuseTexture:           shader.AnnotationArgDiffuseSampler,
+		shader.AnnotationArgNormalTexture:            shader.AnnotationArgNormalSampler,
+		shader.AnnotationArgMetallicRoughnessTexture: shader.AnnotationArgMetallicRoughnessSampler,
+	}
+
+	// Phase 2: For each material group, create a BGP, process textures/samplers, init bind group.
+	firstGroup := true
+	for _, groupIdx := range groupIndices {
+		gi := materialGroups[groupIdx]
+		provName := fmt.Sprintf("%s_g%d", providerName, groupIdx)
+		provider := bind_group_provider.NewBindGroupProvider(provName)
+
+		// Build binding→role reverse map for this group
+		roleToBinding := make(map[shader.AnnotationArg]int)
+		for binding, role := range gi.bindingRoles {
+			roleToBinding[role] = binding
+		}
+
+		// Process user-supplied textures + their paired samplers
+		for texRole, tb := range roleToTexture {
+			if tb.tex == nil {
+				continue
+			}
+			texBindingIdx, hasTexBinding := roleToBinding[texRole]
+			if !hasTexBinding {
+				continue
+			}
+
+			samplerRole := textureSamplerPairs[texRole]
+			samplerBindingIdx, hasSamplerBinding := roleToBinding[samplerRole]
+
+			pixels, width, height, err := tb.tex.Decode()
+			if err != nil {
+				return fmt.Errorf("failed to decode %s texture: %w", texRole, err)
+			}
+			isLinear := texRole == shader.AnnotationArgNormalTexture || texRole == shader.AnnotationArgMetallicRoughnessTexture
+			stagingData := common.TextureStagingData{
+				Pixels: pixels,
+				Width:  width,
+				Height: height,
+				Linear: isLinear,
+			}
+			if err := r.InitTextureView(provider, texBindingIdx, stagingData); err != nil {
+				return fmt.Errorf("failed to init %s texture view: %w", texRole, err)
+			}
+			if hasSamplerBinding {
+				samplerData := common.SamplerStagingData{
+					AddressModeU:  wgpu.AddressModeRepeat,
+					AddressModeV:  wgpu.AddressModeRepeat,
+					AddressModeW:  wgpu.AddressModeRepeat,
+					MagFilter:     wgpu.FilterModeLinear,
+					MinFilter:     wgpu.FilterModeLinear,
+					MipmapFilter:  wgpu.MipmapFilterModeLinear,
+					LodMinClamp:   0,
+					LodMaxClamp:   32,
+					MaxAnisotropy: 1,
+				}
+				if tb.tex.SamplerData != nil {
+					samplerData = *tb.tex.SamplerData
+				}
+				if err := r.InitSampler(provider, samplerBindingIdx, samplerData); err != nil {
+					return fmt.Errorf("failed to init %s sampler: %w", samplerRole, err)
+				}
+			}
+		}
+
+		// Fill in fallback textures/samplers for any texture or sampler bindings without data.
+		descriptor := fragmentShader.BindGroupLayoutDescriptor(groupIdx)
+		for _, entry := range descriptor.Entries {
+			binding := int(entry.Binding)
+			isTexture := entry.Texture.SampleType != wgpu.TextureSampleTypeUndefined
+			isSampler := entry.Sampler.Type != wgpu.SamplerBindingTypeUndefined
+
+			if isTexture && provider.TextureView(binding) == nil {
+				role := gi.bindingRoles[binding]
+				var pixel [4]byte
+				switch role {
+				case shader.AnnotationArgNormalTexture:
+					pixel = [4]byte{128, 128, 255, 255}
+				case shader.AnnotationArgMetallicRoughnessTexture:
+					pixel = [4]byte{0, 255, 0, 255}
+				default:
+					pixel = [4]byte{255, 255, 255, 255}
+				}
+				isLinear := role == shader.AnnotationArgNormalTexture || role == shader.AnnotationArgMetallicRoughnessTexture
+				fallback := common.TextureStagingData{
+					Pixels: pixel[:],
+					Width:  1,
+					Height: 1,
+					Linear: isLinear,
+				}
+				if err := r.InitTextureView(provider, binding, fallback); err != nil {
+					return fmt.Errorf("failed to init fallback texture at binding %d: %w", binding, err)
+				}
+			}
+
+			if isSampler && provider.Sampler(binding) == nil {
+				fallbackSampler := common.SamplerStagingData{
+					AddressModeU:  wgpu.AddressModeRepeat,
+					AddressModeV:  wgpu.AddressModeRepeat,
+					AddressModeW:  wgpu.AddressModeRepeat,
+					MagFilter:     wgpu.FilterModeLinear,
+					MinFilter:     wgpu.FilterModeLinear,
+					MipmapFilter:  wgpu.MipmapFilterModeLinear,
+					LodMinClamp:   0,
+					LodMaxClamp:   32,
+					MaxAnisotropy: 1,
+				}
+				if err := r.InitSampler(provider, binding, fallbackSampler); err != nil {
+					return fmt.Errorf("failed to init fallback sampler at binding %d: %w", binding, err)
+				}
+			}
+		}
+
+		if err := r.InitBindGroup(provider, descriptor, nil, nil); err != nil {
+			return fmt.Errorf("failed to init material bind group for group %d: %w", groupIdx, err)
+		}
+
+		// First material group becomes the primary BindGroupProvider for backward compat.
+		if firstGroup {
+			mat.SetBindGroupProvider(provider)
+			firstGroup = false
+		}
+		mat.SetProvider(groupIdx, provider)
+	}
+
+	return nil
+}
+
 func (r *renderer) SetPipeline(key string, p pipeline.Pipeline) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -406,6 +760,18 @@ func (r *renderer) InitTextureView(provider bind_group_provider.BindGroupProvide
 
 func (r *renderer) InitSampler(provider bind_group_provider.BindGroupProvider, bindingKey int, samplerStagingData common.SamplerStagingData) error {
 	return r.backend.InitSampler(provider, bindingKey, samplerStagingData)
+}
+
+func (r *renderer) CreateBuffer(label string, size uint64, usage wgpu.BufferUsage) (*wgpu.Buffer, error) {
+	return r.backend.CreateBuffer(label, size, usage)
+}
+
+func (r *renderer) CopyBufferToBuffer(src, dst *wgpu.Buffer, srcOffset, dstOffset, size uint64) {
+	r.backend.CopyBufferToBuffer(src, dst, srcOffset, dstOffset, size)
+}
+
+func (r *renderer) ReadMappedBuffer(buf *wgpu.Buffer, offset, size uint64) ([]byte, error) {
+	return r.backend.ReadMappedBuffer(buf, offset, size)
 }
 
 func (r *renderer) WriteBuffers(writes []bind_group_provider.BufferWrite) {

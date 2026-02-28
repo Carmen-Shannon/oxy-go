@@ -12,7 +12,9 @@ The `engine/renderer/animator` package implements the GPU compute animation syst
 
 ```
 Animator (public interface)
+ ├─ common.Delegate[Animator]   ← mock / test delegation
  └─ animator (unexported struct)
+      ├─ common.DelegateImpl[Animator]
       ├── backendType   — BackendTypeSimple or BackendTypeSkeletal
       ├── backend       — AnimatorBackend (union interface)
       │    ├── simpleAnimatorBackendImpl
@@ -71,7 +73,7 @@ Creates a new Animator with the specified backend. The backend is instantiated f
 
 ### Transform (Simple Backend)
 
-These methods no-op on skeletal backends:
+These methods are primarily designed for the simple backend. On skeletal backends, they build/extract model matrices from position, rotation, and scale rather than using per-component GPU data:
 
 | Method                                                          | Description                                                        |
 | --------------------------------------------------------------- | ------------------------------------------------------------------ |
@@ -97,6 +99,13 @@ These methods no-op on simple backends:
 | `IsBlending(instanceIndex) bool`                                                                                                      | Whether an instance is currently blending.                  |
 | `BlendProgress(instanceIndex) float32`                                                                                                | Blend progress from 0.0 to 1.0.                             |
 | `CancelBlend(instanceIndex)`                                                                                                          | Stops an in-progress blend.                                 |
+
+### Bind Group Providers
+
+| Method                                                                       | Description                                                |
+| ---------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `ComputeBindGroupProvider() bind_group_provider.BindGroupProvider`           | Returns the bind group provider for the compute dispatch   |
+| `OutputBindGroupProvider() bind_group_provider.BindGroupProvider`            | Returns the bind group provider for the output/result data |
 
 ### Model
 
@@ -181,14 +190,16 @@ Offsets (`channelDataOffset`, `keyframeDataOffset`) are stored in the per-frame 
 
 | Asset File                     | Embedded Variable                | WGSL Struct             |
 | ------------------------------ | -------------------------------- | ----------------------- |
-| `animation_data.wgsl`          | `GPUAnimationDataSource`         | `AnimationData`         |
-| `animation_globals.wgsl`       | `GPUAnimationGlobalsSource`      | `AnimationGlobals`      |
-| `bone_info.wgsl`               | `GPUBoneInfoSource`              | `BoneInfo`              |
-| `frustum_plane.wgsl`           | `GPUFrustumPlaneSource`          | `FrustumPlane`          |
-| `indirect_args.wgsl`           | `GPUIndirectArgsSource`          | `IndirectArgs`          |
-| `instance_data.wgsl`           | `GPUInstanceDataSource`          | `InstanceData`          |
-| `simple_globals.wgsl`          | `GPUGlobalDataSource`            | `GlobalData`            |
-| `skeletal_animation_data.wgsl` | `GPUSkeletalAnimationDataSource` | `SkeletalAnimationData` |
+| `animation-data.wgsl`          | `GPUAnimationDataSource`         | `AnimationData`         |
+| `animation-globals.wgsl`       | `GPUAnimationGlobalsSource`      | `AnimationGlobals`      |
+| `bone-info.wgsl`               | `GPUBoneInfoSource`              | `BoneInfo`              |
+| `frustum-plane.wgsl`           | `GPUFrustumPlaneSource`          | `FrustumPlane`          |
+| `indirect-args.wgsl`           | `GPUIndirectArgsSource`          | `IndirectArgs`          |
+| `instance-data.wgsl`           | `GPUInstanceDataSource`          | `InstanceData`          |
+| `simple-globals.wgsl`          | `GPUGlobalDataSource`            | `GlobalData`            |
+| `skeletal-animation-data.wgsl` | `GPUSkeletalAnimationDataSource` | `SkeletalAnimationData` |
+| `simple-compute.wgsl`          | —                                | Compute shader (simple) |
+| `skeletal-compute.wgsl`        | —                                | Compute shader (skeletal) |
 
 ---
 
@@ -202,4 +213,4 @@ Offsets (`channelDataOffset`, `keyframeDataOffset`) are stored in the per-frame 
 | `gpu_types.go`                 | All GPU-aligned structs with `Size()`, `Marshal()`, and embedded WGSL sources                                                   |
 | `simple_animator_backend.go`   | `simpleAnimatorBackend` interface + `simpleAnimatorBackendImpl` (sparse dirty tracking, transform staging)                      |
 | `skeletal_animator_backend.go` | `skeletalAnimatorBackend` interface + `skeletalAnimatorBackendImpl` (bone data, clip storage, blend transitions, packed buffer) |
-| `assets/`                      | 8 embedded `.wgsl` struct definition files                                                                                      |
+| `assets/`                      | 8 embedded `.wgsl` struct definition files + 2 compute shader files                                                             |

@@ -1,0 +1,16 @@
+struct PhysicsGlobals {
+    delta_time:        f32,
+    particle_diameter: f32,
+    spring_coeff:      f32,
+    damping_coeff:     f32,
+    shear_coeff:       f32,
+    body_count:        u32,
+    particle_count:    u32,
+    max_grid_cells:    u32,
+    boundary_count:    u32,
+    gravity_x:         f32,
+    gravity_y:         f32,
+    gravity_z:         f32,
+    boundary_planes:   array<vec4<f32>, 6>,
+    boundary_y_ranges: array<vec4<f32>, 6>,
+};

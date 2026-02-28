@@ -10,14 +10,14 @@ The `engine/scene` package is the central orchestrator of the oxy-go engine. A S
 
 ```
 Scene (public interface)
+ ├─ common.Delegate[Scene]   ← mock / test delegation
  └─ scene (unexported struct)
+      ├─ common.DelegateImpl[Scene]
       ├── Camera           — view/projection, frustum planes, GPU uniform
       ├── Renderer         — pipeline cache, GPU resource init, frame submission
       ├── animatorPool     — map[Model][]Animator (compute + render per model)
       ├── registry         — non-ephemeral GameObjects by ID
-      ├── lights / lightsBGP            — light list + GPU storage buffer
-      ├── shadow*                       — shadow depth texture, pipelines, BGPs
-      ├── lightCull* / tileLit*         — Forward+ tile culling state
+      ├── lightHandler     — LightingHandler (light list, shadows, Forward+ culling)
       └── computePool      — DynamicWorkerPool for parallel CPU prep
 ```
 
@@ -37,12 +37,11 @@ func NewScene(
     name string,
     cam camera.Camera,
     r renderer.Renderer,
-    vertexShader shader.Shader,
     options ...SceneBuilderOption,
 ) Scene
 ```
 
-Creates a new Scene. All three required arguments (camera, renderer, vertex shader) must be non-nil — panics otherwise. The vertex shader is scanned for a bind group containing `"camera"` and its layout is used to initialize the camera's GPU bind group.
+Creates a new Scene. Both required arguments (camera, renderer) must be non-nil — panics otherwise. The vertex shader is loaded internally from the engine's standard shader assets. Sets `s.Delegate = s` so delegation routes to itself by default.
 
 ---
 
@@ -50,17 +49,15 @@ Creates a new Scene. All three required arguments (camera, renderer, vertex shad
 
 The `NewScene` constructor accepts variadic `SceneBuilderOption` functions:
 
-| Option                                | Description                                                                     |
-| ------------------------------------- | ------------------------------------------------------------------------------- |
-| `WithActive(active)`                  | Sets whether the scene starts active for rendering. Default: `false`.           |
-| `WithObjects(objects...)`             | Adds initial GameObjects. Assigns IDs and persists non-ephemeral objects.       |
-| `WithComputeWorkers(n)`               | Sets the number of parallel CPU prep goroutines. Default: `runtime.NumCPU()-1`. |
-| `WithCullingDisabled(disabled)`       | Disables GPU frustum culling. Default: `false` (culling enabled).               |
-| `WithShadowHalfExtent(halfExtent)`    | Orthographic half-extent of the shadow frustum in world units. Default: `40.0`. |
-| `WithShadowNearFar(near, far)`        | Near/far planes for the shadow projection. Default: `0.1`, `200.0`.             |
-| `WithShadowBias(bias)`                | Depth comparison bias for shadow sampling. Default: `0.001`.                    |
-| `WithShadowNormalBiasScale(scale)`    | Normal-offset bias multiplier on per-texel world size. Default: `3.0`.          |
-| `WithShadowMapResolution(resolution)` | Shadow depth texture width/height in texels. Default: `2048`.                   |
+| Option                          | Description                                                                                         |
+| ------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `WithActive(active)`            | Sets whether the scene starts active for rendering. Default: `false`.                               |
+| `WithObjects(objects...)`       | Adds initial GameObjects. Assigns IDs and persists non-ephemeral objects.                           |
+| `WithComputeWorkers(n)`         | Sets the number of parallel CPU prep goroutines. Default: `max(runtime.NumCPU()-1, 1)`.             |
+| `WithCullingDisabled(disabled)` | Disables GPU frustum culling. Default: `false` (culling enabled).                                   |
+| `WithLighting(handler)`         | Sets the `light.LightingHandler` for the scene. Enables lighting, shadows, and Forward+ culling.    |
+| `WithPhysics(ph)`               | Sets the `physics.Physics` handler for the scene. Enables GPU-driven physics simulation.            |
+| `WithScreenSize(width, height)` | Sets the initial screen dimensions for light culling tile calculations and shadow map setup.         |
 
 ---
 
@@ -68,14 +65,15 @@ The `NewScene` constructor accepts variadic `SceneBuilderOption` functions:
 
 ### Object Management
 
-| Method                                                                          | Description                                                                                                            |
-| ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `Add(obj, computeShader, vertexShader, fragmentShader, pipelineOpts...) uint64` | Adds a GameObject, auto-creates/reuses an Animator, registers pipelines, inits GPU resources, returns the assigned ID. |
-| `Get(id) GameObject`                                                            | Retrieves a non-ephemeral object by ID, or `nil`.                                                                      |
-| `Remove(id)`                                                                    | Removes a non-ephemeral object and swap-removes its instance from the animator.                                        |
-| `Clear()`                                                                       | Removes all objects and animators. Does not release GPU resources.                                                     |
-| `Count() int`                                                                   | Number of persisted (non-ephemeral) objects.                                                                           |
-| `CountEphemeral() int`                                                          | Total instance count across all animators.                                                                             |
+| Method                                           | Description                                                                                                            |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `Add(obj, pipelineOpts...) uint64`               | Adds a GameObject, auto-creates/reuses an Animator, registers pipelines, inits GPU resources, returns the assigned ID. |
+| `Get(id) GameObject`                             | Retrieves a non-ephemeral object by ID, or `nil`.                                                                      |
+| `Remove(id)`                                     | Removes a non-ephemeral object and swap-removes its instance from the animator.                                        |
+| `Count() int`                                    | Number of persisted (non-ephemeral) objects.                                                                           |
+| `CountEphemeral() int`                           | Total instance count across all animators.                                                                             |
+
+Shaders are resolved automatically inside `Add` based on whether the model is skinned and whether lighting is enabled — no shader parameters are needed.
 
 ### Scene State
 
@@ -92,42 +90,30 @@ The `NewScene` constructor accepts variadic `SceneBuilderOption` functions:
 | `CullingDisabled() bool`       | Whether GPU frustum culling is disabled.   |
 | `SetCullingDisabled(disabled)` | Enables or disables frustum culling.       |
 
+### Physics
+
+| Method                                   | Description                                   |
+| ---------------------------------------- | --------------------------------------------- |
+| `SetPhysicsHandler(ph physics.Physics)`  | Sets the physics handler for GPU simulation.  |
+
+### Resize
+
+| Method                        | Description                                                                       |
+| ----------------------------- | --------------------------------------------------------------------------------- |
+| `Resize(width, height int)`   | Reconfigures the renderer’s surface size after a window resize.                    |
+
 ### Lighting
 
-| Method                                       | Description                                                                 |
-| -------------------------------------------- | --------------------------------------------------------------------------- |
-| `AddLight(l)`                                | Adds a light source to the scene.                                           |
-| `RemoveLight(l)`                             | Removes a light by reference.                                               |
-| `DetachLight(obj)`                           | Detaches an object's auto-registered light. Required for ephemeral objects. |
-| `Lights() []Light`                           | Returns a copy of all registered lights.                                    |
-| `AmbientColor() [3]float32`                  | Returns the scene's ambient RGB color.                                      |
-| `SetAmbientColor(color)`                     | Sets the ambient RGB color.                                                 |
-| `LightBindGroupProvider() BindGroupProvider` | Returns the GPU light buffer BGP, or `nil`.                                 |
-| `InitLightBindGroup(fragmentShader)`         | Initializes the light storage buffer from a lit fragment shader's layout.   |
+| Method                       | Description                                                                                                                      |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `AddLight(l)`                | Adds a light source. On the first call, lazily initializes the full lighting pipeline (bind groups, shadow map, tile culling).    |
+| `RemoveLight(l)`             | Removes a light by reference.                                                                                                    |
+| `DetachLight(obj)`           | Detaches an object’s auto-registered light. Required for ephemeral objects.                                                       |
+| `Lights() []Light`           | Returns a copy of all registered lights.                                                                                         |
+| `AmbientColor() [3]float32`  | Returns the scene’s ambient RGB color.                                                                                            |
+| `SetAmbientColor(color)`     | Sets the ambient RGB color.                                                                                                      |
 
-### Shadow Mapping
-
-| Method                                                     | Description                                                                                                                                   |
-| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `InitShadowMap(shadowVertShader, shadowSkinnedVertShader)` | Creates shadow depth texture, comparison sampler, shadow data BGP, and registers shadow pipelines.                                            |
-| `InitShadowLitBindGroup(litFragmentShader)`                | Creates the fragment-side BGP for shadow map sampling (texture + sampler + uniform). Must be called after `InitShadowMap`.                    |
-| `PrepareShadows()`                                         | Computes light VP, uploads shadow uniform, renders the depth-only shadow pass. Must be called after `PrepareCompute` and before `BeginFrame`. |
-| `ShadowDepthTextureView() *TextureView`                    | Returns the shadow depth texture view, or `nil`.                                                                                              |
-| `ShadowDataBindGroupProvider() BindGroupProvider`          | Returns the shadow data BGP (depth pass), or `nil`.                                                                                           |
-| `ShadowLitBindGroupProvider() BindGroupProvider`           | Returns the shadow lit BGP (fragment sampling), or `nil`.                                                                                     |
-
-### Forward+ Light Culling
-
-| Method                                                                                | Description                                                                                                             |
-| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `InitLightCullResources(cullComputeShader, litFragShader, screenWidth, screenHeight)` | Creates tile culling pipeline, compute BGP, and fragment-side tile BGP. Must be called after `InitLightBindGroup`.      |
-| `PrepareLightCulling()`                                                               | Uploads cull uniforms and dispatches the light culling compute shader. Call after `PrepareCompute`, before `DrawCalls`. |
-
-### Convenience
-
-| Method                                                                                                                 | Description                                                                                                                                                     |
-| ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `InitLighting(litFragShader, shadowVertShader, shadowSkinnedVertShader, cullComputeShader, screenWidth, screenHeight)` | Initializes the full lighting pipeline in the correct order: light bind group → shadow map → shadow lit bind group → light cull resources → camera BGP re-init. |
+All lighting/shadow/culling initialization methods (`initLightBindGroup`, `initShadowMap`, `initShadowLitBindGroup`, `initLightCullResources`, `initLighting`) are **unexported** and called automatically by `AddLight` on the first light addition. Shadow configuration is handled by the `light.LightingHandler` passed via `WithLighting`.
 
 ### Frame Methods
 
@@ -140,16 +126,16 @@ The `NewScene` constructor accepts variadic `SceneBuilderOption` functions:
 
 ## Frame Lifecycle
 
-A typical lit scene frame follows this order:
+A typical frame follows this order:
 
 ```
 1. renderer.BeginComputeFrame()
    scene.PrepareCompute(dt)          — camera update, animation, buffer writes, compute dispatch
    renderer.EndComputeFrame()
 
-2. scene.PrepareLightCulling()       — Forward+ tile culling (own compute frame)
+2. (internal) prepareLightCulling    — Forward+ tile culling (automatic if lighting enabled)
 
-3. scene.PrepareShadows()            — shadow depth pass (own shadow frame)
+3. (internal) prepareShadows         — shadow depth pass (automatic if lighting enabled)
 
 4. renderer.BeginFrame()
    scene.DrawCalls()                 — instanced draw calls (regular or indirect)
@@ -158,7 +144,7 @@ A typical lit scene frame follows this order:
 5. renderer.Present()
 ```
 
-For unlit scenes, steps 2 and 3 are skipped and `InitLighting` is not called.
+Steps 2 and 3 are handled internally when lighting is enabled via `WithLighting` and lights have been added. For unlit scenes these steps are skipped automatically.
 
 ---
 

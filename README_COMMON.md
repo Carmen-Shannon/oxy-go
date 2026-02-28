@@ -8,6 +8,7 @@ The `common` package provides shared types, math utilities, and constants used t
 
 | File           | Purpose                                                                              |
 | -------------- | ------------------------------------------------------------------------------------ |
+| `delegate.go`  | Generic delegation interface and embeddable implementation for mock/test routing     |
 | `frustum.go`   | View frustum representation and plane extraction for culling                         |
 | `key_codes.go` | Cross-platform virtual key codes matching GLFW                                       |
 | `math.go`      | 4×4 matrix math, projection, view, model transforms, and unsafe byte conversions     |
@@ -48,13 +49,26 @@ Provides a `Frustum` struct containing six `Plane` values representing the view 
 
 ---
 
+## Delegation (`delegate.go`)
+
+Provides a generic delegation pattern for routing method calls through a replaceable instance. In production code the delegate is set to the instance itself during construction; in tests it can be swapped for a mock.
+
+### Types
+
+| Type              | Description                                                                               |
+| ----------------- | ----------------------------------------------------------------------------------------- |
+| `Delegate[T any]` | Interface defining `SetDelegate(delegate T)` for embedding delegation support             |
+| `DelegateImpl[T]` | Embeddable struct implementing `Delegate[T]` with a public `Delegate T` field for routing |
+
+---
+
 ## Key Codes (`key_codes.go`)
 
 Platform-independent virtual key constants matching [GLFW key codes](https://pkg.go.dev/github.com/go-gl/glfw/v3.3/glfw#Key). Printable keys use their ASCII values; special keys use GLFW-assigned values.
 
 ### Printable Keys
 
-`KeyA` (65) through `KeyX` (88), `KeySpace` (32), `Key0`–`Key9` (48–57).
+`KeyA`, `KeyB`, `KeyC`, `KeyD`, `KeyE`, `KeyF`, `KeyG`, `KeyL`, `KeyM`, `KeyQ`, `KeyS`, `KeyT`, `KeyV`, `KeyW`, `KeyX`, `KeySpace` (32), `Key0`–`Key9` (48–57).
 
 ### Special Keys
 
@@ -80,6 +94,7 @@ All matrix operations use **column-major** layout (OpenGL/WebGPU convention). Ma
 | `Perspective()`      | Builds a perspective projection matrix (WebGPU clip space `[0, 1]`)              |
 | `BuildModelMatrix()` | Constructs a model matrix from position, Euler rotation (Y×X×Z), and scale       |
 | `Invert4()`          | Computes the cofactor-based inverse of a 4×4 matrix; returns `false` if singular |
+| `Invert3x3()`        | Computes the inverse of a 3×3 row-major matrix; returns `false` if singular      |
 | `LookAt()`           | Builds a view matrix from eye position, target point, and up vector              |
 
 ### Byte Conversion Functions
@@ -99,12 +114,12 @@ Plain structs used to shuttle data between the loader, material, and bind group 
 
 ### Types
 
-| Type                 | Description                                                                                       |
-| -------------------- | ------------------------------------------------------------------------------------------------- |
-| `TextureStagingData` | RGBA pixel data (`[]byte`) + width/height, staged for GPU texture upload                          |
-| `SamplerStagingData` | Sampler configuration (address modes, filter modes, LOD clamps, anisotropy, compare function)     |
-| `ImportedMaterial`   | Material properties from a model file: base color, metallic, roughness, texture paths/data        |
-| `ImportedTexture`    | Texture data from a model file: embedded bytes or file path, MIME type, optional sampler override |
+| Type                 | Description                                                                                                                                                                                           |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TextureStagingData` | RGBA pixel data (`[]byte`) + width/height + `Linear` flag, staged for GPU texture upload. When `Linear` is true, uses `RGBA8Unorm` instead of `RGBA8UnormSrgb` (for non-color data like normal maps). |
+| `SamplerStagingData` | Sampler configuration (address modes, filter modes, LOD clamps, anisotropy, compare function)                                                                                                         |
+| `ImportedMaterial`   | Material properties from a model file: base color, metallic, roughness, texture paths/data                                                                                                            |
+| `ImportedTexture`    | Texture data from a model file: embedded bytes or file path, MIME type, optional sampler override                                                                                                     |
 
 ### Methods
 

@@ -19,6 +19,7 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/camera"
 	"github.com/Carmen-Shannon/oxy-go/engine/light"
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
+	"github.com/Carmen-Shannon/oxy-go/engine/physics"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/animator"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/material"
 )
@@ -108,6 +109,11 @@ func NewPreProcessor() PreProcessor {
 			AnnotationArgBoneInfo:              {Source: animator.GPUBoneInfoSource, Type: "BoneInfo"},
 			AnnotationArgInstanceData:          {Source: animator.GPUInstanceDataSource, Type: "InstanceData"},
 			AnnotationArgModelData:             {Source: model.GPUModelDataSource, Type: "ModelData"},
+			AnnotationArgPhysicsBody:           {Source: physics.GPUBodySource, Type: "Body"},
+			AnnotationArgPhysicsParticle:       {Source: physics.GPUParticleSource, Type: "Particle"},
+			AnnotationArgPhysicsGrid:           {Source: physics.GPUGridCellSource, Type: "GridCell"},
+			AnnotationArgPhysicsGlobals:        {Source: physics.GPUPhysicsGlobalsSource, Type: "PhysicsGlobals"},
+			AnnotationArgPhysicsGridParams:     {Source: physics.GPUGridParamsSource, Type: "GridParams"},
 		},
 		addressSpaceRegistry: map[AnnotationArg]string{
 			annotationArgStorageTypeUniform:   "var<uniform>",

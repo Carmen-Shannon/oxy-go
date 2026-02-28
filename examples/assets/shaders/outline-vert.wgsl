@@ -1,16 +1,20 @@
-// Outline vertex shader (inverted hull technique)
+// Outline vertex shader (inverted hull technique — clip-space extrusion)
 //
-// Identical to skinned-vert.wgsl except: after computing the final skinned
-// world-space position, each vertex is pushed outward along its skinned
-// world-space normal by a configurable thickness. This inflated mesh is
-// rendered with front-face culling so only the back faces are visible,
-// creating a solid outline / silhouette around the model.
+// Computes the skinned world-space position like the normal vertex shader,
+// then projects it to clip space and pushes the clip-space xy outward along
+// the screen-space normal direction. This produces a uniform-thickness
+// outline that is free of the triangle-seam gaps caused by world-space
+// normal inflation on meshes with split/hard-edge normals.
+//
+// Rendered with front-face culling so only the back faces of the inflated
+// mesh are visible, creating a solid outline / silhouette around the model.
 
 const MAX_BONES: u32 = 64u;
 const FLOATS_PER_INSTANCE: u32 = (1u + MAX_BONES) * 4u;
 
-// Outline thickness in world-space units. Adjust to taste.
-const OUTLINE_THICKNESS: f32 = 1.5;
+// Outline thickness in clip-space units (scaled by w for perspective).
+// Increase for a thicker outline; decrease for a thinner one.
+const OUTLINE_THICKNESS: f32 = 3.0;
 
 // ── Vertex attributes ──────────────────────────────────────────────
 // Must match Go's model.GPUSkinnedVertex struct layout exactly (96 bytes).
@@ -83,27 +87,50 @@ fn vs_main(
     let skinned_pos = skin_matrix * vec4<f32>(vertex.position, 1.0);
     let world_pos = model_matrix * skinned_pos;
 
+    // Compute the skinned world-space normal for the extrusion direction.
     let skin_normal = (skin_matrix * vec4<f32>(vertex.normal, 0.0)).xyz;
-    let raw_normal = (model_matrix * vec4<f32>(skin_normal, 0.0)).xyz;
+    let world_normal = (model_matrix * vec4<f32>(skin_normal, 0.0)).xyz;
+    let normal_len = length(world_normal);
 
-    // If normals are present use them; otherwise fall back to inflating
-    // outward from the model origin using the vertex's world position.
-    // Fox.glb (and some other models) have zero-length normals.
-    let normal_len = length(raw_normal);
-    var inflate_dir: vec3<f32>;
+    // Project the un-inflated vertex to clip space first.
+    let clip_pos = camera.view_proj * world_pos;
+
+    // Compute the screen-space extrusion direction by projecting the
+    // world-space normal into clip space and normalizing only in xy.
+    // When the normal is degenerate, fall back to pushing outward from
+    // the model origin in screen space.
+    var screen_offset = vec2<f32>(0.0, 0.0);
     if normal_len > 0.001 {
-        inflate_dir = raw_normal / normal_len;
-    } else {
-        inflate_dir = normalize(world_pos.xyz);
+        let n = world_normal / normal_len;
+        let clip_n = camera.view_proj * vec4<f32>(n, 0.0);
+        let slen = length(clip_n.xy);
+        if slen > 0.0001 {
+            screen_offset = clip_n.xy / slen;
+        }
+    }
+    // Fallback: extrude away from model center in screen space
+    if length(screen_offset) < 0.0001 {
+        let model_origin = model_matrix * vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        let clip_origin = camera.view_proj * model_origin;
+        let dir = clip_pos.xy / clip_pos.w - clip_origin.xy / clip_origin.w;
+        let dlen = length(dir);
+        if dlen > 0.0001 {
+            screen_offset = dir / dlen;
+        } else {
+            screen_offset = vec2<f32>(0.0, 1.0);
+        }
     }
 
-    // Push vertex outward to inflate the mesh.
-    let inflated_pos = world_pos.xyz + inflate_dir * OUTLINE_THICKNESS;
-
+    // Push outward in clip space. Multiplying by clip_pos.w makes the
+    // offset perspective-correct so the outline has a consistent
+    // screen-pixel width regardless of distance from the camera.
     var out: VertexOutput;
-    out.clip_position = camera.view_proj * vec4<f32>(inflated_pos, 1.0);
+    out.clip_position = clip_pos;
+    let extrude = screen_offset * OUTLINE_THICKNESS * 0.002 * clip_pos.w;
+    out.clip_position.x = out.clip_position.x + extrude.x;
+    out.clip_position.y = out.clip_position.y + extrude.y;
     out.uv = vertex.uv;
-    out.normal = inflate_dir;
+    out.normal = select(normalize(world_pos.xyz), world_normal / normal_len, normal_len > 0.001);
     out.color = vertex.color;
     out.world_position = vertex.position;
     return out;

@@ -59,25 +59,14 @@ func main() {
 		)),
 	)
 
-	// ── Shaders ─────────────────────────────────────────────────────────
-	computeShader := shader.NewShader("skeletal_compute", shader.ShaderTypeCompute, "examples/assets/shaders/skeletal-compute.wgsl")
-	vertexShader := shader.NewShader("skinned_vert", shader.ShaderTypeVertex, "examples/assets/shaders/skinned-vert.wgsl")
-	outlineVert := shader.NewShader("outline_vert", shader.ShaderTypeVertex, "examples/assets/shaders/outline-vert.wgsl")
-	texturedFrag := shader.NewShader("textured_frag", shader.ShaderTypeFragment, "examples/assets/shaders/textured-frag.wgsl")
-	rainbowFrag := shader.NewShader("skinned_rainbow_frag", shader.ShaderTypeFragment, "examples/assets/shaders/skinned-rainbow-frag.wgsl")
-	overlayFrag := shader.NewShader("overlay_frag", shader.ShaderTypeFragment, "examples/assets/shaders/overlay-frag.wgsl")
-
-	// Use textured as the primary fragment shader for loading (sets up material GPU resources)
-	fragmentShader := texturedFrag
-
 	// ── Scene ───────────────────────────────────────────────────────────
-	sc := scene.NewScene("Fox Animation Test", cam, r, vertexShader,
+	sc := scene.NewScene("Fox Animation Test", cam, r,
 		scene.WithActive(true),
 	)
 
 	// ── Load Fox Model ──────────────────────────────────────────────────
-	ldr := loader.NewLoader(loader.BackendTypeGLTF, loader.WithRenderer(r))
-	foxModel, err := ldr.Load("examples/assets/models/Fox.glb", fragmentShader)
+	ldr := loader.NewLoader(loader.BackendTypeGLTF)
+	foxModel, err := ldr.Load("examples/assets/models/Fox.glb")
 	if err != nil {
 		log.Fatalf("Failed to load Fox model: %v", err)
 	}
@@ -87,90 +76,92 @@ func main() {
 		game_object.WithPosition(0, 0, 0),
 		game_object.WithScale(1, 1, 1),
 	)
+	_ = sc.Add(fox)
 
-	_ = sc.Add(fox, computeShader, vertexShader, fragmentShader)
-
-	// ── Approach 1: Effect Tint Uniform (@group(3) in textured, @group(2) in rainbow) ──
-	// Create a bind group provider for the tint uniform and attach it to the model.
-	// Both fragment shaders read this uniform and mix the tint with their output color.
-	effectBGP := bgp.NewBindGroupProvider("fox_effect_tint")
-	// Init from textured shader's @group(3) layout — it's a single uniform vec4<f32>.
-	if err := r.InitBindGroup(effectBGP, texturedFrag.BindGroupLayoutDescriptor(3), nil, nil); err != nil {
-		log.Fatalf("Failed to init effect tint bind group: %v", err)
-	}
-	foxModel.SetEffectProvider(effectBGP)
-	// Write initial tint (no effect: alpha = 0)
-	noTint := [4]float32{0, 0, 0, 0}
-	r.WriteBuffers([]bgp.BufferWrite{{
-		Provider: effectBGP,
-		Binding:  0,
-		Offset:   0,
-		Data:     common.SliceToBytes(noTint[:]),
-	}})
-
-	// ── Register alternate render pipelines ─────────────────────────────
-	// Rainbow pipeline (spacebar toggle)
-	rainbowPipelineKey := foxModel.Name() + "_rainbow"
-	rainbowPipeline := pipeline.NewPipeline(rainbowPipelineKey, pipeline.PipelineTypeRender,
-		pipeline.WithVertexShader(vertexShader),
-		pipeline.WithFragmentShader(rainbowFrag),
-	)
-	if err := r.RegisterPipelines(rainbowPipeline); err != nil {
-		log.Fatalf("Failed to register rainbow pipeline: %v", err)
-	}
-
-	// ── Approach 2: Multi-Pass Outline (inverted hull) ─────────────────
-	// Register an outline pipeline: inflated vertices + front-face culling = silhouette.
-	// Depth test stays ON so the outline is occluded by closer objects. Depth write
-	// is OFF so the outline doesn't interfere with the normal geometry's depth.
-	overlayPipelineKey := foxModel.Name() + "_overlay"
-	overlayPipeline := pipeline.NewPipeline(overlayPipelineKey, pipeline.PipelineTypeRender,
-		pipeline.WithVertexShader(outlineVert),
-		pipeline.WithFragmentShader(overlayFrag),
-		pipeline.WithCullMode(wgpu.CullModeFront), // render only back faces
-		pipeline.WithDepthWriteEnabled(false),     // don't occlude the normal pass
-	)
-	if err := r.RegisterPipelines(overlayPipeline); err != nil {
-		log.Fatalf("Failed to register overlay pipeline: %v", err)
+	// ── Tint Overlay Material (V-key) ──────────────────────────────────
+	// A semi-transparent color pass rendered on top of the base material.
+	// Uses alpha blending so the tint composites over whatever is already
+	// rendered, just like the outline overlay but with color instead of
+	// silhouette. The tint uniform RGB = color, A = intensity.
+	if err := r.RegisterMaterial(
+		material.NewMaterial(
+			material.WithName("tint"),
+			material.WithFragmentShaderPath("examples/assets/shaders/tint-overlay-frag.wgsl"),
+			material.WithPipelineKey(foxModel.Name()+"_tint"),
+		),
+		"tint",
+		pipeline.WithBlendEnabled(true),
+		pipeline.WithBlendState(&wgpu.BlendState{
+			Color: wgpu.BlendComponent{
+				SrcFactor: wgpu.BlendFactorSrcAlpha,
+				DstFactor: wgpu.BlendFactorOneMinusSrcAlpha,
+				Operation: wgpu.BlendOperationAdd,
+			},
+			Alpha: wgpu.BlendComponent{
+				SrcFactor: wgpu.BlendFactorOne,
+				DstFactor: wgpu.BlendFactorOneMinusSrcAlpha,
+				Operation: wgpu.BlendOperationAdd,
+			},
+		}),
+		pipeline.WithDepthCompare(wgpu.CompareFunctionLessEqual), // same geometry as base pass
+		pipeline.WithDepthWriteEnabled(false),
+	); err != nil {
+		log.Fatalf("Failed to register tint material: %v", err)
 	}
 
-	// Pre-create the overlay material with its own bind group provider.
-	// The overlay shader has @group(2) with a single uniform (overlay_color vec4).
-	overlayBGP := bgp.NewBindGroupProvider("fox_overlay_material")
-	if err := r.InitBindGroup(overlayBGP, overlayFrag.BindGroupLayoutDescriptor(2), nil, nil); err != nil {
-		log.Fatalf("Failed to init overlay bind group: %v", err)
+	// ── Rainbow Material ────────────────────────────────────────────────
+	// A material with a custom fragment shader for HSV-based rainbow coloring.
+	// RegisterMaterial resolves the pipeline from the material's PipelineKey
+	// and initializes GPU resources from the fragment shader's annotations.
+	if err := r.RegisterMaterial(
+		material.NewMaterial(
+			material.WithName("rainbow"),
+			material.WithFragmentShaderPath("examples/assets/shaders/skinned-rainbow-frag.wgsl"),
+			material.WithPipelineKey(foxModel.Name()+"_rainbow"),
+		),
+		"rainbow",
+	); err != nil {
+		log.Fatalf("Failed to register rainbow material: %v", err)
 	}
-	// Write initial outline color (solid black)
-	overlayColor := [4]float32{0.0, 0.0, 0.0, 1.0}
-	r.WriteBuffers([]bgp.BufferWrite{{
-		Provider: overlayBGP,
-		Binding:  0,
-		Offset:   0,
-		Data:     common.SliceToBytes(overlayColor[:]),
-	}})
 
-	overlayMat := material.NewMaterial(
-		material.WithName("overlay"),
-		material.WithPipelineKey(overlayPipelineKey),
-	)
-	overlayMat.SetBindGroupProvider(overlayBGP)
+	// ── Overlay Material (inverted hull outline) ────────────────────────
+	// The outline uses a completely different vertex shader (inflated vertices +
+	// front-face culling) and non-standard render state (no depth write).
+	// RegisterMaterial creates and registers the pipeline from the supplied
+	// pipeline builder options when no pipeline exists for the material's key.
+	if err := r.RegisterMaterial(
+		material.NewMaterial(
+			material.WithName("overlay"),
+			material.WithPipelineKey(foxModel.Name()+"_overlay"),
+		),
+		"fox_overlay_material",
+		pipeline.WithVertexShader(shader.NewShader("outline_vert", shader.ShaderTypeVertex, "examples/assets/shaders/outline-vert.wgsl")),
+		pipeline.WithFragmentShader(shader.NewShader("overlay_frag", shader.ShaderTypeFragment, "examples/assets/shaders/overlay-frag.wgsl")),
+		pipeline.WithCullMode(wgpu.CullModeFront),                // render only back faces
+		pipeline.WithDepthCompare(wgpu.CompareFunctionLessEqual), // clip-space extrusion lands at ~same depth
+		pipeline.WithDepthWriteEnabled(false),                    // don't occlude the normal pass
+	); err != nil {
+		log.Fatalf("Failed to register overlay material: %v", err)
+	}
 
 	// ── Wood Texture Material (X-key hot-swap) ─────────────────────────
 	// Create a material that samples a .png file from disk as the diffuse
-	// texture. InitMaterialGPU decodes the image, uploads it to the GPU,
+	// texture. RegisterMaterial decodes the image, uploads it to the GPU,
 	// and creates fallback normal/metallic-roughness textures automatically.
-	woodMat := material.NewMaterial(
-		material.WithName("wood"),
-		material.WithBaseColor([4]float32{1, 1, 1, 1}),
-		material.WithDiffuseTexture(&common.ImportedTexture{
-			Name:     "wood_diffuse",
-			Path:     "examples/assets/textures/wood.png",
-			MimeType: "image/png",
-		}),
-		material.WithPipelineKey(foxModel.Name()),
-	)
-	if err := ldr.InitMaterialGPU(woodMat, fragmentShader, "wood"); err != nil {
-		log.Fatalf("Failed to init wood material GPU: %v", err)
+	if err := r.RegisterMaterial(
+		material.NewMaterial(
+			material.WithName("wood"),
+			material.WithBaseColor([4]float32{1, 1, 1, 1}),
+			material.WithDiffuseTexture(&common.ImportedTexture{
+				Name:     "wood_diffuse",
+				Path:     "examples/assets/textures/wood.png",
+				MimeType: "image/png",
+			}),
+			material.WithPipelineKey(foxModel.Name()),
+		),
+		"wood",
+	); err != nil {
+		log.Fatalf("Failed to register wood material: %v", err)
 	}
 
 	// Save the original materials so we can restore them when toggling back.
@@ -185,7 +176,7 @@ func main() {
 	eng.AddScene(0, sc)
 
 	// ── Input Handling ──────────────────────────────────────────────────
-	setupFoxInput(eng, cam, fox, r, effectBGP, overlayMat, woodMat, originalMats, foxModel.Name(), rainbowPipelineKey)
+	setupFoxInput(eng, cam, fox, r, originalMats)
 
 	// Print animation names for user reference
 	animNames := foxModel.AnimationNames()
@@ -216,11 +207,7 @@ func setupFoxInput(
 	cam camera.Camera,
 	fox game_object.GameObject,
 	r renderer.Renderer,
-	effectBGP bgp.BindGroupProvider,
-	overlayMat material.Material,
-	woodMat material.Material,
 	originalMats []material.Material,
-	texturedKey, rainbowKey string,
 ) {
 	keyState := make(map[uint32]bool)
 	animCount := fox.Model().AnimationCount()
@@ -228,6 +215,31 @@ func setupFoxInput(
 	usingWood := false
 	tintActive := false
 	overlayActive := false
+
+	// rebuildMaterials reconstructs the full material list from current state.
+	// Each material already carries its own pipeline key (auto-derived from its
+	// fragment shader path), so we only need to swap which materials are active.
+	rebuildMaterials := func() {
+		var baseMats []material.Material
+		switch {
+		case usingRainbow:
+			baseMats = []material.Material{r.Material("rainbow")}
+		case usingWood:
+			baseMats = []material.Material{r.Material("wood")}
+		default:
+			restored := make([]material.Material, len(originalMats))
+			copy(restored, originalMats)
+			baseMats = restored
+		}
+
+		if tintActive {
+			baseMats = append(baseMats, r.Material("tint"))
+		}
+		if overlayActive {
+			baseMats = append(baseMats, r.Material("overlay"))
+		}
+		fox.Model().SetRenderMaterials(baseMats)
+	}
 
 	eng.Window().SetKeyDownCallback(func(keyCode uint32) {
 		keyState[keyCode] = true
@@ -240,20 +252,16 @@ func setupFoxInput(
 			}
 		}
 
-		// Spacebar toggles between textured and rainbow fragment shaders
+		// Spacebar toggles between textured and rainbow fragment shaders.
+		// Enabling rainbow disables wood since the rainbow shader generates
+		// colors procedurally and ignores textures.
 		if keyCode == common.KeySpace {
 			usingRainbow = !usingRainbow
-			newKey := texturedKey
-			if usingRainbow {
-				newKey = rainbowKey
+			if usingRainbow && usingWood {
+				usingWood = false
+				fmt.Println("[Texture] Wood OFF (overridden by rainbow)")
 			}
-			// Only swap the base materials, not the overlay material
-			for _, mat := range fox.Model().RenderMaterials() {
-				if mat.Name() == "overlay" {
-					continue
-				}
-				mat.SetPipelineKey(newKey)
-			}
+			rebuildMaterials()
 			if usingRainbow {
 				fmt.Println("[Shader] Switched to: Rainbow")
 			} else {
@@ -261,23 +269,24 @@ func setupFoxInput(
 			}
 		}
 
-		// X key toggles the wood texture (runtime texture swap)
+		// X key toggles the wood texture (runtime texture swap).
+		// Enabling wood disables rainbow since the rainbow shader ignores
+		// textures entirely.
 		if keyCode == common.KeyX {
 			usingWood = !usingWood
+			if usingWood && usingRainbow {
+				usingRainbow = false
+				fmt.Println("[Shader] Rainbow OFF (overridden by wood)")
+			}
+			rebuildMaterials()
 			if usingWood {
-				// Replace all base materials with the wood-textured material
-				fox.Model().SetRenderMaterials([]material.Material{woodMat})
 				fmt.Println("[Texture] Wood ON")
 			} else {
-				// Restore original materials
-				restored := make([]material.Material, len(originalMats))
-				copy(restored, originalMats)
-				fox.Model().SetRenderMaterials(restored)
 				fmt.Println("[Texture] Wood OFF (original restored)")
 			}
 		}
 
-		// V key toggles the tint uniform (Approach 1)
+		// V key toggles the tint overlay (Approach 1)
 		if keyCode == common.KeyV {
 			tintActive = !tintActive
 			var tint [4]float32
@@ -285,11 +294,12 @@ func setupFoxInput(
 				tint = [4]float32{1.0, 0.0, 0.0, 0.5} // red, 50% intensity
 			}
 			r.WriteBuffers([]bgp.BufferWrite{{
-				Provider: effectBGP,
+				Provider: r.Material("tint").Provider(2),
 				Binding:  0,
 				Offset:   0,
 				Data:     common.SliceToBytes(tint[:]),
 			}})
+			rebuildMaterials()
 			if tintActive {
 				fmt.Println("[Effect] Tint ON (red 50%)")
 			} else {
@@ -300,20 +310,20 @@ func setupFoxInput(
 		// B key toggles the overlay pass (Approach 2)
 		if keyCode == common.KeyB {
 			overlayActive = !overlayActive
-			mats := fox.Model().RenderMaterials()
+			var overlayColor [4]float32
 			if overlayActive {
-				// Append the overlay material for a second draw pass
-				fox.Model().SetRenderMaterials(append(mats, overlayMat))
+				overlayColor = [4]float32{0.0, 0.0, 0.0, 1.0} // solid black outline
+			}
+			r.WriteBuffers([]bgp.BufferWrite{{
+				Provider: r.Material("overlay").BindGroupProvider(),
+				Binding:  0,
+				Offset:   0,
+				Data:     common.SliceToBytes(overlayColor[:]),
+			}})
+			rebuildMaterials()
+			if overlayActive {
 				fmt.Println("[Outline] ON")
 			} else {
-				// Remove the overlay material
-				filtered := make([]material.Material, 0, len(mats))
-				for _, m := range mats {
-					if m.Name() != "overlay" {
-						filtered = append(filtered, m)
-					}
-				}
-				fox.Model().SetRenderMaterials(filtered)
 				fmt.Println("[Outline] OFF")
 			}
 		}

@@ -94,3 +94,7 @@ jobs:
           label: coverage
           message: ${{ steps.cov.outputs.pct }}%
           color: ${{ steps.badge.outputs.color }}
+
+      - name: Refresh Go Report Card
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: curl -sS -X POST -F 'repo=github.com/Carmen-Shannon/oxy-go' https://goreportcard.com/checks

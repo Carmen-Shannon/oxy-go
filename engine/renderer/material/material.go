@@ -18,6 +18,8 @@ type material struct {
 	metallicRoughnessTexture *common.ImportedTexture
 	pipelineKey              string
 	bindGroupProvider        bind_group_provider.BindGroupProvider
+	fragmentShaderPath       string
+	providers                map[int]bind_group_provider.BindGroupProvider
 }
 
 // Material defines the interface for a render material, encapsulating surface
@@ -97,6 +99,38 @@ type Material interface {
 	// Parameters:
 	//   - provider: the bind group provider containing GPU resources for this material
 	SetBindGroupProvider(provider bind_group_provider.BindGroupProvider)
+
+	// FragmentShaderPath retrieves the path to the fragment shader associated with this material.
+	// An empty string indicates that the engine default fragment shader should be used.
+	//
+	// Returns:
+	//   - string: the fragment shader asset path, or empty for the engine default
+	FragmentShaderPath() string
+
+	// SetFragmentShaderPath sets the path to the fragment shader for this material.
+	//
+	// Parameters:
+	//   - path: the fragment shader asset path
+	SetFragmentShaderPath(path string)
+
+	// Provider retrieves the bind group provider associated with the specified group index.
+	// Returns nil if no provider has been set for the given group.
+	//
+	// Parameters:
+	//   - group: the bind group index to look up
+	//
+	// Returns:
+	//   - bind_group_provider.BindGroupProvider: the provider for the group, or nil
+	Provider(group int) bind_group_provider.BindGroupProvider
+
+	// SetProvider stores a bind group provider for the specified group index.
+	// This allows a material to own GPU resources across multiple bind groups
+	// (e.g. textures at one group and effect uniforms at another).
+	//
+	// Parameters:
+	//   - group: the bind group index
+	//   - provider: the bind group provider to associate with the group
+	SetProvider(group int, provider bind_group_provider.BindGroupProvider)
 }
 
 var _ Material = &material{}
@@ -113,6 +147,7 @@ func NewMaterial(options ...MaterialBuilderOption) Material {
 		baseColor: [4]float32{1, 1, 1, 1},
 		metallic:  0.0,
 		roughness: 1.0,
+		providers: make(map[int]bind_group_provider.BindGroupProvider),
 	}
 	for _, opt := range options {
 		opt(m)
@@ -163,4 +198,20 @@ func (m *material) SetPipelineKey(key string) {
 
 func (m *material) SetBindGroupProvider(provider bind_group_provider.BindGroupProvider) {
 	m.bindGroupProvider = provider
+}
+
+func (m *material) FragmentShaderPath() string {
+	return m.fragmentShaderPath
+}
+
+func (m *material) SetFragmentShaderPath(path string) {
+	m.fragmentShaderPath = path
+}
+
+func (m *material) Provider(group int) bind_group_provider.BindGroupProvider {
+	return m.providers[group]
+}
+
+func (m *material) SetProvider(group int, provider bind_group_provider.BindGroupProvider) {
+	m.providers[group] = provider
 }

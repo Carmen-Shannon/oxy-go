@@ -3,6 +3,7 @@ package engine
 import (
 	"log"
 	"maps"
+	"runtime/debug"
 	"sort"
 	"sync"
 	"time"
@@ -152,12 +153,7 @@ func NewEngine(options ...EngineBuilderOption) Engine {
 	if e.window != nil {
 		e.window.SetResizeCallback(func(width, height int) {
 			for _, s := range e.scenes {
-				if r := s.Renderer(); r != nil {
-					r.Resize(width, height)
-				}
-				if c := s.Camera(); c != nil {
-					c.SetAspect(float32(width) / float32(height))
-				}
+				s.Resize(width, height)
 			}
 		})
 	}
@@ -238,7 +234,7 @@ func (e *engine) handleRender() {
 	// Recover from panics inside the render goroutine to avoid crashing the whole process.
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("render goroutine recovered from panic: %v", r)
+			log.Printf("render goroutine recovered from panic: %v\n%s", r, debug.Stack())
 			e.signalQuit()
 		}
 	}()

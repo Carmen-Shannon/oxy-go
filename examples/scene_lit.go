@@ -18,7 +18,6 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/material"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	"github.com/Carmen-Shannon/oxy-go/engine/window"
 	"github.com/cogentcore/webgpu/wgpu"
@@ -61,24 +60,15 @@ func main() {
 		)),
 	)
 
-	// ── Shaders ─────────────────────────────────────────────────────────
-	computeShader := shader.NewShader("skeletal_compute", shader.ShaderTypeCompute, "examples/assets/shaders/skeletal-compute.wgsl")
-	litVert := shader.NewShader("lit_skinned_vert", shader.ShaderTypeVertex, "examples/assets/shaders/lit-skinned-vert.wgsl")
-	litFrag := shader.NewShader("lit_frag", shader.ShaderTypeFragment, "examples/assets/shaders/lit-frag.wgsl")
-	shadowVert := shader.NewShader("shadow_depth_vert", shader.ShaderTypeVertex, "examples/assets/shaders/shadow-depth-vert.wgsl")
-	shadowSkinnedVert := shader.NewShader("shadow_depth_skinned_vert", shader.ShaderTypeVertex, "examples/assets/shaders/shadow-depth-skinned-vert.wgsl")
-	cullCompute := shader.NewShader("light_cull_compute", shader.ShaderTypeCompute, "examples/assets/shaders/light-cull-compute.wgsl")
-
-	// Static (non-skinned) shaders for procedural geometry
-	staticCompute := shader.NewShader("simple_compute", shader.ShaderTypeCompute, "examples/assets/shaders/simple-compute.wgsl")
-	staticLitVert := shader.NewShader("lit_vert", shader.ShaderTypeVertex, "examples/assets/shaders/lit-vert.wgsl")
-
 	// ── Scene ───────────────────────────────────────────────────────────
-	sc := scene.NewScene("Lit Scene", cam, r, litVert,
+	sc := scene.NewScene("Lit Scene", cam, r,
 		scene.WithActive(true),
-		scene.WithShadowHalfExtent(120),
-		scene.WithShadowNearFar(0.1, 400),
-		scene.WithShadowBias(0.001),
+		scene.WithScreenSize(eng.Window().Width(), eng.Window().Height()),
+		scene.WithLighting(light.NewLightingHandler(
+			light.WithShadowHalfExtent(120),
+			light.WithShadowNearFar(0.1, 400),
+			light.WithShadowBias(0.001),
+		)),
 	)
 
 	// ── Lights ──────────────────────────────────────────────────────────
@@ -127,14 +117,9 @@ func main() {
 	// Set ambient color (dim fill light so shadows aren't fully black)
 	sc.SetAmbientColor([3]float32{0.08, 0.08, 0.12})
 
-	// ── Initialize Full Lighting Pipeline ───────────────────────────────
-	sc.InitLighting(litFrag, shadowVert, shadowSkinnedVert, cullCompute,
-		eng.Window().Width(), eng.Window().Height(),
-	)
-
 	// ── Load Fox Model ──────────────────────────────────────────────────
-	ldr := loader.NewLoader(loader.BackendTypeGLTF, loader.WithRenderer(r))
-	foxModel, err := ldr.Load("examples/assets/models/Fox.glb", litFrag)
+	ldr := loader.NewLoader(loader.BackendTypeGLTF)
+	foxModel, err := ldr.Load("examples/assets/models/Fox.glb")
 	if err != nil {
 		log.Fatalf("Failed to load Fox model: %v", err)
 	}
@@ -145,7 +130,7 @@ func main() {
 		game_object.WithScale(1, 1, 1),
 	)
 
-	_ = sc.Add(fox, computeShader, litVert, litFrag)
+	_ = sc.Add(fox)
 
 	// Start initial animation (first clip, looped)
 	if foxModel.AnimationCount() > 0 {
@@ -179,17 +164,7 @@ func main() {
 		game_object.WithEphemeral(true),
 	)
 
-	// Initialize the quad's material GPU resources (fallback textures, samplers, bind group)
-	// so the lit fragment shader can bind @group(2). Without this the draw call is silently skipped.
-	// Manual GPU initialization for materials is only required for custom models that don't load from .glb
-	quadMats := quadObj.Model().RenderMaterials()
-	if len(quadMats) > 0 {
-		if err := ldr.InitMaterialGPU(quadMats[0], litFrag, "quad_material"); err != nil {
-			log.Fatalf("Failed to init quad material GPU: %v", err)
-		}
-	}
-
-	_ = sc.Add(quadObj, staticCompute, staticLitVert, litFrag,
+	_ = sc.Add(quadObj,
 		pipeline.WithBlendEnabled(true),
 		pipeline.WithBlendState(&wgpu.BlendState{
 			Color: wgpu.BlendComponent{
@@ -224,18 +199,14 @@ func main() {
 				material.WithBaseColor([4]float32{1.0, 0.6, 0.1, 1.0}),
 				material.WithPipelineKey("sun_indicator"),
 			)),
+			model.WithCastsShadows(false),
+			model.WithShadowCullMode(model.ShadowCullModeBack),
 		)),
 		game_object.WithPosition(0, 240, 0),
 		game_object.WithScale(1, 1, 1),
 		game_object.WithEphemeral(true),
 	)
-	sunMats := sunIndicator.Model().RenderMaterials()
-	if len(sunMats) > 0 {
-		if err := ldr.InitMaterialGPU(sunMats[0], litFrag, "sun_sphere_material"); err != nil {
-			log.Fatalf("Failed to init sun indicator material GPU: %v", err)
-		}
-	}
-	_ = sc.Add(sunIndicator, staticCompute, staticLitVert, litFrag)
+	_ = sc.Add(sunIndicator)
 
 	eng.AddScene(0, sc)
 

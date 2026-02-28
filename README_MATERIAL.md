@@ -10,10 +10,12 @@ The `engine/renderer/material` package defines the render material abstraction f
 
 ```
 Material (public interface)
+ ├─ common.Delegate[Material]   ← mock / test delegation
  └─ material (unexported struct)
+      └─ common.DelegateImpl[Material]
 ```
 
-The package follows the standard oxy-go interface-first pattern: a single public `Material` interface backed by an unexported `material` struct with a compile-time implementation check.
+The package follows the standard oxy-go interface-first pattern: a single public `Material` interface backed by an unexported `material` struct with a compile-time implementation check. The interface embeds `common.Delegate[Material]` for mock/test delegation support.
 
 ---
 
@@ -23,26 +25,30 @@ The package follows the standard oxy-go interface-first pattern: a single public
 
 Set at creation time via builder options and read-only through the interface.
 
-| Method                       | Description                                                    |
-| ---------------------------- | -------------------------------------------------------------- |
-| `Name() string`              | Material identifier (from glTF or manually assigned)           |
-| `BaseColor() [4]float32`     | Albedo/diffuse RGBA color (default `{1,1,1,1}`)                |
-| `Metallic() float32`         | Metallic factor: `0.0` = dielectric, `1.0` = metal (default 0) |
-| `Roughness() float32`        | Roughness factor: `0.0` = smooth, `1.0` = rough (default 1)    |
-| `DiffuseTexture()`           | Diffuse/albedo texture reference, or nil                       |
-| `NormalTexture()`            | Normal map texture reference, or nil                           |
-| `MetallicRoughnessTexture()` | Metallic-roughness map reference, or nil                       |
+| Method                                               | Description                                                    |
+| ---------------------------------------------------- | -------------------------------------------------------------- |
+| `Name() string`                                      | Material identifier (from glTF or manually assigned)           |
+| `BaseColor() [4]float32`                             | Albedo/diffuse RGBA color (default `{1,1,1,1}`)                |
+| `Metallic() float32`                                 | Metallic factor: `0.0` = dielectric, `1.0` = metal (default 0) |
+| `Roughness() float32`                                | Roughness factor: `0.0` = smooth, `1.0` = rough (default 1)    |
+| `DiffuseTexture() *common.ImportedTexture`           | Diffuse/albedo texture reference, or nil                       |
+| `NormalTexture() *common.ImportedTexture`            | Normal map texture reference, or nil                           |
+| `MetallicRoughnessTexture() *common.ImportedTexture` | Metallic-roughness map reference, or nil                       |
+| `FragmentShaderPath() string`                        | Path to the fragment shader source this material uses          |
 
 ### Mutable GPU Bindings
 
-Set during the Loader's GPU-init phase after construction.
+Set during the scene's GPU-init phase after construction.
 
-| Method                           | Description                                            |
-| -------------------------------- | ------------------------------------------------------ |
-| `PipelineKey() string`           | Key identifying the render pipeline this material uses |
-| `BindGroupProvider()`            | Bind group provider holding GPU resources              |
-| `SetPipelineKey(key string)`     | Updates the pipeline key                               |
-| `SetBindGroupProvider(provider)` | Updates the bind group provider                        |
+| Method                                                                   | Description                                             |
+| ------------------------------------------------------------------------ | ------------------------------------------------------- |
+| `PipelineKey() string`                                                   | Key identifying the render pipeline this material uses  |
+| `BindGroupProvider() bind_group_provider.BindGroupProvider`              | Bind group provider holding GPU resources               |
+| `SetPipelineKey(key string)`                                             | Updates the pipeline key                                |
+| `SetBindGroupProvider(provider bind_group_provider.BindGroupProvider)`   | Updates the bind group provider                         |
+| `SetFragmentShaderPath(path string)`                                     | Updates the fragment shader source path                 |
+| `Provider(group int) bind_group_provider.BindGroupProvider`              | Per-group bind group provider lookup                    |
+| `SetProvider(group int, provider bind_group_provider.BindGroupProvider)` | Sets the bind group provider for a specific group index |
 
 ---
 
@@ -61,6 +67,7 @@ The `NewMaterial` constructor accepts variadic `MaterialBuilderOption` functions
 | `WithMetallicRoughnessTexture(tex)` | Sets the metallic-roughness texture reference |
 | `WithPipelineKey(key)`              | Sets the render pipeline key                  |
 | `WithBindGroupProvider(provider)`   | Sets the bind group provider                  |
+| `WithFragmentShaderPath(path)`      | Sets the fragment shader source path          |
 
 ---
 
@@ -70,7 +77,7 @@ The `NewMaterial` constructor accepts variadic `MaterialBuilderOption` functions
 func NewMaterial(options ...MaterialBuilderOption) Material
 ```
 
-Creates a new `Material` with sensible defaults: white base color `{1,1,1,1}`, metallic `0.0`, roughness `1.0`. Builder options are applied after defaults.
+Creates a new `Material` with sensible defaults: white base color `{1,1,1,1}`, metallic `0.0`, roughness `1.0`, and an empty `providers` map. Sets `m.Delegate = m` so delegation routes to itself by default. Builder options are applied after defaults.
 
 ---
 
@@ -80,10 +87,17 @@ The package defines two GPU-aligned uniform structs for fragment shader paramete
 
 | Type               | Size | WGSL Asset            | Description                                         |
 | ------------------ | ---- | --------------------- | --------------------------------------------------- |
-| `GPUOverlayParams` | 16 B | `overlay_params.wgsl` | RGBA overlay color written to all fragments         |
-| `GPUEffectParams`  | 16 B | `effect_params.wgsl`  | RGB tint color + alpha blend intensity for textures |
+| `GPUOverlayParams` | 16 B | `overlay-params.wgsl` | RGBA overlay color written to all fragments         |
+| `GPUEffectParams`  | 16 B | `effect-params.wgsl`  | RGB tint color + alpha blend intensity for textures |
 
 Both types implement `Size() int` and `Marshal() []byte` for GPU buffer upload.
+
+The package also exports the embedded WGSL source strings for each type:
+
+| Variable                 | Description                              |
+| ------------------------ | ---------------------------------------- |
+| `GPUOverlayParamsSource` | Embedded WGSL source for `OverlayParams` |
+| `GPUEffectParamsSource`  | Embedded WGSL source for `EffectParams`  |
 
 ---
 
@@ -92,12 +106,12 @@ Both types implement `Size() int` and `Marshal() []byte` for GPU buffer upload.
 | File                  | Purpose                                                        |
 | --------------------- | -------------------------------------------------------------- |
 | `material.go`         | `Material` interface, `material` struct, constructor, impls    |
-| `material_builder.go` | `MaterialBuilderOption` type and 9 builder functions           |
+| `material_builder.go` | `MaterialBuilderOption` type and 10 builder functions          |
 | `gpu_types.go`        | `GPUOverlayParams`, `GPUEffectParams` with Size/Marshal + WGSL |
 
 ### Assets
 
 | File                  | Description                                |
 | --------------------- | ------------------------------------------ |
-| `overlay_params.wgsl` | WGSL `OverlayParams` struct (16 B, 1 vec4) |
-| `effect_params.wgsl`  | WGSL `EffectParams` struct (16 B, 1 vec4)  |
+| `overlay-params.wgsl` | WGSL `OverlayParams` struct (16 B, 1 vec4) |
+| `effect-params.wgsl`  | WGSL `EffectParams` struct (16 B, 1 vec4)  |

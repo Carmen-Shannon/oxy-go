@@ -14,14 +14,10 @@ struct FragmentInput {
     @location(3) world_position: vec3<f32>,
 };
 
-// ── Outline uniform ────────────────────────────────────────────────
-// The outline color, controlled from Go. Default is solid black.
 //@oxy:include overlay_params
-// struct OverlayParams {
-//     overlay_color: vec4<f32>,
-// };
+
+//@oxy:provider 2 0 material
 //@oxy:group 2 0 storage_uniform overlay_material overlay_params
-// @group(2) @binding(0) var<uniform> overlay_material: OverlayParams;
 
 // ── Entry point ────────────────────────────────────────────────────
 @fragment

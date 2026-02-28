@@ -1,7 +1,11 @@
 package renderer_test
 
 import (
+	"bytes"
 	"encoding/binary"
+	"image"
+	"image/color"
+	"image/png"
 	"math"
 	"path/filepath"
 	"runtime"
@@ -10,6 +14,7 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/material"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 	"github.com/Carmen-Shannon/oxy-go/engine/window"
@@ -1287,6 +1292,370 @@ func (suite *rendererTest) TestSetDelegate() {
 	})
 }
 
+func (suite *rendererTest) TestMaterial() {
+	suite.Run("returns nil for unregistered material", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		suite.Nil(r.Material("nonexistent"))
+	})
+
+	suite.Run("returns cached material after RegisterMaterial", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		vs := shader.NewShader("mat-vert", shader.ShaderTypeVertex, shaderPath("test_vert.wgsl"))
+		fs := shader.NewShader("mat-frag", shader.ShaderTypeFragment, shaderPath("test_frag.wgsl"))
+		p := pipeline.NewPipeline("mat-pipe", pipeline.PipelineTypeRender,
+			pipeline.WithVertexShader(vs),
+			pipeline.WithFragmentShader(fs),
+		)
+
+		err := r.RegisterPipelines(p)
+		suite.NoError(err)
+
+		mat := material.NewMaterial(
+			material.WithName("test-material"),
+			material.WithPipelineKey("mat-pipe"),
+		)
+
+		err = r.RegisterMaterial(mat, "test-mat")
+		suite.NoError(err)
+		suite.NotNil(r.Material("test-material"))
+		suite.Equal("test-material", r.Material("test-material").Name())
+	})
+}
+
+func (suite *rendererTest) TestRegisterMaterial() {
+	suite.Run("returns error when pipeline key is empty", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		mat := material.NewMaterial(material.WithName("no-key-mat"))
+		err := r.RegisterMaterial(mat, "prefix")
+		suite.Error(err)
+		suite.Contains(err.Error(), "no pipeline key set")
+	})
+
+	suite.Run("returns error when pipeline not found and no opts provided", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		mat := material.NewMaterial(
+			material.WithName("orphan-mat"),
+			material.WithPipelineKey("nonexistent-pipe"),
+		)
+
+		err := r.RegisterMaterial(mat, "prefix")
+		suite.Error(err)
+		suite.Contains(err.Error(), "not found")
+	})
+
+	suite.Run("succeeds when pipeline exists and fragment has no material annotations", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		vs := shader.NewShader("rm-vert", shader.ShaderTypeVertex, shaderPath("test_vert.wgsl"))
+		fs := shader.NewShader("rm-frag", shader.ShaderTypeFragment, shaderPath("test_frag.wgsl"))
+		p := pipeline.NewPipeline("rm-pipe", pipeline.PipelineTypeRender,
+			pipeline.WithVertexShader(vs),
+			pipeline.WithFragmentShader(fs),
+		)
+
+		err := r.RegisterPipelines(p)
+		suite.NoError(err)
+
+		mat := material.NewMaterial(
+			material.WithName("simple-mat"),
+			material.WithPipelineKey("rm-pipe"),
+		)
+
+		err = r.RegisterMaterial(mat, "simple")
+		suite.NoError(err)
+		suite.NotNil(r.Material("simple-mat"))
+	})
+
+	suite.Run("returns error when pipeline has no fragment shader", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		p := pipeline.NewPipeline("no-frag-pipe", pipeline.PipelineTypeRender)
+		r.SetPipeline("no-frag-pipe", p)
+
+		mat := material.NewMaterial(
+			material.WithName("no-frag-mat"),
+			material.WithPipelineKey("no-frag-pipe"),
+		)
+
+		err := r.RegisterMaterial(mat, "prefix")
+		suite.Error(err)
+		suite.Contains(err.Error(), "no fragment shader")
+	})
+
+	suite.Run("succeeds with material provider annotations creating fallback textures", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		vs := shader.NewShader("matprov-vert", shader.ShaderTypeVertex, shaderPath("test_vert.wgsl"))
+		fs := shader.NewShader("matprov-frag", shader.ShaderTypeFragment, shaderPath("test_material_frag.wgsl"))
+		p := pipeline.NewPipeline("matprov-pipe", pipeline.PipelineTypeRender,
+			pipeline.WithVertexShader(vs),
+			pipeline.WithFragmentShader(fs),
+		)
+
+		err := r.RegisterPipelines(p)
+		suite.NoError(err)
+
+		mat := material.NewMaterial(
+			material.WithName("textured-mat"),
+			material.WithPipelineKey("matprov-pipe"),
+		)
+
+		err = r.RegisterMaterial(mat, "tex-mat")
+		suite.NoError(err)
+		suite.NotNil(r.Material("textured-mat"))
+		suite.NotNil(mat.Provider(2))
+	})
+
+	suite.Run("auto-derives pipeline from base when FragmentShaderPath is set", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		vs := shader.NewShader("base-vert", shader.ShaderTypeVertex, shaderPath("test_vert.wgsl"))
+		fs := shader.NewShader("base-frag", shader.ShaderTypeFragment, shaderPath("test_frag.wgsl"))
+		basePipe := pipeline.NewPipeline("base", pipeline.PipelineTypeRender,
+			pipeline.WithVertexShader(vs),
+			pipeline.WithFragmentShader(fs),
+		)
+
+		err := r.RegisterPipelines(basePipe)
+		suite.NoError(err)
+
+		mat := material.NewMaterial(
+			material.WithName("derived-mat"),
+			material.WithPipelineKey("base_variant"),
+			material.WithFragmentShaderPath(shaderPath("test_material_frag.wgsl")),
+		)
+
+		err = r.RegisterMaterial(mat, "derived")
+		suite.NoError(err)
+		suite.NotNil(r.Pipeline("base_variant"))
+		suite.NotNil(r.Material("derived-mat"))
+	})
+
+	suite.Run("returns error when auto-deriving with no base pipeline", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		mat := material.NewMaterial(
+			material.WithName("no-base-mat"),
+			material.WithPipelineKey("orphan_variant"),
+			material.WithFragmentShaderPath(shaderPath("test_material_frag.wgsl")),
+		)
+
+		err := r.RegisterMaterial(mat, "prefix")
+		suite.Error(err)
+		suite.Contains(err.Error(), "no base pipeline exists")
+	})
+
+	suite.Run("succeeds with real diffuse texture on material", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		vs := shader.NewShader("tex-vert", shader.ShaderTypeVertex, shaderPath("test_vert.wgsl"))
+		fs := shader.NewShader("tex-frag", shader.ShaderTypeFragment, shaderPath("test_material_frag.wgsl"))
+		p := pipeline.NewPipeline("tex-pipe", pipeline.PipelineTypeRender,
+			pipeline.WithVertexShader(vs),
+			pipeline.WithFragmentShader(fs),
+		)
+
+		err := r.RegisterPipelines(p)
+		suite.NoError(err)
+
+		diffuseTex := &common.ImportedTexture{
+			Name:     "diffuse",
+			Data:     buildTestPNG(4, 4, color.NRGBA{R: 255, G: 0, B: 0, A: 255}),
+			MimeType: "image/png",
+		}
+
+		mat := material.NewMaterial(
+			material.WithName("real-tex-mat"),
+			material.WithPipelineKey("tex-pipe"),
+			material.WithDiffuseTexture(diffuseTex),
+		)
+
+		err = r.RegisterMaterial(mat, "real-tex")
+		suite.NoError(err)
+		suite.NotNil(r.Material("real-tex-mat"))
+		suite.NotNil(mat.Provider(2))
+	})
+
+	suite.Run("succeeds with diffuse texture and custom sampler data", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		vs := shader.NewShader("samp-vert", shader.ShaderTypeVertex, shaderPath("test_vert.wgsl"))
+		fs := shader.NewShader("samp-frag", shader.ShaderTypeFragment, shaderPath("test_material_frag.wgsl"))
+		p := pipeline.NewPipeline("samp-pipe", pipeline.PipelineTypeRender,
+			pipeline.WithVertexShader(vs),
+			pipeline.WithFragmentShader(fs),
+		)
+
+		err := r.RegisterPipelines(p)
+		suite.NoError(err)
+
+		diffuseTex := &common.ImportedTexture{
+			Name:     "diffuse",
+			Data:     buildTestPNG(2, 2, color.NRGBA{R: 128, G: 128, B: 128, A: 255}),
+			MimeType: "image/png",
+			SamplerData: &common.SamplerStagingData{
+				AddressModeU:  wgpu.AddressModeClampToEdge,
+				AddressModeV:  wgpu.AddressModeClampToEdge,
+				AddressModeW:  wgpu.AddressModeClampToEdge,
+				MagFilter:     wgpu.FilterModeNearest,
+				MinFilter:     wgpu.FilterModeNearest,
+				MipmapFilter:  wgpu.MipmapFilterModeNearest,
+				LodMinClamp:   0,
+				LodMaxClamp:   1,
+				MaxAnisotropy: 1,
+			},
+		}
+
+		mat := material.NewMaterial(
+			material.WithName("sampler-mat"),
+			material.WithPipelineKey("samp-pipe"),
+			material.WithDiffuseTexture(diffuseTex),
+		)
+
+		err = r.RegisterMaterial(mat, "samp")
+		suite.NoError(err)
+		suite.NotNil(r.Material("sampler-mat"))
+	})
+}
+
+func (suite *rendererTest) TestCreateBuffer() {
+	suite.Run("creates a buffer with the specified usage", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		buf, err := r.CreateBuffer("test-buf", 256, wgpu.BufferUsageCopyDst|wgpu.BufferUsageMapRead)
+		suite.NoError(err)
+		suite.NotNil(buf)
+	})
+
+	suite.Run("creates a storage buffer", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		buf, err := r.CreateBuffer("storage-buf", 64, wgpu.BufferUsageStorage|wgpu.BufferUsageCopySrc)
+		suite.NoError(err)
+		suite.NotNil(buf)
+	})
+}
+
+func (suite *rendererTest) TestCopyBufferToBuffer() {
+	suite.Run("copies data between buffers within compute frame", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		srcProvider := bind_group_provider.NewBindGroupProvider("copy-src")
+		srcDesc := wgpu.BindGroupLayoutDescriptor{
+			Label: "copy-src-layout",
+			Entries: []wgpu.BindGroupLayoutEntry{
+				{
+					Binding:    0,
+					Visibility: wgpu.ShaderStageCompute,
+					Buffer: wgpu.BufferBindingLayout{
+						Type:           wgpu.BufferBindingTypeStorage,
+						MinBindingSize: 16,
+					},
+				},
+			},
+		}
+		err := r.InitBindGroup(srcProvider, srcDesc,
+			map[int]wgpu.BufferUsage{0: wgpu.BufferUsageCopySrc},
+			nil,
+		)
+		suite.NoError(err)
+
+		srcData := make([]byte, 16)
+		for i := range srcData {
+			srcData[i] = byte(i + 1)
+		}
+		r.WriteBuffers([]bind_group_provider.BufferWrite{
+			{Provider: srcProvider, Binding: 0, Offset: 0, Data: srcData},
+		})
+
+		dstBuf, err := r.CreateBuffer("copy-dst", 16, wgpu.BufferUsageCopyDst|wgpu.BufferUsageMapRead)
+		suite.NoError(err)
+
+		err = r.BeginComputeFrame()
+		suite.NoError(err)
+
+		suite.NotPanics(func() {
+			r.CopyBufferToBuffer(srcProvider.Buffer(0), dstBuf, 0, 0, 16)
+		})
+
+		r.EndComputeFrame()
+	})
+}
+
+func (suite *rendererTest) TestReadMappedBuffer() {
+	suite.Run("reads data from a mapped buffer", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		srcProvider := bind_group_provider.NewBindGroupProvider("read-src")
+		srcDesc := wgpu.BindGroupLayoutDescriptor{
+			Label: "read-src-layout",
+			Entries: []wgpu.BindGroupLayoutEntry{
+				{
+					Binding:    0,
+					Visibility: wgpu.ShaderStageCompute,
+					Buffer: wgpu.BufferBindingLayout{
+						Type:           wgpu.BufferBindingTypeStorage,
+						MinBindingSize: 16,
+					},
+				},
+			},
+		}
+		err := r.InitBindGroup(srcProvider, srcDesc,
+			map[int]wgpu.BufferUsage{0: wgpu.BufferUsageCopySrc},
+			nil,
+		)
+		suite.NoError(err)
+
+		srcData := make([]byte, 16)
+		binary.LittleEndian.PutUint32(srcData[0:], math.Float32bits(1.0))
+		binary.LittleEndian.PutUint32(srcData[4:], math.Float32bits(2.0))
+		binary.LittleEndian.PutUint32(srcData[8:], math.Float32bits(3.0))
+		binary.LittleEndian.PutUint32(srcData[12:], math.Float32bits(4.0))
+		r.WriteBuffers([]bind_group_provider.BufferWrite{
+			{Provider: srcProvider, Binding: 0, Offset: 0, Data: srcData},
+		})
+
+		dstBuf, err := r.CreateBuffer("read-dst", 16, wgpu.BufferUsageCopyDst|wgpu.BufferUsageMapRead)
+		suite.NoError(err)
+
+		err = r.BeginComputeFrame()
+		suite.NoError(err)
+		r.CopyBufferToBuffer(srcProvider.Buffer(0), dstBuf, 0, 0, 16)
+		r.EndComputeFrame()
+
+		data, err := r.ReadMappedBuffer(dstBuf, 0, 16)
+		suite.NoError(err)
+		suite.Len(data, 16)
+
+		v0 := math.Float32frombits(binary.LittleEndian.Uint32(data[0:4]))
+		v1 := math.Float32frombits(binary.LittleEndian.Uint32(data[4:8]))
+		v2 := math.Float32frombits(binary.LittleEndian.Uint32(data[8:12]))
+		v3 := math.Float32frombits(binary.LittleEndian.Uint32(data[12:16]))
+		suite.InDelta(1.0, v0, 0.001)
+		suite.InDelta(2.0, v1, 0.001)
+		suite.InDelta(3.0, v2, 0.001)
+		suite.InDelta(4.0, v3, 0.001)
+	})
+}
+
 // newTestWindow creates a small GLFW window for renderer tests.
 func newTestWindow() window.Window {
 	return window.NewWindow(
@@ -1348,4 +1717,17 @@ func buildTriangleGeometry() (vertexData []byte, indexData []byte) {
 	}
 
 	return vertexData, indexData
+}
+
+// buildTestPNG generates an in-memory PNG image of the given dimensions filled with a solid color.
+func buildTestPNG(width, height int, c color.NRGBA) []byte {
+	img := image.NewNRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			img.SetNRGBA(x, y, c)
+		}
+	}
+	var buf bytes.Buffer
+	_ = png.Encode(&buf, img)
+	return buf.Bytes()
 }
