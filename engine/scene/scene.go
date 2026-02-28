@@ -888,8 +888,8 @@ func (s *scene) initLightCullResources(cullComputeShader, litFragmentShader shad
 	cullDesc := cullComputeShader.BindGroupLayoutDescriptor(0)
 	sizeOverrides := map[int]uint64{
 		0: uint64((&light.GPULightCullUniforms{}).Size()), // LightCullUniforms
-		2: numTiles * 4,                                  // tile_light_counts: one u32 per tile
-		3: numTiles * uint64(light.MaxLightsPerTile) * 4, // tile_light_indices
+		2: numTiles * 4,                                   // tile_light_counts: one u32 per tile
+		3: numTiles * uint64(light.MaxLightsPerTile) * 4,  // tile_light_indices
 	}
 
 	if err := s.r.InitBindGroup(cullBGP, cullDesc, nil, sizeOverrides); err != nil {

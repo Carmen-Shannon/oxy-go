@@ -4,7 +4,7 @@ A 3D game engine written in pure Go, powered by WebGPU via [cogentcore/webgpu](h
 
 <p align="center">
   <a href="https://pkg.go.dev/github.com/Carmen-Shannon/oxy-go"><img src="https://pkg.go.dev/badge/github.com/Carmen-Shannon/oxy-go.svg" alt="Go Reference"></a>
-  <a href="https://github.com/Carmen-Shannon/oxy-go/actions/workflows/coverage.yml"><img src="https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Carmen-Shannon/ee61b5b222c6fcd2db9a71c9e75374c9/raw/oxy-go-coverage.json" alt="Coverage"></a>
+  <a href="https://github.com/Carmen-Shannon/oxy-go/actions/workflows/coverage.yml"><img src="https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Carmen-Shannon/ee61b5b222c6fcd2db9a71c9e75374c9/raw/oxy-go-coverage.json&cacheSeconds=300" alt="Coverage"></a>
   <a href="https://goreportcard.com/report/github.com/Carmen-Shannon/oxy-go"><img src="https://goreportcard.com/badge/github.com/Carmen-Shannon/oxy-go" alt="Go Report Card"></a>
 </p>
 
@@ -41,6 +41,7 @@ engine/
 ├── light/           Point/directional lights, shadow maps, forward+ tile culling
 ├── loader/          glTF 2.0 importer (meshes, materials, skeletons, animations)
 ├── model/           Model, Mesh, GPU vertex types, instance data
+├── physics/         GPU-accelerated rigid body physics (DEM)
 ├── profiler/        Frame timing profiler
 ├── renderer/
 │   ├── animator/    GPU compute animation backends (simple + skeletal)
@@ -189,6 +190,7 @@ The [`engine`](README_ENGINE.md) package is the **main entrypoint** of oxy-go. I
 - [Light System](README_LIGHT.md) — Light types, Forward+ tile culling, shadow mapping, GPU types, and builder options.
 - [Loader System](README_LOADER.md) — Model loading and caching, glTF/GLB support, mesh/material/skeleton/animation extraction, and shader-driven GPU resource initialization.
 - [Model System](README_MODEL.md) — Model interface, GPU vertex types, skeleton and animation data structures, import types, and WGSL assets.
+- [Physics System](README_PHYSICS.md) — GPU-accelerated rigid body simulation (DEM), particle voxelization, spatial grid collision, fixed-timestep integration, and GPU readback.
 - [Renderer System](README_RENDERER.md) — Renderer interface, pipeline cache, frame lifecycle (compute → shadow → render → present), backend types, builder options, and sub-package index.
   - [Animator](README_ANIMATOR.md) — GPU compute animation backends (simple + skeletal), per-instance transform staging, frustum culling, skeletal clip blending, and GPU type definitions.
   - [Bind Group Provider](README_BGP.md) — GPU bind group abstraction, per-entity resource storage (buffers, textures, samplers), batched buffer writes, and release lifecycle.
