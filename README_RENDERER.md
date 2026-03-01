@@ -138,19 +138,59 @@ The `Renderer` interface embeds `common.Delegate[Renderer]`, exposing `SetDelega
 | `EndFrame()`                                                                    | Ends the render pass and submits the command buffer.     |
 | `Present()`                                                                     | Presents the rendered frame to the surface.              |
 
-### Shadow Frame
+### Shadow Frame (VSM)
 
-| Method                                                                                | Description                                                     |
-| ------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `RegisterShadowPipeline(p) error`                                                     | Creates a depth-only render pipeline for shadow mapping.        |
-| `CreateShadowDepthTexture(width, height) (*TextureView, *Texture, error)`             | Creates a Depth32Float texture for shadow map rendering.        |
-| `CreateComparisonSampler() (*Sampler, error)`                                         | Creates a comparison sampler for shadow map sampling.           |
-| `BeginShadowFrame() error`                                                            | Creates a command encoder for shadow passes.                    |
-| `BeginShadowPass(depthView)`                                                          | Begins a depth-only render pass targeting the given depth view. |
-| `ShadowDrawCall(pipelineKey, meshProvider, instanceCount, bindGroups) error`          | Issues an indexed draw call into the shadow pass.               |
-| `ShadowDrawCallIndirect(pipelineKey, meshProvider, indirectBuffer, bindGroups) error` | Issues an indirect indexed draw into the shadow pass.           |
-| `EndShadowPass()`                                                                     | Ends the current shadow render pass.                            |
-| `EndShadowFrame()`                                                                    | Finishes and submits the shadow command buffer.                 |
+| Method                                                                                           | Description                                                                          |
+| ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `RegisterShadowPipeline(p) error`                                                                | Creates a depth-moments render pipeline for VSM shadow mapping.                      |
+| `RegisterVSMShadowPipeline(p) error`                                                             | Creates a compute pipeline for VSM blur or SAT passes.                               |
+| `CreateVSMTextures(w, h) (view, tex, scratchView, scratchTex, auxDepthView, auxDepthTex, error)` | Creates the RG32Float moments texture, scratch texture, and auxiliary depth texture. |
+| `CreateLinearSampler() (*Sampler, error)`                                                        | Creates a linear-filtering sampler for VSM/SSAO/SSR texture lookups.                 |
+| `CreateSATTextures(w, h) (viewA, texA, viewB, texB, error)`                                      | Creates two RGBA32Float ping-pong textures for SAT generation.                       |
+| `BeginShadowFrame() error`                                                                       | Creates a command encoder for shadow passes.                                         |
+| `BeginVSMShadowPass(depthView, colorView)`                                                       | Begins a VSM depth-moments render pass targeting the given depth and color views.    |
+| `ShadowDrawCall(pipelineKey, meshProvider, instanceCount, bindGroups) error`                     | Issues an indexed draw call into the shadow pass.                                    |
+| `ShadowDrawCallIndirect(pipelineKey, meshProvider, indirectBuffer, bindGroups) error`            | Issues an indirect indexed draw into the shadow pass.                                |
+| `EndShadowPass()`                                                                                | Ends the current shadow render pass.                                                 |
+| `EndShadowFrame()`                                                                               | Finishes and submits the shadow command buffer.                                      |
+
+### G-Buffer Frame
+
+| Method                                                                                                          | Description                                                                                                                |
+| --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `CreateGBufferTextures(w, h) (posView, posTex, normView, normTex, albView, albTex, depthView, depthTex, error)` | Creates the RGBA16Float position/normal textures, RGBA8Unorm albedo texture, and Depth24Plus texture for the MRT pre-pass. |
+| `RegisterGBufferPipeline(p) error`                                                                              | Creates a render pipeline for the G-Buffer MRT pre-pass.                                                                   |
+| `BeginGBufferFrame() error`                                                                                     | Creates a command encoder for the G-Buffer pass.                                                                           |
+| `BeginGBufferPass(posView, normView, albView, depthView)`                                                       | Begins a multi-target render pass for the G-Buffer.                                                                        |
+| `EndGBufferPass()`                                                                                              | Ends the G-Buffer render pass.                                                                                             |
+| `EndGBufferFrame()`                                                                                             | Finishes and submits the G-Buffer command buffer.                                                                          |
+
+### SSAO / Composition / SSR
+
+| Method                                                                                                               | Description                                                             |
+| -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `CreateSSAOTextures(w, h) (rawView, rawTex, blurView, blurTex, scratchView, scratchTex, noiseView, noiseTex, error)` | Creates all SSAO textures (raw, blurred, scratch, 4×4 noise).           |
+| `CreateCompositionTextures(w, h, sampleCount) (hdrView, hdrTex, msaaView, msaaTex, depthView, depthTex, error)`      | Creates HDR, MSAA resolve, and depth textures for the composition pass. |
+| `RegisterCompositionPipeline(p) error`                                                                               | Creates the full-screen composition render pipeline.                    |
+| `CreateSSRTextures(w, h) (ssrView, ssrTex, error)`                                                                   | Creates the half-resolution RGBA16Float SSR result texture.             |
+| `CreateHiZTextures(w, h) (fullView, tex, mipCount, mipReadViews, storageViews, error)`                               | Creates the R32Float Hi-Z depth pyramid with per-mip views.             |
+| `BeginHDRFrame(colorView, resolveView, depthView) error`                                                             | Begins a render pass targeting the offscreen HDR texture.               |
+
+### Probe Baking
+
+| Method                                                                           | Description                                                           |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `CreateProbeBakeTextures(res) (colorView, colorTex, depthView, depthTex, error)` | Creates per-face cubemap bake render targets at the given resolution. |
+| `RegisterProbeBakePipeline(p) error`                                             | Creates the render pipeline used for probe cubemap face baking.       |
+| `BeginProbeBakeFrame() error`                                                    | Creates a command encoder for probe bake passes.                      |
+| `BeginProbeBakePass(colorView, depthView)`                                       | Begins a render pass for a single cubemap face.                       |
+
+### Configuration
+
+| Method                          | Description                                                              |
+| ------------------------------- | ------------------------------------------------------------------------ |
+| `SetRenderTargetFormat(format)` | Overrides the color attachment format (e.g. RGBA16Float for HDR passes). |
+| `SampleCount() int`             | Returns the current MSAA sample count.                                   |
 
 ### Display
 
@@ -166,20 +206,33 @@ The `Renderer` interface embeds `common.Delegate[Renderer]`, exposing `SetDelega
 A typical frame follows this order:
 
 ```
-1. WriteBuffers(...)               — upload per-frame uniform data
-2. BeginComputeFrame()             — compute passes (e.g., light culling)
+1. WriteBuffers(...)                 — upload per-frame uniform data
+2. BeginComputeFrame()               — compute passes (e.g., light culling, SSAO, SSR, Hi-Z)
    DispatchCompute(...)
    EndComputeFrame()
-3. BeginShadowFrame()              — shadow map passes
-   BeginShadowPass(depthView)
+3. BeginShadowFrame()                — VSM depth-moments pass
+   BeginVSMShadowPass(depthView, colorView)
    ShadowDrawCall(...) / ShadowDrawCallIndirect(...)
    EndShadowPass()
    EndShadowFrame()
-4. BeginFrame()                    — main render pass (MSAA per config)
+   (compute) VSM blur or SAT generation passes
+4. BeginGBufferFrame()               — G-Buffer MRT pre-pass
+   BeginGBufferPass(posView, normView, albView, depthView)
+   DrawCall(...)
+   EndGBufferPass()
+   EndGBufferFrame()
+5. (compute) SSAO + bilateral blur   — dispatched via DispatchCompute
+6. BeginFrame() / BeginHDRFrame()    — main lit render pass (to swapchain or HDR texture)
    DrawCall(...) / DrawCallIndirect(...)
    EndFrame()
-5. Present()                       — flip to display
+7. (compute) SSR Hi-Z + ray march    — dispatched via DispatchCompute
+8. Composition pass (BeginFrame)      — full-screen HDR → LDR tone mapping + SSR blend
+   DrawCall(...)
+   EndFrame()
+9. Present()                          — flip to display
 ```
+
+Steps 3–8 are only executed when lighting/GI sub-handlers are active. For unlit scenes, only steps 1, 2, 6, and 9 run.
 
 ---
 

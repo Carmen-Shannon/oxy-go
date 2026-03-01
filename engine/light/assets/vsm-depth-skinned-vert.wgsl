@@ -1,12 +1,12 @@
-// Shadow depth vertex shader (skinned models)
+// VSM shadow depth vertex shader (skinned models)
 //
-// Minimal shader that applies per-instance bone skinning and transforms
-// vertices to light clip space for shadow map generation. Outputs only
-// @builtin(position) — no color, normal, or UV data is needed since the
-// shadow pass only writes depth.
+// Applies per-instance bone skinning, transforms vertices to light clip space,
+// and computes a linear light-space depth for the VSM fragment shader. The
+// linear depth is computed from the view-only matrix (no projection) and
+// normalized to [0, 1] using near/far.
 //
 // Bind group layout:
-//   @group(0) @binding(0) shadow_uniform — light view-projection matrix (uniform)
+//   @group(0) @binding(0) shadow_uniform — light VP, view matrix, near/far (uniform)
 //   @group(1) @binding(0) instance_buffer — per-instance model + bone matrices (storage)
 
 // Maximum number of bones supported per skeleton. Must match the compute
@@ -18,6 +18,7 @@ const MAX_BONES: u32 = 64u;
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
+    @location(0) light_depth: f32,
 };
 
 // ── Per-instance data layout in flat vec4 storage ──────────────────
@@ -66,7 +67,13 @@ fn vs_main(
 
     let world_pos = model_matrix * skinned_pos;
 
+    // Compute linear depth from the view-only matrix, normalized to [0, 1].
+    let view_pos = shadow_uniform.light_view * world_pos;
+    let linear_depth = (-view_pos.z - shadow_uniform.shadow_near)
+                     / (shadow_uniform.shadow_far - shadow_uniform.shadow_near);
+
     var out: VertexOutput;
     out.clip_position = shadow_uniform.light_vp * world_pos;
+    out.light_depth = linear_depth;
     return out;
 }

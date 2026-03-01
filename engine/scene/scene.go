@@ -3,6 +3,8 @@ package scene
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
+	"math/rand"
 	"runtime"
 	"strings"
 	"sync"
@@ -295,10 +297,60 @@ type Scene interface {
 	// light exists.
 	PrepareShadows()
 
+	// PrepareShadowBlur runs the VSM post-processing step: either separable Gaussian
+	// blur passes (constant-width soft shadows) or SAT generation (PCSS variable-width).
+	// Must be called after PrepareShadows and after the shadow render pass has been
+	// submitted to the GPU (i.e. after EndGeometryFrame when using merged geometry passes).
+	PrepareShadowBlur()
+
 	// PrepareLightCulling updates the light cull uniform buffer and dispatches the
 	// light culling compute shader. Must be called after PrepareCompute (so lights
 	// are uploaded) and before DrawCalls.
 	PrepareLightCulling()
+
+	// PrepareGBuffer renders the G-Buffer MRT pre-pass for all drawables.
+	// Writes world position, normals, and albedo to off-screen textures
+	// consumed by screen-space effects (SSAO, SSR). Must be called after
+	// PrepareCompute and before PrepareSSAO each frame.
+	// No-ops if the G-Buffer subsystem has not been initialized.
+	PrepareGBuffer()
+
+	// PrepareSSAO dispatches the SSAO hemisphere sampling compute shader
+	// and the bilateral blur passes. Must be called after PrepareGBuffer
+	// (so G-Buffer textures are populated) and before DrawCalls.
+	// No-ops if the SSAO subsystem has not been initialized.
+	PrepareSSAO()
+
+	// PrepareProbes performs incremental probe baking for the irradiance probe
+	// grid. For each dirty probe, renders 6 cubemap faces into the bake
+	// texture, then dispatches the SH projection compute shader to accumulate
+	// L2 spherical harmonic coefficients into the probe storage buffer.
+	// Must be called after PrepareCompute and before DrawCalls each frame.
+	// No-ops if the probe grid subsystem has not been initialized or there
+	// are no dirty probes.
+	PrepareProbes()
+
+	// PrepareSSR dispatches the SSR compute shader to perform screen-space ray
+	// marching against the G-Buffer. Must be called after DrawCalls (so the HDR
+	// texture is populated) and before PrepareComposition. No-ops if the SSR
+	// subsystem has not been initialized.
+	PrepareSSR()
+
+	// PrepareComposition runs the fullscreen composition pass: acquires the
+	// swapchain, samples the HDR lit texture and optional SSR texture, applies
+	// ACES tone mapping and gamma correction, and writes the final LDR result
+	// to the swapchain. Must be called after DrawCalls (and PrepareSSR if active)
+	// and before Present. No-ops if the composition subsystem has not been
+	// initialized.
+	PrepareComposition()
+
+	// BeginHDRFrame starts the HDR render pass using this scene's composition
+	// handler textures. Returns an error if the composition handler is
+	// not initialized or the render pass cannot be started.
+	//
+	// Returns:
+	//   - error: an error if the HDR frame could not be started
+	BeginHDRFrame() error
 }
 
 // Ensure scene implements Scene interface.
@@ -463,6 +515,18 @@ func (s *scene) Resize(width, height int) {
 	if s.lightHandler.Enabled() {
 		s.lightHandler.Resize(width, height)
 	}
+	if s.lightHandler.GBufferHandler().Enabled() {
+		s.lightHandler.GBufferHandler().Resize(width, height)
+	}
+	if s.lightHandler.SSAOHandler().Enabled() {
+		s.lightHandler.SSAOHandler().Resize(width, height)
+	}
+	if s.lightHandler.CompositionHandler().Enabled() {
+		s.lightHandler.CompositionHandler().Resize(width, height)
+	}
+	if s.lightHandler.SSRHandler().Enabled() {
+		s.lightHandler.SSRHandler().Resize(width, height)
+	}
 }
 
 func (s *scene) RemoveLight(l light.Light) {
@@ -503,6 +567,1036 @@ func (s *scene) SetAmbientColor(color [3]float32) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lightHandler.SetAmbientColor(color)
+}
+
+// float32ToFloat16Bits converts a float32 value to an IEEE 754 half-precision
+// (float16) bit pattern. Only used for SSAO noise texture generation where the
+// values are in [-1, 1] and full precision is not required.
+func float32ToFloat16Bits(f float32) uint16 {
+	b := math.Float32bits(f)
+	sign := uint16((b >> 16) & 0x8000)
+	exp := int((b>>23)&0xFF) - 127 + 15
+	frac := b & 0x7FFFFF
+
+	if exp <= 0 {
+		return sign
+	}
+	if exp >= 31 {
+		return sign | 0x7C00
+	}
+	return sign | uint16(exp)<<10 | uint16(frac>>13)
+}
+
+// generateSSAONoise generates the 4×4 RGBA16Float noise texture data for SSAO
+// kernel rotation. Each texel is a random tangent-space rotation vector (X, Y, 0, 0)
+// encoded as four float16 values (8 bytes per texel, 128 bytes total).
+func generateSSAONoise() []byte {
+	const texels = 4 * 4
+	const bytesPerTexel = 8 // 4 × f16
+	data := make([]byte, texels*bytesPerTexel)
+	off := 0
+	for i := 0; i < texels; i++ {
+		x := rand.Float32()*2.0 - 1.0
+		y := rand.Float32()*2.0 - 1.0
+		// Normalize XY to unit length for a pure rotation.
+		length := float32(math.Sqrt(float64(x*x + y*y)))
+		if length > 0.0001 {
+			x /= length
+			y /= length
+		}
+		binary.LittleEndian.PutUint16(data[off:off+2], float32ToFloat16Bits(x))
+		binary.LittleEndian.PutUint16(data[off+2:off+4], float32ToFloat16Bits(y))
+		binary.LittleEndian.PutUint16(data[off+4:off+6], float32ToFloat16Bits(0))
+		binary.LittleEndian.PutUint16(data[off+6:off+8], float32ToFloat16Bits(0))
+		off += bytesPerTexel
+	}
+	return data
+}
+
+// generateSSAOKernel generates a hemisphere sample kernel of the given size
+// (clamped to [1, 32]) as a flat byte buffer of array<vec4<f32>, 32> (512 bytes).
+// Samples are distributed in a unit hemisphere with an accelerating distribution
+// that biases samples closer to the origin.
+func generateSSAOKernel(sampleCount int) []byte {
+	if sampleCount < 1 {
+		sampleCount = 1
+	}
+	if sampleCount > 32 {
+		sampleCount = 32
+	}
+
+	buf := make([]byte, 32*16) // 32 × vec4<f32>
+	off := 0
+	for i := 0; i < 32; i++ {
+		var x, y, z float32
+		if i < sampleCount {
+			// Random point in a hemisphere (z >= 0).
+			x = rand.Float32()*2.0 - 1.0
+			y = rand.Float32()*2.0 - 1.0
+			z = rand.Float32() // [0, 1] — hemisphere
+			length := float32(math.Sqrt(float64(x*x + y*y + z*z)))
+			if length > 0.0001 {
+				x /= length
+				y /= length
+				z /= length
+			}
+			// Accelerating distribution: samples near the center of the hemisphere
+			// are denser, tapering off toward the edges.
+			scale := float32(i) / float32(sampleCount)
+			scale = 0.1 + scale*scale*0.9
+			x *= scale
+			y *= scale
+			z *= scale
+		}
+		binary.LittleEndian.PutUint32(buf[off:off+4], math.Float32bits(x))
+		binary.LittleEndian.PutUint32(buf[off+4:off+8], math.Float32bits(y))
+		binary.LittleEndian.PutUint32(buf[off+8:off+12], math.Float32bits(z))
+		binary.LittleEndian.PutUint32(buf[off+12:off+16], 0) // w = 0
+		off += 16
+	}
+	return buf
+}
+
+// initGBuffer initializes the G-Buffer MRT textures and registers the static
+// and skinned G-Buffer render pipelines. The G-Buffer pre-pass writes per-pixel
+// position, normal, and albedo data into screen-sized textures consumed by
+// downstream screen-space effects (SSAO, SSR).
+func (s *scene) initGBuffer() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.r == nil || s.lightHandler.GBufferHandler() == nil {
+		return
+	}
+
+	w := s.screenWidth
+	h := s.screenHeight
+	if w <= 0 || h <= 0 {
+		return
+	}
+
+	// Create G-Buffer MRT textures (normal + albedo + depth; position is
+	// reconstructed from depth at read time by compute shaders).
+	normView, normTex, albView, albTex, depthView, depthTex, err := s.r.CreateGBufferTextures(w, h)
+	if err != nil {
+		panic(fmt.Sprintf("scene: failed to create G-Buffer textures: %v", err))
+	}
+	s.lightHandler.GBufferHandler().SetNormalTexture(normTex)
+	s.lightHandler.GBufferHandler().SetNormalTextureView(normView)
+	s.lightHandler.GBufferHandler().SetAlbedoTexture(albTex)
+	s.lightHandler.GBufferHandler().SetAlbedoTextureView(albView)
+	s.lightHandler.GBufferHandler().SetDepthTexture(depthTex)
+	s.lightHandler.GBufferHandler().SetDepthTextureView(depthView)
+
+	// Load shaders for the G-Buffer pass.
+	gbufferFrag := shader.NewShader("_gbuffer_frag", shader.ShaderTypeFragment, "engine/light/assets/gbuffer-frag.wgsl")
+	staticVert := shader.NewShader("_gbuffer_static_vert", shader.ShaderTypeVertex, "engine/light/assets/lit-vert.wgsl")
+	skinnedVert := shader.NewShader("_gbuffer_skinned_vert", shader.ShaderTypeVertex, "engine/light/assets/lit-skinned-vert.wgsl")
+
+	// Register static G-Buffer pipeline.
+	staticKey := "gbuffer_static"
+	staticPipe := pipeline.NewPipeline(staticKey, pipeline.PipelineTypeRender,
+		pipeline.WithVertexShader(staticVert),
+		pipeline.WithFragmentShader(gbufferFrag),
+	)
+	if err := s.r.RegisterGBufferPipeline(staticPipe); err != nil {
+		panic(fmt.Sprintf("scene: failed to register static G-Buffer pipeline: %v", err))
+	}
+	s.lightHandler.GBufferHandler().SetPipelineKey("static", staticKey)
+
+	// Register skinned G-Buffer pipeline.
+	skinnedKey := "gbuffer_skinned"
+	skinnedPipe := pipeline.NewPipeline(skinnedKey, pipeline.PipelineTypeRender,
+		pipeline.WithVertexShader(skinnedVert),
+		pipeline.WithFragmentShader(gbufferFrag),
+	)
+	if err := s.r.RegisterGBufferPipeline(skinnedPipe); err != nil {
+		panic(fmt.Sprintf("scene: failed to register skinned G-Buffer pipeline: %v", err))
+	}
+	s.lightHandler.GBufferHandler().SetPipelineKey("skinned", skinnedKey)
+
+	s.lightHandler.GBufferHandler().Resize(w, h)
+	s.lightHandler.GBufferHandler().SetEnabled(true)
+}
+
+// initSSAO initializes the SSAO subsystem: creates screen-sized occlusion textures,
+// the 4×4 noise texture, registers the SSAO compute and bilateral blur pipelines,
+// and pre-creates all bind group providers with correctly-sized GPU buffers. The
+// G-Buffer must be initialized before calling this method.
+func (s *scene) initSSAO() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.r == nil || s.lightHandler.SSAOHandler() == nil || s.lightHandler.GBufferHandler() == nil {
+		return
+	}
+	if !s.lightHandler.GBufferHandler().Enabled() {
+		return
+	}
+
+	w := s.screenWidth
+	h := s.screenHeight
+	if w <= 0 || h <= 0 {
+		return
+	}
+
+	// When half-resolution is enabled, allocate SSAO textures at half the
+	// screen dimensions in each axis (quarter pixel count).
+	ssaoW := w
+	ssaoH := h
+	if s.lightHandler.SSAOHandler().HalfResolution() {
+		ssaoW = max(w/2, 1)
+		ssaoH = max(h/2, 1)
+	}
+
+	// 1. Create SSAO textures (raw, blurred, scratch at SSAO res; noise at 4×4).
+	rawView, rawTex, blurView, blurTex, scratchView, scratchTex, noiseView, noiseTex, err := s.r.CreateSSAOTextures(ssaoW, ssaoH)
+	if err != nil {
+		panic(fmt.Sprintf("scene: failed to create SSAO textures: %v", err))
+	}
+	s.lightHandler.SSAOHandler().SetRawTexture(rawTex)
+	s.lightHandler.SSAOHandler().SetRawTextureView(rawView)
+	s.lightHandler.SSAOHandler().SetBlurredTexture(blurTex)
+	s.lightHandler.SSAOHandler().SetBlurredTextureView(blurView)
+	s.lightHandler.SSAOHandler().SetScratchTexture(scratchTex)
+	s.lightHandler.SSAOHandler().SetScratchTextureView(scratchView)
+	s.lightHandler.SSAOHandler().SetNoiseTexture(noiseTex)
+	s.lightHandler.SSAOHandler().SetNoiseTextureView(noiseView)
+
+	// 2. Generate and upload 4×4 noise texture data (RGBA16Float).
+	noiseData := generateSSAONoise()
+	s.r.WriteTexture(noiseTex, noiseData, 4, 4, 4*8) // 4 pixels wide, 8 bytes/pixel (4×f16)
+
+	// 3. Create or reuse linear sampler for the blurred SSAO texture in the lit shader.
+	linearSamp, err := s.r.CreateLinearSampler()
+	if err != nil {
+		panic(fmt.Sprintf("scene: failed to create SSAO linear sampler: %v", err))
+	}
+	s.lightHandler.SSAOHandler().SetLinearSampler(linearSamp)
+
+	// 4. Register SSAO compute pipeline.
+	ssaoCompShader := shader.NewShader("_ssao_compute", shader.ShaderTypeCompute, "engine/light/assets/ssao-compute.wgsl")
+	ssaoCompKey := "ssao_compute"
+	ssaoCompPipe := pipeline.NewPipeline(ssaoCompKey, pipeline.PipelineTypeCompute,
+		pipeline.WithComputeShader(ssaoCompShader),
+	)
+	if err := s.r.RegisterPipelines(ssaoCompPipe); err != nil {
+		panic(fmt.Sprintf("scene: failed to register SSAO compute pipeline: %v", err))
+	}
+	s.lightHandler.SSAOHandler().SetPipelineKey("ssao_compute", ssaoCompKey)
+
+	// 5. Register bilateral blur compute pipeline.
+	blurCompShader := shader.NewShader("_ssao_blur_compute", shader.ShaderTypeCompute, "engine/light/assets/ssao-blur-compute.wgsl")
+	blurCompKey := "ssao_blur_compute"
+	blurCompPipe := pipeline.NewPipeline(blurCompKey, pipeline.PipelineTypeCompute,
+		pipeline.WithComputeShader(blurCompShader),
+	)
+	if err := s.r.RegisterPipelines(blurCompPipe); err != nil {
+		panic(fmt.Sprintf("scene: failed to register SSAO blur compute pipeline: %v", err))
+	}
+	s.lightHandler.SSAOHandler().SetPipelineKey("ssao_blur", blurCompKey)
+
+	// 6. Create SSAO compute bind group provider.
+	ssaoDesc := ssaoCompShader.BindGroupLayoutDescriptor(0)
+	ssaoSizeOverrides := map[int]uint64{
+		4: uint64((&light.GPUSSAOParams{}).Size()), // ssao_params uniform
+		5: 32 * 16,                                 // ssao_kernel: array<vec4<f32>, 32> = 512 bytes
+	}
+	ssaoBGP := s.lightHandler.SSAOHandler().Bgp("ssao_compute")
+	ssaoBGP.SetTextureView(0, s.lightHandler.GBufferHandler().DepthTextureView())
+	ssaoBGP.SetTextureView(1, s.lightHandler.GBufferHandler().NormalTextureView())
+	ssaoBGP.SetTextureView(2, noiseView)
+	ssaoBGP.SetTextureView(3, rawView)
+	if err := s.r.InitBindGroup(ssaoBGP, ssaoDesc, nil, ssaoSizeOverrides); err != nil {
+		panic(fmt.Sprintf("scene: failed to init SSAO compute bind group: %v", err))
+	}
+
+	// 7. Create blur bind group providers (bilateral blur, depth-aware).
+	blurDesc := blurCompShader.BindGroupLayoutDescriptor(0)
+	blurSizeOverrides := map[int]uint64{
+		2: uint64((&light.GPUBlurParams{}).Size()),
+	}
+
+	// Horizontal: raw → scratch, depth from G-Buffer hardware depth texture.
+	blurHBGP := s.lightHandler.SSAOHandler().Bgp("ssao_blur_h")
+	blurHBGP.SetTextureView(0, rawView)
+	blurHBGP.SetTextureView(1, scratchView)
+	blurHBGP.SetTextureView(3, s.lightHandler.GBufferHandler().DepthTextureView())
+	if err := s.r.InitBindGroup(blurHBGP, blurDesc, nil, blurSizeOverrides); err != nil {
+		panic(fmt.Sprintf("scene: failed to init SSAO blur horizontal bind group: %v", err))
+	}
+
+	// Vertical: scratch → blurred, depth from G-Buffer hardware depth texture.
+	blurVBGP := s.lightHandler.SSAOHandler().Bgp("ssao_blur_v")
+	blurVBGP.SetTextureView(0, scratchView)
+	blurVBGP.SetTextureView(1, blurView)
+	blurVBGP.SetTextureView(3, s.lightHandler.GBufferHandler().DepthTextureView())
+	if err := s.r.InitBindGroup(blurVBGP, blurDesc, nil, blurSizeOverrides); err != nil {
+		panic(fmt.Sprintf("scene: failed to init SSAO blur vertical bind group: %v", err))
+	}
+
+	// 8. Generate hemisphere sample kernel and write to the SSAO compute BGP buffer.
+	kernelData := generateSSAOKernel(s.lightHandler.SSAOHandler().SampleCount())
+	s.r.WriteBuffers([]bind_group_provider.BufferWrite{
+		{Provider: ssaoBGP, Binding: 5, Offset: 0, Data: kernelData},
+	})
+
+	s.lightHandler.SSAOHandler().Resize(ssaoW, ssaoH)
+	s.lightHandler.SSAOHandler().SetEnabled(true)
+}
+
+// initSSAOLitBindGroup creates the SSAO bind group provider used by the lit
+// fragment shader at @group(6). When the SSAO subsystem is enabled, the real
+// blurred occlusion texture and linear sampler are bound. When SSAO is disabled
+// or absent, a 1×1 white fallback texture is created so the shader reads ao=1.0
+// (no darkening), keeping the bind group layout valid without any conditional
+// branching in the shader.
+func (s *scene) initSSAOLitBindGroup(litFragmentShader shader.Shader) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.r == nil || litFragmentShader == nil {
+		return
+	}
+
+	// Resolve the SSAO bind group index from the lit fragment shader's annotations.
+	ssaoGroup := -1
+	for _, decl := range litFragmentShader.Declarations() {
+		if decl.Type == shader.AnnotationTypeProvider && decl.Group != nil && decl.Args[0] == shader.AnnotationArgSSAO {
+			ssaoGroup = *decl.Group
+			break
+		}
+	}
+	if ssaoGroup < 0 {
+		return
+	}
+
+	bgp := s.lightHandler.Bgp("ssao_lit")
+	desc := litFragmentShader.BindGroupLayoutDescriptor(ssaoGroup)
+
+	// Determine whether SSAO is enabled and the blurred texture is available.
+	ssaoReady := s.lightHandler.SSAOHandler().Enabled() &&
+		s.lightHandler.SSAOHandler().BlurredTextureView() != nil && s.lightHandler.SSAOHandler().LinearSampler() != nil
+
+	if ssaoReady {
+		// Bind the real blurred SSAO texture and linear sampler.
+		for _, entry := range desc.Entries {
+			binding := int(entry.Binding)
+			if entry.Texture.SampleType != wgpu.TextureSampleTypeUndefined {
+				bgp.SetTextureView(binding, s.lightHandler.SSAOHandler().BlurredTextureView())
+			}
+			if entry.Sampler.Type != wgpu.SamplerBindingTypeUndefined {
+				bgp.SetSampler(binding, s.lightHandler.SSAOHandler().LinearSampler())
+			}
+		}
+	} else {
+		// Create a 1×1 white fallback texture (ao=1.0, no darkening).
+		for _, entry := range desc.Entries {
+			binding := int(entry.Binding)
+			if entry.Texture.SampleType != wgpu.TextureSampleTypeUndefined {
+				fallback := common.TextureStagingData{
+					Pixels: []byte{255, 255, 255, 255},
+					Width:  1,
+					Height: 1,
+					Linear: true,
+				}
+				if err := s.r.InitTextureView(bgp, binding, fallback); err != nil {
+					panic(fmt.Sprintf("scene: failed to init SSAO fallback texture: %v", err))
+				}
+			}
+			if entry.Sampler.Type != wgpu.SamplerBindingTypeUndefined {
+				fallbackSampler := common.SamplerStagingData{
+					AddressModeU:  wgpu.AddressModeClampToEdge,
+					AddressModeV:  wgpu.AddressModeClampToEdge,
+					AddressModeW:  wgpu.AddressModeClampToEdge,
+					MagFilter:     wgpu.FilterModeLinear,
+					MinFilter:     wgpu.FilterModeLinear,
+					MipmapFilter:  wgpu.MipmapFilterModeLinear,
+					LodMinClamp:   0,
+					LodMaxClamp:   1,
+					MaxAnisotropy: 1,
+				}
+				if err := s.r.InitSampler(bgp, binding, fallbackSampler); err != nil {
+					panic(fmt.Sprintf("scene: failed to init SSAO fallback sampler: %v", err))
+				}
+			}
+		}
+	}
+
+	if err := s.r.InitBindGroup(bgp, desc, nil, nil); err != nil {
+		panic(fmt.Sprintf("scene: failed to init SSAO lit bind group: %v", err))
+	}
+}
+
+// initProbeGrid initializes the irradiance probe grid GPU resources. This
+// creates bake textures, probe/grid-params buffers, registers the probe bake
+// render pipelines (static + skinned) and the SH projection compute pipeline,
+// and initializes all associated bind group providers. Must be called after
+// G-Buffer and SSAO initialization.
+func (s *scene) initProbeGrid() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	pg := s.lightHandler.ProbeGrid()
+	if s.r == nil || pg == nil {
+		return
+	}
+
+	resolution := pg.BakeResolution()
+	totalProbes := pg.TotalProbes()
+	if totalProbes <= 0 || resolution <= 0 {
+		return
+	}
+
+	// 1. Create bake render-target textures (RGBA8Unorm color + Depth24Plus).
+	colorView, colorTex, depthView, depthTex, err := s.r.CreateProbeBakeTextures(resolution)
+	if err != nil {
+		panic(fmt.Sprintf("scene: failed to create probe bake textures: %v", err))
+	}
+	pg.SetBakeColorTexture(colorTex)
+	pg.SetBakeColorTextureView(colorView)
+	pg.SetBakeDepthTexture(depthTex)
+	pg.SetBakeDepthTextureView(depthView)
+
+	// 2. Create probe storage buffer (storage r/w for SH projection, read for lit shader).
+	probeSize := (&light.GPUIrradianceProbe{}).Size()
+	probeBufSize := uint64(totalProbes * probeSize)
+	probeBuf, err := s.r.CreateBuffer("Probe Storage", probeBufSize, wgpu.BufferUsageStorage|wgpu.BufferUsageCopyDst)
+	if err != nil {
+		panic(fmt.Sprintf("scene: failed to create probe storage buffer: %v", err))
+	}
+	pg.SetProbeBuffer(probeBuf)
+
+	// 3. Create grid params uniform buffer.
+	gridParamsSize := uint64((&light.GPUProbeGridParams{}).Size())
+	gridParamsBuf, err := s.r.CreateBuffer("Probe Grid Params", gridParamsSize, wgpu.BufferUsageUniform|wgpu.BufferUsageCopyDst)
+	if err != nil {
+		panic(fmt.Sprintf("scene: failed to create probe grid params buffer: %v", err))
+	}
+	pg.SetGridParamsBuffer(gridParamsBuf)
+
+	// 4. Load probe bake shaders.
+	staticBakeVert := shader.NewShader("_probe_bake_static_vert", shader.ShaderTypeVertex, "engine/light/assets/probe-bake-vert.wgsl")
+	skinnedBakeVert := shader.NewShader("_probe_bake_skinned_vert", shader.ShaderTypeVertex, "engine/light/assets/probe-bake-skinned-vert.wgsl")
+	bakeFrag := shader.NewShader("_probe_bake_frag", shader.ShaderTypeFragment, "engine/light/assets/probe-bake-frag.wgsl")
+
+	// 5. Register static bake pipeline.
+	staticBakeKey := "probe_bake_static"
+	staticBakePipe := pipeline.NewPipeline(staticBakeKey, pipeline.PipelineTypeRender,
+		pipeline.WithVertexShader(staticBakeVert),
+		pipeline.WithFragmentShader(bakeFrag),
+	)
+	if err := s.r.RegisterProbeBakePipeline(staticBakePipe); err != nil {
+		panic(fmt.Sprintf("scene: failed to register static probe bake pipeline: %v", err))
+	}
+	pg.SetPipelineKey("static", staticBakeKey)
+
+	// 6. Register skinned bake pipeline.
+	skinnedBakeKey := "probe_bake_skinned"
+	skinnedBakePipe := pipeline.NewPipeline(skinnedBakeKey, pipeline.PipelineTypeRender,
+		pipeline.WithVertexShader(skinnedBakeVert),
+		pipeline.WithFragmentShader(bakeFrag),
+	)
+	if err := s.r.RegisterProbeBakePipeline(skinnedBakePipe); err != nil {
+		panic(fmt.Sprintf("scene: failed to register skinned probe bake pipeline: %v", err))
+	}
+	pg.SetPipelineKey("skinned", skinnedBakeKey)
+
+	// 7. Initialize the bake camera BGP (group 0 from the bake vertex shader).
+	bakeCameraBGP := pg.Bgp("probe_bake_camera")
+	bakeCameraDesc := staticBakeVert.BindGroupLayoutDescriptor(0)
+	bakeCameraSizeOverrides := map[int]uint64{
+		0: uint64((&light.GPUProbeBakeCamera{}).Size()),
+	}
+	if err := s.r.InitBindGroup(bakeCameraBGP, bakeCameraDesc, nil, bakeCameraSizeOverrides); err != nil {
+		panic(fmt.Sprintf("scene: failed to init probe bake camera bind group: %v", err))
+	}
+
+	// 8. Register SH projection compute pipeline.
+	shProjectShader := shader.NewShader("_probe_sh_project", shader.ShaderTypeCompute, "engine/light/assets/probe-sh-project.wgsl")
+	shProjectKey := "probe_sh_project"
+	shProjectPipe := pipeline.NewPipeline(shProjectKey, pipeline.PipelineTypeCompute,
+		pipeline.WithComputeShader(shProjectShader),
+	)
+	if err := s.r.RegisterPipelines(shProjectPipe); err != nil {
+		panic(fmt.Sprintf("scene: failed to register SH projection compute pipeline: %v", err))
+	}
+	pg.SetPipelineKey("sh_project", shProjectKey)
+
+	// 9. Initialize SH projection compute BGP. Pre-set the bake texture view
+	// (binding 0) and probe storage buffer (binding 1) so InitBindGroup reuses
+	// the existing resources instead of creating new ones.
+	shProjectBGP := pg.Bgp("probe_sh_project")
+	shProjectDesc := shProjectShader.BindGroupLayoutDescriptor(0)
+	shProjectBGP.SetTextureView(0, colorView)
+	shProjectBGP.SetBuffer(1, probeBuf)
+	shProjectSizeOverrides := map[int]uint64{
+		2: uint64((&light.GPUSHProjectParams{}).Size()),
+	}
+	if err := s.r.InitBindGroup(shProjectBGP, shProjectDesc, nil, shProjectSizeOverrides); err != nil {
+		panic(fmt.Sprintf("scene: failed to init SH projection bind group: %v", err))
+	}
+
+	// 10. Upload initial probe data and grid parameters.
+	gridParams := pg.BuildGPUGridParams()
+	s.r.WriteBuffers([]bind_group_provider.BufferWrite{
+		{Provider: shProjectBGP, Binding: 1, Offset: 0, Data: light.MarshalProbeBuffer(pg.Probes())},
+	})
+	s.r.WriteBuffers([]bind_group_provider.BufferWrite{
+		{Provider: pg.Bgp("probe_bake_camera"), Binding: 0, Offset: 0, Data: (&light.GPUProbeBakeCamera{}).Marshal()},
+	})
+
+	// Write grid params to the standalone uniform buffer (used by the lit shader
+	// probe_lit BGP later — the buffer is shared via pre-set on that BGP).
+	s.r.WriteRawBuffer(gridParamsBuf, 0, gridParams.Marshal())
+
+	pg.SetEnabled(true)
+}
+
+// initProbesLitBindGroup creates the irradiance probe bind group provider used by
+// the lit fragment shader at @group(7). When the probe grid subsystem is enabled,
+// the real probe storage buffer and grid params uniform are bound. When probes are
+// disabled or absent, minimal fallback buffers are created with total_probes = 0
+// so the shader reads no indirect illumination, keeping the bind group layout valid.
+func (s *scene) initProbesLitBindGroup(litFragmentShader shader.Shader) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.r == nil || litFragmentShader == nil {
+		return
+	}
+
+	// Resolve the probes bind group index from the lit fragment shader's annotations.
+	probesGroup := -1
+	for _, decl := range litFragmentShader.Declarations() {
+		if decl.Type == shader.AnnotationTypeBindingGroup && decl.Group != nil &&
+			(decl.Args[2] == shader.AnnotationArgIrradianceProbe || decl.Args[2] == shader.AnnotationArgProbeGridParams) {
+			probesGroup = *decl.Group
+			break
+		}
+	}
+	if probesGroup < 0 {
+		return
+	}
+
+	bgp := s.lightHandler.Bgp("probe_lit")
+	desc := litFragmentShader.BindGroupLayoutDescriptor(probesGroup)
+
+	probesReady := s.lightHandler.ProbeGrid() != nil && s.lightHandler.ProbeGrid().Enabled() &&
+		s.lightHandler.ProbeGrid().ProbeBuffer() != nil && s.lightHandler.ProbeGrid().GridParamsBuffer() != nil
+
+	if probesReady {
+		// Bind the real probe storage buffer and grid params uniform from the probe grid handler.
+		for _, entry := range desc.Entries {
+			binding := int(entry.Binding)
+			if entry.Buffer.Type == wgpu.BufferBindingTypeReadOnlyStorage || entry.Buffer.Type == wgpu.BufferBindingTypeStorage {
+				bgp.SetBuffer(binding, s.lightHandler.ProbeGrid().ProbeBuffer())
+			} else if entry.Buffer.Type == wgpu.BufferBindingTypeUniform {
+				bgp.SetBuffer(binding, s.lightHandler.ProbeGrid().GridParamsBuffer())
+			}
+		}
+	} else {
+		// Create fallback buffers. The probe storage buffer gets a single zeroed
+		// probe (160 bytes). The grid params uniform gets total_probes = 0 so the
+		// shader early-returns vec3(0.0) for indirect illumination.
+		for _, entry := range desc.Entries {
+			binding := int(entry.Binding)
+			if entry.Buffer.Type == wgpu.BufferBindingTypeReadOnlyStorage || entry.Buffer.Type == wgpu.BufferBindingTypeStorage {
+				fallbackProbe := (&light.GPUIrradianceProbe{}).Marshal()
+				buf, bufErr := s.r.CreateBuffer("Probe Lit Fallback Storage", uint64(len(fallbackProbe)), wgpu.BufferUsageStorage|wgpu.BufferUsageCopyDst)
+				if bufErr != nil {
+					panic(fmt.Sprintf("scene: failed to create probe lit fallback storage: %v", bufErr))
+				}
+				bgp.SetBuffer(binding, buf)
+				s.r.WriteRawBuffer(buf, 0, fallbackProbe)
+			} else if entry.Buffer.Type == wgpu.BufferBindingTypeUniform {
+				fallbackParams := (&light.GPUProbeGridParams{}).Marshal()
+				buf, bufErr := s.r.CreateBuffer("Probe Lit Fallback Uniform", uint64(len(fallbackParams)), wgpu.BufferUsageUniform|wgpu.BufferUsageCopyDst)
+				if bufErr != nil {
+					panic(fmt.Sprintf("scene: failed to create probe lit fallback uniform: %v", bufErr))
+				}
+				bgp.SetBuffer(binding, buf)
+				s.r.WriteRawBuffer(buf, 0, fallbackParams)
+			}
+		}
+	}
+
+	if err := s.r.InitBindGroup(bgp, desc, nil, nil); err != nil {
+		panic(fmt.Sprintf("scene: failed to init probes lit bind group: %v", err))
+	}
+}
+
+func (s *scene) PrepareProbes() {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	pg := s.lightHandler.ProbeGrid()
+	if pg == nil || !pg.Enabled() || s.r == nil {
+		return
+	}
+
+	dirty := pg.DirtyProbes()
+	if len(dirty) == 0 {
+		return
+	}
+
+	// Rate-limit: bake at most 4 probes per frame to amortize cost.
+	const maxProbesPerFrame = 4
+	batch := dirty
+	if len(batch) > maxProbesPerFrame {
+		batch = batch[:maxProbesPerFrame]
+	}
+
+	colorView := pg.BakeColorTextureView()
+	depthView := pg.BakeDepthTextureView()
+	if colorView == nil || depthView == nil {
+		return
+	}
+
+	bakeCameraBGP := pg.Bgp("probe_bake_camera")
+	shProjectBGP := pg.Bgp("probe_sh_project")
+	if bakeCameraBGP == nil || shProjectBGP == nil {
+		return
+	}
+
+	resolution := pg.BakeResolution()
+	probeSize := (&light.GPUIrradianceProbe{}).Size()
+
+	// Standard cubemap face directions and up vectors.
+	type cubeFace struct {
+		dirX, dirY, dirZ float32
+		upX, upY, upZ    float32
+	}
+	faces := [6]cubeFace{
+		{1, 0, 0, 0, -1, 0},  // +X
+		{-1, 0, 0, 0, -1, 0}, // -X
+		{0, 1, 0, 0, 0, 1},   // +Y
+		{0, -1, 0, 0, 0, -1}, // -Y
+		{0, 0, 1, 0, -1, 0},  // +Z
+		{0, 0, -1, 0, -1, 0}, // -Z
+	}
+
+	// Perspective projection: 90° FOV, square aspect, shared across all faces.
+	proj := make([]float32, 16)
+	common.Perspective(proj, float32(math.Pi/2.0), 1.0, 0.1, 100.0)
+
+	view := make([]float32, 16)
+	vp := make([]float32, 16)
+
+	staticBakeKey := pg.PipelineKey("static")
+	skinnedBakeKey := pg.PipelineKey("skinned")
+	shProjectKey := pg.PipelineKey("sh_project")
+
+	for _, probeIdx := range batch {
+		probe := pg.Probe(probeIdx)
+		px, py, pz := probe.Position[0], probe.Position[1], probe.Position[2]
+
+		// Zero the probe's SH coefficients before accumulating across 6 faces.
+		// SH data starts at byte offset 16 within each probe (after position vec4).
+		shOffset := uint64(probeIdx*probeSize + 16)
+		shSize := probeSize - 16
+		s.r.WriteRawBuffer(pg.ProbeBuffer(), shOffset, make([]byte, shSize))
+
+		for face := 0; face < 6; face++ {
+			f := faces[face]
+
+			// Build view-projection matrix for this cubemap face.
+			common.LookAt(view, px, py, pz, px+f.dirX, py+f.dirY, pz+f.dirZ, f.upX, f.upY, f.upZ)
+			common.Mul4(vp, proj, view)
+
+			bakeCam := light.GPUProbeBakeCamera{
+				CameraPosition: [3]float32{px, py, pz},
+			}
+			copy(bakeCam.ViewProj[:], vp)
+
+			// Upload bake camera uniform for this face.
+			s.r.WriteBuffers([]bind_group_provider.BufferWrite{
+				{Provider: bakeCameraBGP, Binding: 0, Offset: 0, Data: bakeCam.Marshal()},
+			})
+
+			// Render the scene from this cubemap face into the bake texture.
+			if err := s.r.BeginProbeBakeFrame(); err != nil {
+				continue
+			}
+			s.r.BeginProbeBakePass(colorView, depthView)
+
+			for _, anim := range s.animatorPool {
+				for _, a := range anim {
+					if a.InstanceCount() == 0 {
+						continue
+					}
+					mdl := a.Model()
+					if mdl == nil {
+						continue
+					}
+					meshProvider := mdl.MeshProvider()
+					if meshProvider == nil {
+						continue
+					}
+
+					pipeKey := staticBakeKey
+					if mdl.Skinned() {
+						pipeKey = skinnedBakeKey
+					}
+					if pipeKey == "" {
+						continue
+					}
+
+					mats := mdl.RenderMaterials()
+					if len(mats) == 0 {
+						continue
+					}
+					matBGP := mats[0].BindGroupProvider()
+					if matBGP == nil {
+						continue
+					}
+
+					bakeGroups := []bind_group_provider.BindGroupProvider{
+						bakeCameraBGP,
+						a.OutputBindGroupProvider(),
+						matBGP,
+					}
+
+					_ = s.r.ProbeBakeDrawCall(pipeKey, meshProvider, uint32(a.InstanceCount()), bakeGroups)
+				}
+			}
+
+			s.r.EndProbeBakePass()
+			s.r.EndProbeBakeFrame()
+
+			// Dispatch SH projection compute for this face. The compute shader
+			// accumulates L2 SH coefficients into the probe storage buffer.
+			shParams := light.GPUSHProjectParams{
+				ProbeIndex: uint32(probeIdx),
+				FaceIndex:  uint32(face),
+				Resolution: uint32(resolution),
+			}
+			s.r.WriteBuffers([]bind_group_provider.BufferWrite{
+				{Provider: shProjectBGP, Binding: 2, Offset: 0, Data: shParams.Marshal()},
+			})
+
+			if err := s.r.BeginComputeFrame(); err != nil {
+				continue
+			}
+			s.r.DispatchCompute(shProjectKey, shProjectBGP, [3]uint32{1, 1, 1})
+			s.r.EndComputeFrame()
+		}
+	}
+
+	// Remove the processed probes from the dirty list.
+	remaining := pg.DirtyProbes()
+	if len(batch) >= len(remaining) {
+		pg.ClearDirtyProbes()
+	} else {
+		pg.SetDirtyProbes(remaining[len(batch):])
+	}
+}
+
+func (s *scene) PrepareGBuffer() {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.lightHandler.GBufferHandler() == nil || !s.lightHandler.GBufferHandler().Enabled() || s.r == nil {
+		return
+	}
+
+	if err := s.r.BeginGBufferFrame(); err != nil {
+		return
+	}
+	s.r.BeginGBufferPass(
+		s.lightHandler.GBufferHandler().NormalTextureView(),
+		s.lightHandler.GBufferHandler().AlbedoTextureView(),
+		s.lightHandler.GBufferHandler().DepthTextureView(),
+	)
+
+	for _, anim := range s.animatorPool {
+		for _, a := range anim {
+			if a.InstanceCount() == 0 {
+				continue
+			}
+
+			mdl := a.Model()
+			if mdl == nil {
+				continue
+			}
+			meshProvider := mdl.MeshProvider()
+			if meshProvider == nil {
+				continue
+			}
+
+			// Select the appropriate G-Buffer pipeline based on whether the model is skinned.
+			pipeKey := s.lightHandler.GBufferHandler().PipelineKey("static")
+			if mdl.Skinned() {
+				pipeKey = s.lightHandler.GBufferHandler().PipelineKey("skinned")
+			}
+			if pipeKey == "" {
+				continue
+			}
+
+			// Build bind groups for the G-Buffer pass:
+			//   group(0) = camera BGP
+			//   group(1) = output BGP (instance/bone matrices from compute shader)
+			//   group(2) = material BGP
+			var cameraBGP bind_group_provider.BindGroupProvider
+			if s.cam != nil {
+				cameraBGP = s.cam.BindGroupProvider()
+			}
+			if cameraBGP == nil {
+				continue
+			}
+
+			mats := mdl.RenderMaterials()
+			if len(mats) == 0 {
+				continue
+			}
+			matBGP := mats[0].BindGroupProvider()
+			if matBGP == nil {
+				continue
+			}
+
+			gbufferBindGroups := []bind_group_provider.BindGroupProvider{
+				cameraBGP,
+				a.OutputBindGroupProvider(),
+				matBGP,
+			}
+
+			// Use indirect draw when GPU frustum culling is active.
+			if a.CullingEnabled() {
+				if key := mdl.ComputePipelineKey(); key != "" {
+					if rp := s.r.Pipeline(key); rp != nil {
+						if cs := rp.Shader(shader.ShaderTypeCompute); cs != nil {
+							indirectBinding := 0
+							for _, decl := range cs.Declarations() {
+								if decl.Type == shader.AnnotationTypeBindingGroup && decl.Binding != nil {
+									typeArg := string(decl.Args[2])
+									if stripped, ok := strings.CutPrefix(typeArg, "array<"); ok {
+										typeArg = strings.TrimSuffix(stripped, ">")
+									}
+									if shader.AnnotationArg(typeArg) == shader.AnnotationArgIndirectArgs {
+										indirectBinding = *decl.Binding
+										break
+									}
+								}
+							}
+							if indBuf := a.IndirectBuffer(indirectBinding); indBuf != nil {
+								_ = s.r.GBufferDrawCallIndirect(pipeKey, meshProvider, indBuf, gbufferBindGroups)
+								continue
+							}
+						}
+					}
+				}
+			}
+
+			_ = s.r.GBufferDrawCall(pipeKey, meshProvider, uint32(a.InstanceCount()), gbufferBindGroups)
+		}
+	}
+
+	s.r.EndGBufferPass()
+	s.r.EndGBufferFrame()
+}
+
+func (s *scene) PrepareSSAO() {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.lightHandler.SSAOHandler() == nil || !s.lightHandler.SSAOHandler().Enabled() || s.r == nil || s.cam == nil {
+		return
+	}
+
+	w := s.lightHandler.SSAOHandler().ScreenWidth()
+	h := s.lightHandler.SSAOHandler().ScreenHeight()
+
+	// Compute the G-Buffer coordinate scale: 2.0 when running at half-resolution,
+	// 1.0 at full resolution. The SSAO compute and blur shaders multiply their
+	// texture coordinates by this value when reading from full-res G-Buffer textures.
+	var gbufferScale float32 = 1.0
+	var gbufferScaleI int32 = 1
+	if s.lightHandler.SSAOHandler().HalfResolution() {
+		gbufferScale = 2.0
+		gbufferScaleI = 2
+	}
+
+	// Compute the inverse view-projection matrix for depth-to-world reconstruction.
+	vp := s.cam.ViewProjectionMatrix()
+	var invVP [16]float32
+	common.Invert4(invVP[:], vp[:])
+
+	// Get camera position from the controller.
+	var camPos [3]float32
+	if ctrl := s.cam.Controller(); ctrl != nil {
+		camPos[0], camPos[1], camPos[2] = ctrl.Position()
+	}
+
+	// Build and write SSAO uniform parameters.
+	ssaoParams := light.GPUSSAOParams{
+		Projection:     s.cam.ViewProjectionMatrix(),
+		InvViewProj:    invVP,
+		Radius:         s.lightHandler.SSAOHandler().Radius(),
+		Bias:           s.lightHandler.SSAOHandler().Bias(),
+		Power:          s.lightHandler.SSAOHandler().Power(),
+		SampleCount:    uint32(s.lightHandler.SSAOHandler().SampleCount()),
+		ScreenWidth:    float32(w),
+		ScreenHeight:   float32(h),
+		GBufferScale:   gbufferScale,
+		CameraPosition: camPos,
+	}
+
+	ssaoBGP := s.lightHandler.SSAOHandler().Bgp("ssao_compute")
+	blurHBGP := s.lightHandler.SSAOHandler().Bgp("ssao_blur_h")
+	blurVBGP := s.lightHandler.SSAOHandler().Bgp("ssao_blur_v")
+
+	// Write SSAO params to the compute BGP uniform buffer.
+	hParams := light.GPUBlurParams{
+		Direction:    [2]int32{1, 0},
+		Radius:       int32(s.lightHandler.SSAOHandler().BlurRadius()),
+		GBufferScale: gbufferScaleI,
+	}
+	vParams := light.GPUBlurParams{
+		Direction:    [2]int32{0, 1},
+		Radius:       int32(s.lightHandler.SSAOHandler().BlurRadius()),
+		GBufferScale: gbufferScaleI,
+	}
+	s.r.WriteBuffers([]bind_group_provider.BufferWrite{
+		{Provider: ssaoBGP, Binding: 4, Offset: 0, Data: ssaoParams.Marshal()},
+		{Provider: blurHBGP, Binding: 2, Offset: 0, Data: hParams.Marshal()},
+		{Provider: blurVBGP, Binding: 2, Offset: 0, Data: vParams.Marshal()},
+	})
+
+	// Dispatch SSAO compute + bilateral blur.
+	workGroupsX := uint32((w + 15) / 16)
+	workGroupsY := uint32((h + 15) / 16)
+	wg := [3]uint32{workGroupsX, workGroupsY, 1}
+
+	if err := s.r.BeginComputeFrame(); err != nil {
+		return
+	}
+	s.r.DispatchCompute(s.lightHandler.SSAOHandler().PipelineKey("ssao_compute"), ssaoBGP, wg)
+	s.r.DispatchCompute(s.lightHandler.SSAOHandler().PipelineKey("ssao_blur"), blurHBGP, wg)
+	s.r.DispatchCompute(s.lightHandler.SSAOHandler().PipelineKey("ssao_blur"), blurVBGP, wg)
+	s.r.EndComputeFrame()
+}
+
+func (s *scene) PrepareSSR() {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	ssrHandler := s.lightHandler.SSRHandler()
+	compHandler := s.lightHandler.CompositionHandler()
+	if ssrHandler == nil || !ssrHandler.Enabled() || compHandler == nil || !compHandler.Enabled() || s.r == nil || s.cam == nil {
+		return
+	}
+
+	w := ssrHandler.ScreenWidth()
+	h := ssrHandler.ScreenHeight()
+
+	// Build and write SSR uniform parameters.
+	ssrParams := light.GPUSSRParams{
+		Projection:      s.cam.ProjectionMatrix(),
+		InvProjection:   s.cam.InverseProjectionMatrix(),
+		View:            s.cam.ViewMatrix(),
+		MaxDistance:     ssrHandler.MaxDistance(),
+		Thickness:       ssrHandler.Thickness(),
+		Stride:          ssrHandler.Stride(),
+		MaxSteps:        uint32(ssrHandler.MaxSteps()),
+		ScreenWidth:     float32(w),
+		ScreenHeight:    float32(h),
+		RoughnessCutoff: ssrHandler.RoughnessCutoff(),
+		HiZMipCount:     uint32(ssrHandler.HiZMipCount()),
+	}
+
+	ssrBGP := ssrHandler.Bgp("ssr_compute")
+	s.r.WriteBuffers([]bind_group_provider.BufferWrite{
+		{Provider: ssrBGP, Binding: 0, Offset: 0, Data: ssrParams.Marshal()},
+	})
+
+	if err := s.r.BeginComputeFrame(); err != nil {
+		return
+	}
+
+	// --- Hi-Z depth pyramid generation ---
+	mipCount := ssrHandler.HiZMipCount()
+
+	// Pass 0: copy GBuffer depth → Hi-Z mip 0 (full resolution).
+	hizInitBGP := ssrHandler.Bgp("hiz_init")
+	initWGX := uint32((w + 7) / 8)
+	initWGY := uint32((h + 7) / 8)
+	s.r.DispatchCompute(ssrHandler.PipelineKey("hiz_init"), hizInitBGP, [3]uint32{initWGX, initWGY, 1})
+
+	// Passes 1..N-1: min-downsample each mip level from the previous.
+	mipW := w
+	mipH := h
+	for i := 1; i < mipCount; i++ {
+		mipW = max(mipW/2, 1)
+		mipH = max(mipH/2, 1)
+		bgp := ssrHandler.Bgp(fmt.Sprintf("hiz_down_%d", i))
+		wgX := uint32((mipW + 7) / 8)
+		wgY := uint32((mipH + 7) / 8)
+		s.r.DispatchCompute(ssrHandler.PipelineKey("hiz_downsample"), bgp, [3]uint32{wgX, wgY, 1})
+	}
+
+	// --- SSR compute dispatch at half-resolution ---
+	halfW := w / 2
+	halfH := h / 2
+	if halfW <= 0 {
+		halfW = 1
+	}
+	if halfH <= 0 {
+		halfH = 1
+	}
+	workGroupsX := uint32((halfW + 7) / 8)
+	workGroupsY := uint32((halfH + 7) / 8)
+	s.r.DispatchCompute(ssrHandler.PipelineKey("ssr_compute"), ssrBGP, [3]uint32{workGroupsX, workGroupsY, 1})
+
+	s.r.EndComputeFrame()
+}
+
+func (s *scene) PrepareComposition() {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	compHandler := s.lightHandler.CompositionHandler()
+	if compHandler == nil || !compHandler.Enabled() || s.r == nil {
+		return
+	}
+
+	// Write composition params uniform.
+	compParams := light.GPUCompositionParams{
+		Exposure: compHandler.Exposure(),
+	}
+	if compHandler.ToneMappingEnabled() {
+		compParams.ToneMappingEnabled = 1
+	}
+	compBGP := compHandler.Bgp("composition")
+	s.r.WriteBuffers([]bind_group_provider.BufferWrite{
+		{Provider: compBGP, Binding: 4, Offset: 0, Data: compParams.Marshal()},
+	})
+
+	// Run the fullscreen composition pass: acquire swapchain → render → submit.
+	if err := s.r.BeginCompositionFrame(); err != nil {
+		return
+	}
+	s.r.BeginCompositionPass()
+	_ = s.r.CompositionDrawCall(compHandler.PipelineKey("composition"), []bind_group_provider.BindGroupProvider{compBGP})
+	s.r.EndCompositionPass()
+	s.r.EndCompositionFrame()
+}
+
+func (s *scene) BeginHDRFrame() error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	ch := s.lightHandler.CompositionHandler()
+	if ch == nil || !ch.Enabled() || s.r == nil {
+		return fmt.Errorf("scene %q: composition not initialized", s.name)
+	}
+
+	sampleCount := s.r.SampleCount()
+	if sampleCount > 1 && ch.MSAATextureView() != nil {
+		// MSAA active: render to multi-sampled texture, resolve into HDR.
+		return s.r.BeginHDRFrame(ch.MSAATextureView(), ch.HDRTextureView(), ch.DepthTextureView(), sampleCount)
+	}
+	// No MSAA: render directly to HDR texture.
+	return s.r.BeginHDRFrame(ch.HDRTextureView(), nil, ch.DepthTextureView(), 1)
 }
 
 // initLightBindGroup initializes the GPU resources for the light storage buffer
@@ -547,43 +1641,49 @@ func (s *scene) initLightBindGroup(fragmentShader shader.Shader) {
 	}
 }
 
-// initShadowMap initializes the shadow mapping resources for the scene.
-func (s *scene) initShadowMap(shadowVertexShader, shadowSkinnedVertexShader shader.Shader) {
+// initVSMShadowMap initializes the variance shadow mapping resources for the scene.
+// This creates the RG32Float moments texture, auxiliary depth texture, scratch blur
+// texture, linear sampler, VSM shadow render pipelines (with fragment shader), and
+// the separable blur compute pipeline with its horizontal/vertical bind groups.
+func (s *scene) initVSMShadowMap(vsmVertShader, vsmSkinnedVertShader, vsmFragShader, blurComputeShader shader.Shader) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.r == nil || shadowVertexShader == nil {
+	if s.r == nil || vsmVertShader == nil || vsmFragShader == nil {
 		return
 	}
 
-	// Create shadow depth texture.
 	res := s.lightHandler.ShadowMapResolution()
-	view, tex, err := s.r.CreateShadowDepthTexture(res, res)
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create shadow depth texture: %v", err))
-	}
-	s.lightHandler.SetShadowDepthTexture(tex)
-	s.lightHandler.SetShadowDepthTextureView(view)
 
-	// Create comparison sampler for PCF in the lit fragment shader.
-	samp, err := s.r.CreateComparisonSampler()
+	// Create VSM textures: RG32Float moments, RG32Float scratch (blur), Depth32Float aux.
+	vsmView, vsmTex, scratchView, scratchTex, depthView, depthTex, err := s.r.CreateVSMTextures(res, res)
 	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create comparison sampler: %v", err))
+		panic(fmt.Sprintf("scene: failed to create VSM textures: %v", err))
 	}
-	s.lightHandler.SetShadowComparisonSampler(samp)
+	s.lightHandler.SetVSMTexture(vsmTex)
+	s.lightHandler.SetVSMTextureView(vsmView)
+	s.lightHandler.SetVSMScratchTexture(scratchTex)
+	s.lightHandler.SetVSMScratchTextureView(scratchView)
+	s.lightHandler.SetVSMAuxDepthTexture(depthTex)
+	s.lightHandler.SetVSMAuxDepthTextureView(depthView)
 
-	// Create shadow data BGP — holds the light VP matrix + texel size + bias.
-	// The layout is derived from the shadow vertex shader's group containing the
-	// ShadowUniform struct, resolved via pre-processor declarations.
+	// Create linear sampler for the lit fragment shader's VSM texture lookup.
+	linearSamp, err := s.r.CreateLinearSampler()
+	if err != nil {
+		panic(fmt.Sprintf("scene: failed to create VSM linear sampler: %v", err))
+	}
+	s.lightHandler.SetVSMLinearSampler(linearSamp)
+
+	// Create shadow data BGP — holds the light VP uniform for the VSM vertex shader.
 	shadowGroup := 0
-	for _, decl := range shadowVertexShader.Declarations() {
+	for _, decl := range vsmVertShader.Declarations() {
 		if decl.Type == shader.AnnotationTypeBindingGroup && decl.Group != nil && decl.Args[2] == shader.AnnotationArgShadowUniform {
 			shadowGroup = *decl.Group
 			break
 		}
 	}
 	bgp := s.lightHandler.Bgp("shadow_data")
-	desc := shadowVertexShader.BindGroupLayoutDescriptor(shadowGroup)
+	desc := vsmVertShader.BindGroupLayoutDescriptor(shadowGroup)
 	sizeOverrides := make(map[int]uint64)
 	for _, entry := range desc.Entries {
 		if entry.Buffer.Type == wgpu.BufferBindingTypeUniform {
@@ -591,12 +1691,12 @@ func (s *scene) initShadowMap(shadowVertexShader, shadowSkinnedVertexShader shad
 		}
 	}
 	if err := s.r.InitBindGroup(bgp, desc, nil, sizeOverrides); err != nil {
-		panic(fmt.Sprintf("scene: failed to init shadow data bind group: %v", err))
+		panic(fmt.Sprintf("scene: failed to init VSM shadow data bind group: %v", err))
 	}
 
-	// Register shadow pipelines for each ShadowCullMode variant. Each model
-	// can choose its own cull mode via model.WithShadowCullMode, so the scene
-	// pre-registers one pipeline per cull mode for both static and skinned shaders.
+	// Register VSM shadow pipelines for each ShadowCullMode variant.
+	// Unlike the PCF path, these pipelines include a fragment shader that outputs
+	// depth moments to an RG32Float color target and apply no hardware depth bias.
 	cullModes := []struct {
 		mode model.ShadowCullMode
 		wgpu wgpu.CullMode
@@ -608,31 +1708,145 @@ func (s *scene) initShadowMap(shadowVertexShader, shadowSkinnedVertexShader shad
 	}
 
 	for _, cm := range cullModes {
-		key := "shadow_depth_static_" + cm.tag
+		key := "vsm_shadow_static_" + cm.tag
 		sp := pipeline.NewPipeline(key, pipeline.PipelineTypeRender,
-			pipeline.WithVertexShader(shadowVertexShader),
-			pipeline.WithDepthBias(2, 1.5),
+			pipeline.WithVertexShader(vsmVertShader),
+			pipeline.WithFragmentShader(vsmFragShader),
 			pipeline.WithCullMode(cm.wgpu),
 		)
-		if err := s.r.RegisterShadowPipeline(sp); err != nil {
-			panic(fmt.Sprintf("scene: failed to register static shadow pipeline (%s): %v", cm.tag, err))
+		if err := s.r.RegisterVSMShadowPipeline(sp); err != nil {
+			panic(fmt.Sprintf("scene: failed to register VSM static shadow pipeline (%s): %v", cm.tag, err))
 		}
 		s.lightHandler.SetPipelineKey("shadow_static_"+cm.tag, key)
 	}
 
-	// Register shadow pipelines for skinned models if a skinned shader is provided.
-	if shadowSkinnedVertexShader != nil {
+	if vsmSkinnedVertShader != nil {
 		for _, cm := range cullModes {
-			key := "shadow_depth_skinned_" + cm.tag
+			key := "vsm_shadow_skinned_" + cm.tag
 			ssp := pipeline.NewPipeline(key, pipeline.PipelineTypeRender,
-				pipeline.WithVertexShader(shadowSkinnedVertexShader),
-				pipeline.WithDepthBias(2, 1.5),
+				pipeline.WithVertexShader(vsmSkinnedVertShader),
+				pipeline.WithFragmentShader(vsmFragShader),
 				pipeline.WithCullMode(cm.wgpu),
 			)
-			if err := s.r.RegisterShadowPipeline(ssp); err != nil {
-				panic(fmt.Sprintf("scene: failed to register skinned shadow pipeline (%s): %v", cm.tag, err))
+			if err := s.r.RegisterVSMShadowPipeline(ssp); err != nil {
+				panic(fmt.Sprintf("scene: failed to register VSM skinned shadow pipeline (%s): %v", cm.tag, err))
 			}
 			s.lightHandler.SetPipelineKey("shadow_skinned_"+cm.tag, key)
+		}
+	}
+
+	// Register the separable blur compute pipeline.
+	if blurComputeShader != nil {
+		blurPipeKey := "vsm_blur_compute"
+		blurPipe := pipeline.NewPipeline(blurPipeKey, pipeline.PipelineTypeCompute,
+			pipeline.WithComputeShader(blurComputeShader),
+		)
+		if err := s.r.RegisterPipelines(blurPipe); err != nil {
+			panic(fmt.Sprintf("scene: failed to register VSM blur compute pipeline: %v", err))
+		}
+		s.lightHandler.SetPipelineKey("vsm_blur", blurPipeKey)
+
+		// Initialize blur bind groups. Each pass swaps input/output textures.
+		blurDesc := blurComputeShader.BindGroupLayoutDescriptor(0)
+		blurSizeOverrides := map[int]uint64{
+			2: uint64((&light.GPUBlurParams{}).Size()),
+		}
+
+		// Horizontal: read from VSM → write to scratch.
+		blurHBGP := s.lightHandler.Bgp("vsm_blur_h")
+		blurHBGP.SetTextureView(0, vsmView)
+		blurHBGP.SetTextureView(1, scratchView)
+		if err := s.r.InitBindGroup(blurHBGP, blurDesc, nil, blurSizeOverrides); err != nil {
+			panic(fmt.Sprintf("scene: failed to init VSM blur horizontal bind group: %v", err))
+		}
+
+		// Vertical: read from scratch → write back to VSM.
+		blurVBGP := s.lightHandler.Bgp("vsm_blur_v")
+		blurVBGP.SetTextureView(0, scratchView)
+		blurVBGP.SetTextureView(1, vsmView)
+		if err := s.r.InitBindGroup(blurVBGP, blurDesc, nil, blurSizeOverrides); err != nil {
+			panic(fmt.Sprintf("scene: failed to init VSM blur vertical bind group: %v", err))
+		}
+	}
+}
+
+// initSATResources initializes the Summed-Area Table resources required for PCSS.
+// Creates two RGBA32Float ping-pong textures, registers the SAT compute pipeline,
+// and pre-creates one bind group provider per dispatch pass. Each BGP has its own
+// uniform buffer so that all params can be written upfront and every dispatch can
+// be batched into a single command encoder submission.
+func (s *scene) initSATResources(satComputeShader shader.Shader) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.r == nil || satComputeShader == nil {
+		return
+	}
+
+	res := s.lightHandler.ShadowMapResolution()
+
+	// Create two RGBA32Float textures for SAT ping-pong.
+	satAView, satATex, satBView, satBTex, err := s.r.CreateSATTextures(res, res)
+	if err != nil {
+		panic(fmt.Sprintf("scene: failed to create SAT textures: %v", err))
+	}
+	s.lightHandler.SetSATTextureA(satATex)
+	s.lightHandler.SetSATTextureAView(satAView)
+	s.lightHandler.SetSATTextureB(satBTex)
+	s.lightHandler.SetSATTextureBView(satBView)
+
+	// Register the SAT compute pipeline.
+	satPipeKey := "vsm_sat_compute"
+	satPipe := pipeline.NewPipeline(satPipeKey, pipeline.PipelineTypeCompute,
+		pipeline.WithComputeShader(satComputeShader),
+	)
+	if err := s.r.RegisterPipelines(satPipe); err != nil {
+		panic(fmt.Sprintf("scene: failed to register SAT compute pipeline: %v", err))
+	}
+	s.lightHandler.SetPipelineKey("vsm_sat", satPipeKey)
+
+	// Shared BGL descriptor and size overrides for all SAT bind groups.
+	satDesc := satComputeShader.BindGroupLayoutDescriptor(0)
+	satSizeOverrides := map[int]uint64{
+		2: uint64((&light.GPUSATParams{}).Size()),
+	}
+
+	// Pass 0 — prepare: reads VSM moments (RG32Float), writes SAT A (RGBA32Float).
+	prepareBGP := s.lightHandler.Bgp("sat_prepare")
+	prepareBGP.SetTextureView(0, s.lightHandler.VSMTextureView())
+	prepareBGP.SetTextureView(1, satAView)
+	if err := s.r.InitBindGroup(prepareBGP, satDesc, nil, satSizeOverrides); err != nil {
+		panic(fmt.Sprintf("scene: failed to init SAT prepare bind group: %v", err))
+	}
+
+	// Pre-create one BGP per prefix-sum pass. Each pass reads from one SAT
+	// texture and writes to the other (ping-pong). Giving each pass its own
+	// BGP (and thus its own uniform buffer) allows all params to be written
+	// upfront and all dispatches to be batched into a single command encoder,
+	// avoiding the overhead of 23 separate GPU submissions.
+	numPasses := 0
+	for v := res; v > 1; v >>= 1 {
+		numPasses++
+	}
+
+	readFromA := true // after prepare, data is in SAT A
+	passIdx := 0
+	for axis := 0; axis < 2; axis++ {
+		for k := 0; k < numPasses; k++ {
+			bgpName := fmt.Sprintf("sat_pass_%d", passIdx)
+			bgp := s.lightHandler.Bgp(bgpName)
+			if readFromA {
+				bgp.SetTextureView(0, satAView)
+				bgp.SetTextureView(1, satBView)
+			} else {
+				bgp.SetTextureView(0, satBView)
+				bgp.SetTextureView(1, satAView)
+			}
+			if err := s.r.InitBindGroup(bgp, satDesc, nil, satSizeOverrides); err != nil {
+				panic(fmt.Sprintf("scene: failed to init SAT pass %d bind group: %v", passIdx, err))
+			}
+			readFromA = !readFromA
+			passIdx++
 		}
 	}
 }
@@ -655,7 +1869,8 @@ func (s *scene) shadowPipelineKey(skinned bool, mode model.ShadowCullMode) strin
 }
 
 // initShadowLitBindGroup initializes the bind group provider that lit fragment
-// shaders use to sample the shadow map.
+// shaders use to sample the shadow map. Supports VSM (texture_2d<f32> + linear
+// sampler) and PCSS (SAT RGBA32Float texture + linear sampler) modes.
 func (s *scene) initShadowLitBindGroup(litFragmentShader shader.Shader) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -663,8 +1878,17 @@ func (s *scene) initShadowLitBindGroup(litFragmentShader shader.Shader) {
 	if s.r == nil || litFragmentShader == nil {
 		return
 	}
-	if s.lightHandler.ShadowDepthTextureView() == nil || s.lightHandler.ShadowComparisonSampler() == nil {
-		return // InitShadowMap must be called first
+
+	// Validate that the appropriate shadow resources are available.
+	pcssMode := s.lightHandler.PCSSEnabled()
+	if pcssMode {
+		if s.lightHandler.SATTextureAView() == nil || s.lightHandler.VSMLinearSampler() == nil {
+			return // initSATResources must be called first
+		}
+	} else {
+		if s.lightHandler.VSMTextureView() == nil || s.lightHandler.VSMLinearSampler() == nil {
+			return // initVSMShadowMap must be called first
+		}
 	}
 
 	// Resolve the shadow bind group index from the shader's pre-processor
@@ -682,20 +1906,27 @@ func (s *scene) initShadowLitBindGroup(litFragmentShader shader.Shader) {
 
 	bgp := s.lightHandler.Bgp("shadow_lit")
 
-	// Pre-set the shadow depth texture view and comparison sampler on the BGP
-	// so that InitBindGroup can find them when creating the bind group entries.
+	// Pre-set the shadow texture view and sampler on the BGP so that
+	// InitBindGroup can find them when creating the bind group entries.
+	// PCSS uses the SAT texture + linear sampler; VSM uses the moments
+	// texture + linear sampler.
 	desc := litFragmentShader.BindGroupLayoutDescriptor(shadowGroup)
+
 	for _, entry := range desc.Entries {
 		binding := int(entry.Binding)
 		if entry.Texture.SampleType != wgpu.TextureSampleTypeUndefined {
-			bgp.SetTextureView(binding, s.lightHandler.ShadowDepthTextureView())
+			if pcssMode {
+				bgp.SetTextureView(binding, s.lightHandler.SATTextureAView())
+			} else {
+				bgp.SetTextureView(binding, s.lightHandler.VSMTextureView())
+			}
 		}
 		if entry.Sampler.Type != wgpu.SamplerBindingTypeUndefined {
-			bgp.SetSampler(binding, s.lightHandler.ShadowComparisonSampler())
+			bgp.SetSampler(binding, s.lightHandler.VSMLinearSampler())
 		}
 	}
 
-	// Override the uniform buffer size to 80 bytes (GPUShadowData).
+	// Override the uniform buffer size to GPUShadowData's size.
 	sizeOverrides := make(map[int]uint64)
 	for _, entry := range desc.Entries {
 		if entry.Buffer.Type == wgpu.BufferBindingTypeUniform {
@@ -740,8 +1971,12 @@ func (s *scene) PrepareShadows() {
 	// Build and write shadow uniform data.
 	texelSize := 1.0 / float32(s.lightHandler.ShadowMapResolution())
 	shadowData := light.GPUShadowData{
-		TexelSize: [2]float32{texelSize, texelSize},
-		Bias:      s.lightHandler.ShadowBias(),
+		TexelSize:           [2]float32{texelSize, texelSize},
+		Bias:                s.lightHandler.ShadowBias(),
+		MinVariance:         s.lightHandler.VSMMinVariance(),
+		LightBleedReduction: s.lightHandler.VSMLightBleedReduction(),
+		LightSize:           s.lightHandler.VSMLightSize(),
+		ShadowHalfExtent:    s.lightHandler.ShadowHalfExtent(),
 	}
 	shadowData.ComputeDirectionalLightVP(
 		shadowLight.Direction(),
@@ -749,18 +1984,30 @@ func (s *scene) PrepareShadows() {
 		s.lightHandler.ShadowHalfExtent(), s.lightHandler.ShadowNear(), s.lightHandler.ShadowFar(),
 	)
 	shadowData.ComputeNormalBias(s.lightHandler.ShadowHalfExtent(), s.lightHandler.ShadowNormalBiasScale(), s.lightHandler.ShadowMapResolution())
-	shadowBytes := shadowData.Marshal()
+
+	// Build a separate GPUShadowUniform for the depth-pass vertex shader.
+	// GPUShadowUniform and GPUShadowData have different struct layouts at offset 128+
+	// (ShadowUniform: shadow_near/shadow_far; ShadowData: texel_size), so each BGP
+	// must receive the correctly laid-out bytes to avoid misinterpreted fields.
+	shadowUniform := light.GPUShadowUniform{
+		LightVP:    shadowData.LightVP,
+		LightView:  shadowData.LightView,
+		ShadowNear: shadowData.ShadowNear,
+		ShadowFar:  shadowData.ShadowFar,
+	}
+
 	shadowDataBGP := s.lightHandler.Bgp("shadow_data")
 	writes := []bind_group_provider.BufferWrite{
 		{
 			Provider: shadowDataBGP,
 			Binding:  0,
 			Offset:   0,
-			Data:     shadowBytes,
+			Data:     shadowUniform.Marshal(),
 		},
 	}
-	// Also write to the lit-pass shadow BGP if it has a uniform buffer.
+	// Also write the full GPUShadowData to the lit-pass shadow BGP (different layout).
 	shadowLitBGP := s.lightHandler.Bgp("shadow_lit")
+	shadowBytes := shadowData.Marshal()
 	for binding, buf := range shadowLitBGP.Buffers() {
 		if buf != nil {
 			writes = append(writes, bind_group_provider.BufferWrite{
@@ -774,11 +2021,11 @@ func (s *scene) PrepareShadows() {
 	}
 	s.r.WriteBuffers(writes)
 
-	// Execute shadow depth pass.
+	// Execute shadow depth pass — VSM targets a color+depth pass.
 	if err := s.r.BeginShadowFrame(); err != nil {
 		return
 	}
-	s.r.BeginShadowPass(s.lightHandler.ShadowDepthTextureView())
+	s.r.BeginVSMShadowPass(s.lightHandler.VSMTextureView(), s.lightHandler.VSMAuxDepthTextureView())
 
 	for _, anim := range s.animatorPool {
 		for _, a := range anim {
@@ -852,6 +2099,118 @@ func (s *scene) PrepareShadows() {
 
 	s.r.EndShadowPass()
 	s.r.EndShadowFrame()
+}
+
+func (s *scene) PrepareShadowBlur() {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.lightHandler.Enabled() || s.r == nil {
+		return
+	}
+
+	// Post-processing: either blur passes (constant-width VSM) or SAT generation (PCSS variable-width).
+	res := s.lightHandler.ShadowMapResolution()
+	workGroupsX := uint32((res + 15) / 16)
+	workGroupsY := uint32((res + 15) / 16)
+
+	pcssMode := s.lightHandler.PCSSEnabled()
+	if pcssMode {
+		// PCSS path: generate a Summed-Area Table from the raw moments texture.
+		// The SAT replaces the blur pass — variable-width filtering is done in the lit shader.
+		s.dispatchSATGeneration(res, workGroupsX, workGroupsY)
+	} else {
+		// Standard VSM path: separable blur for constant-width soft shadows.
+		blurHBGP := s.lightHandler.Bgp("vsm_blur_h")
+		blurVBGP := s.lightHandler.Bgp("vsm_blur_v")
+
+		hParams := light.GPUBlurParams{
+			Direction:    [2]int32{1, 0},
+			Radius:       int32(s.lightHandler.VSMBlurRadius()),
+			GBufferScale: 1,
+		}
+		vParams := light.GPUBlurParams{
+			Direction:    [2]int32{0, 1},
+			Radius:       int32(s.lightHandler.VSMBlurRadius()),
+			GBufferScale: 1,
+		}
+		s.r.WriteBuffers([]bind_group_provider.BufferWrite{
+			{Provider: blurHBGP, Binding: 2, Offset: 0, Data: hParams.Marshal()},
+			{Provider: blurVBGP, Binding: 2, Offset: 0, Data: vParams.Marshal()},
+		})
+
+		blurPipeKey := s.lightHandler.PipelineKey("vsm_blur")
+		if err := s.r.BeginComputeFrame(); err == nil {
+			s.r.DispatchCompute(blurPipeKey, blurHBGP, [3]uint32{workGroupsX, workGroupsY, 1})
+			s.r.DispatchCompute(blurPipeKey, blurVBGP, [3]uint32{workGroupsX, workGroupsY, 1})
+			s.r.EndComputeFrame()
+		}
+	}
+}
+
+// dispatchSATGeneration runs the complete Summed-Area Table generation pipeline:
+// one precision-distribution prepare pass followed by 2×log₂(res) recursive-doubling
+// prefix-sum passes (horizontal then vertical), ping-ponging between SAT textures A and B.
+// After completion, the final SAT resides in SAT texture A.
+//
+// Because each prefix-sum pass was pre-created with its own BGP and uniform buffer during
+// initSATResources, all params are written upfront via a single WriteBuffers call, and
+// every dispatch is batched into one command encoder submission. This avoids the overhead
+// of 23 separate GPU submissions per frame.
+func (s *scene) dispatchSATGeneration(res int, workGroupsX, workGroupsY uint32) {
+	satPipeKey := s.lightHandler.PipelineKey("vsm_sat")
+
+	numPasses := 0
+	for v := res; v > 1; v >>= 1 {
+		numPasses++
+	}
+
+	totalPrefixPasses := 2 * numPasses
+	wg := [3]uint32{workGroupsX, workGroupsY, 1}
+
+	// Collect all writes for the prepare pass and every prefix-sum pass.
+	writes := make([]bind_group_provider.BufferWrite, 0, 1+totalPrefixPasses)
+
+	// Pass 0: prepare — precision distribution.
+	prepareBGP := s.lightHandler.Bgp("sat_prepare")
+	writes = append(writes, bind_group_provider.BufferWrite{
+		Provider: prepareBGP, Binding: 2, Offset: 0,
+		Data: (&light.GPUSATParams{Direction: [2]int32{0, 0}, Offset: 0}).Marshal(),
+	})
+
+	// Build params for every prefix-sum pass.
+	passIdx := 0
+	for axis := 0; axis < 2; axis++ {
+		dir := [2]int32{0, 0}
+		dir[axis] = 1
+		for k := 0; k < numPasses; k++ {
+			bgp := s.lightHandler.Bgp(fmt.Sprintf("sat_pass_%d", passIdx))
+			writes = append(writes, bind_group_provider.BufferWrite{
+				Provider: bgp, Binding: 2, Offset: 0,
+				Data: (&light.GPUSATParams{Direction: dir, Offset: int32(1) << uint(k)}).Marshal(),
+			})
+			passIdx++
+		}
+	}
+
+	// Single WriteBuffers call writes all uniform data to separate GPU buffers.
+	s.r.WriteBuffers(writes)
+
+	// Single command encoder batches every dispatch.
+	if err := s.r.BeginComputeFrame(); err != nil {
+		return
+	}
+
+	// Dispatch prepare.
+	s.r.DispatchCompute(satPipeKey, prepareBGP, wg)
+
+	// Dispatch all prefix-sum passes.
+	for i := 0; i < totalPrefixPasses; i++ {
+		bgp := s.lightHandler.Bgp(fmt.Sprintf("sat_pass_%d", i))
+		s.r.DispatchCompute(satPipeKey, bgp, wg)
+	}
+
+	s.r.EndComputeFrame()
 }
 
 // initLightCullResources initializes the Forward+ light culling pipeline and buffer resources.
@@ -1050,21 +2409,282 @@ func (s *scene) PrepareLightCulling() {
 	s.r.EndComputeFrame()
 }
 
+// initComposition initializes the composition and tone mapping subsystem: creates
+// offscreen HDR render targets (with optional MSAA textures), a linear sampler,
+// registers the fullscreen composition pipeline, and creates the composition bind
+// group provider with pre-set texture views. The G-Buffer must be initialized
+// before calling this method so that SSR textures are available for binding.
+func (s *scene) initComposition() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ch := s.lightHandler.CompositionHandler()
+	if s.r == nil || ch == nil {
+		return
+	}
+
+	w := s.screenWidth
+	h := s.screenHeight
+	if w <= 0 || h <= 0 {
+		return
+	}
+
+	sampleCount := s.r.SampleCount()
+
+	// 1. Create HDR + optional MSAA + depth textures.
+	hdrView, hdrTex, msaaView, msaaTex, depthView, depthTex, err := s.r.CreateCompositionTextures(w, h, sampleCount)
+	if err != nil {
+		panic(fmt.Sprintf("scene: failed to create composition textures: %v", err))
+	}
+	ch.SetHDRTexture(hdrTex)
+	ch.SetHDRTextureView(hdrView)
+	ch.SetMSAATexture(msaaTex)
+	ch.SetMSAATextureView(msaaView)
+	ch.SetDepthTexture(depthTex)
+	ch.SetDepthTextureView(depthView)
+
+	// Override the render pipeline color target format to RGBA16Float so that
+	// all subsequently registered pipelines target the offscreen HDR texture
+	// instead of the swapchain surface format.
+	s.r.SetRenderTargetFormat(wgpu.TextureFormatRGBA16Float)
+
+	// 2. Create linear sampler for HDR and SSR texture sampling.
+	linearSamp, err := s.r.CreateLinearSampler()
+	if err != nil {
+		panic(fmt.Sprintf("scene: failed to create composition linear sampler: %v", err))
+	}
+	ch.SetLinearSampler(linearSamp)
+
+	// 3. Load composition shaders and register the fullscreen pipeline.
+	compVert := shader.NewShader("_composition_vert", shader.ShaderTypeVertex, "engine/light/assets/composition-vert.wgsl")
+	compFrag := shader.NewShader("_composition_frag", shader.ShaderTypeFragment, "engine/light/assets/composition-frag.wgsl")
+
+	compKey := "composition"
+	compPipe := pipeline.NewPipeline(compKey, pipeline.PipelineTypeRender,
+		pipeline.WithVertexShader(compVert),
+		pipeline.WithFragmentShader(compFrag),
+	)
+	if err := s.r.RegisterCompositionPipeline(compPipe); err != nil {
+		panic(fmt.Sprintf("scene: failed to register composition pipeline: %v", err))
+	}
+	ch.SetPipelineKey("composition", compKey)
+
+	// 4. Initialize the composition bind group (group 0): hdr_texture, hdr_sampler,
+	// ssr_texture, ssr_sampler, composition_params uniform.
+	compBGP := ch.Bgp("composition")
+	compDesc := compFrag.BindGroupLayoutDescriptor(0)
+
+	// Pre-set the HDR texture view and sampler.
+	compBGP.SetTextureView(0, hdrView)
+	compBGP.SetSampler(1, linearSamp)
+
+	// Bind the SSR texture if available, otherwise create a 1×1 black fallback.
+	ssrHandler := s.lightHandler.SSRHandler()
+	if ssrHandler.SSRTextureView() != nil {
+		compBGP.SetTextureView(2, ssrHandler.SSRTextureView())
+	} else {
+		fallback := common.TextureStagingData{
+			Pixels: []byte{0, 0, 0, 0},
+			Width:  1,
+			Height: 1,
+			Linear: true,
+		}
+		if err := s.r.InitTextureView(compBGP, 2, fallback); err != nil {
+			panic(fmt.Sprintf("scene: failed to init SSR fallback texture for composition: %v", err))
+		}
+	}
+	compBGP.SetSampler(3, linearSamp)
+
+	sizeOverrides := map[int]uint64{
+		4: uint64((&light.GPUCompositionParams{}).Size()),
+	}
+	if err := s.r.InitBindGroup(compBGP, compDesc, nil, sizeOverrides); err != nil {
+		panic(fmt.Sprintf("scene: failed to init composition bind group: %v", err))
+	}
+
+	ch.Resize(w, h)
+	ch.SetEnabled(true)
+}
+
+// initSSR initializes the SSR (screen-space reflections) subsystem: creates the
+// half-resolution SSR output texture, the Hi-Z depth pyramid with per-mip views
+// and bind groups, registers all compute pipelines (Hi-Z init, Hi-Z downsample,
+// SSR compute), and wires up the SSR compute bind group with G-Buffer, HDR, and
+// Hi-Z texture views. The G-Buffer and composition subsystems must be initialized
+// before calling this method.
+func (s *scene) initSSR() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ssrHandler := s.lightHandler.SSRHandler()
+	gbHandler := s.lightHandler.GBufferHandler()
+	compHandler := s.lightHandler.CompositionHandler()
+	if s.r == nil || ssrHandler == nil || gbHandler == nil || compHandler == nil {
+		return
+	}
+	if !gbHandler.Enabled() || !compHandler.Enabled() {
+		return
+	}
+
+	w := s.screenWidth
+	h := s.screenHeight
+	if w <= 0 || h <= 0 {
+		return
+	}
+
+	// SSR runs at half-resolution.
+	halfW := w / 2
+	halfH := h / 2
+	if halfW <= 0 {
+		halfW = 1
+	}
+	if halfH <= 0 {
+		halfH = 1
+	}
+
+	// 1. Create SSR output texture (RGBA16Float, storage + texture binding).
+	ssrView, ssrTex, err := s.r.CreateSSRTextures(halfW, halfH)
+	if err != nil {
+		panic(fmt.Sprintf("scene: failed to create SSR textures: %v", err))
+	}
+	ssrHandler.SetSSRTexture(ssrTex)
+	ssrHandler.SetSSRTextureView(ssrView)
+
+	// 2. Create linear sampler for composition shader to sample SSR result.
+	linearSamp, err := s.r.CreateLinearSampler()
+	if err != nil {
+		panic(fmt.Sprintf("scene: failed to create SSR linear sampler: %v", err))
+	}
+	ssrHandler.SetLinearSampler(linearSamp)
+
+	// 3. Create Hi-Z depth pyramid texture with full mip chain and per-mip views.
+	hizView, hizTex, mipReadViews, mipStorageViews, mipCount, err := s.r.CreateHiZTextures(w, h)
+	if err != nil {
+		panic(fmt.Sprintf("scene: failed to create Hi-Z textures: %v", err))
+	}
+	ssrHandler.SetHiZTexture(hizTex)
+	ssrHandler.SetHiZTextureView(hizView)
+	ssrHandler.SetHiZMipCount(mipCount)
+	ssrHandler.SetHiZMipReadViews(mipReadViews)
+	ssrHandler.SetHiZStorageViews(mipStorageViews)
+
+	// 4. Register Hi-Z init compute pipeline (copies depth → Hi-Z mip 0).
+	hizInitShader := shader.NewShader("_hiz_init", shader.ShaderTypeCompute, "engine/light/assets/hiz-init-compute.wgsl")
+	hizInitKey := "hiz_init"
+	hizInitPipe := pipeline.NewPipeline(hizInitKey, pipeline.PipelineTypeCompute,
+		pipeline.WithComputeShader(hizInitShader),
+	)
+	if err := s.r.RegisterPipelines(hizInitPipe); err != nil {
+		panic(fmt.Sprintf("scene: failed to register Hi-Z init pipeline: %v", err))
+	}
+	ssrHandler.SetPipelineKey("hiz_init", hizInitKey)
+
+	// 5. Create Hi-Z init bind group: binding 0 = gbuffer_depth, binding 1 = hiz mip 0 storage.
+	hizInitBGP := bind_group_provider.NewBindGroupProvider("hiz_init")
+	hizInitBGP.SetTextureView(0, gbHandler.DepthTextureView())
+	hizInitBGP.SetTextureView(1, mipStorageViews[0])
+	hizInitDesc := hizInitShader.BindGroupLayoutDescriptor(0)
+	if err := s.r.InitBindGroup(hizInitBGP, hizInitDesc, nil, nil); err != nil {
+		panic(fmt.Sprintf("scene: failed to init Hi-Z init bind group: %v", err))
+	}
+	ssrHandler.SetBgp("hiz_init", hizInitBGP)
+
+	// 6. Register Hi-Z downsample compute pipeline (min of 2×2 from prev mip).
+	hizDownShader := shader.NewShader("_hiz_downsample", shader.ShaderTypeCompute, "engine/light/assets/hiz-downsample-compute.wgsl")
+	hizDownKey := "hiz_downsample"
+	hizDownPipe := pipeline.NewPipeline(hizDownKey, pipeline.PipelineTypeCompute,
+		pipeline.WithComputeShader(hizDownShader),
+	)
+	if err := s.r.RegisterPipelines(hizDownPipe); err != nil {
+		panic(fmt.Sprintf("scene: failed to register Hi-Z downsample pipeline: %v", err))
+	}
+	ssrHandler.SetPipelineKey("hiz_downsample", hizDownKey)
+
+	// 7. Create per-mip downsample bind groups: for each mip level 1..N-1,
+	//    binding 0 = read view of mip N-1, binding 1 = storage view of mip N.
+	hizDownDesc := hizDownShader.BindGroupLayoutDescriptor(0)
+	for i := 1; i < mipCount; i++ {
+		bgpName := fmt.Sprintf("hiz_down_%d", i)
+		bgp := bind_group_provider.NewBindGroupProvider(bgpName)
+		bgp.SetTextureView(0, mipReadViews[i-1])
+		bgp.SetTextureView(1, mipStorageViews[i])
+		if err := s.r.InitBindGroup(bgp, hizDownDesc, nil, nil); err != nil {
+			panic(fmt.Sprintf("scene: failed to init Hi-Z downsample bind group mip %d: %v", i, err))
+		}
+		ssrHandler.SetBgp(bgpName, bgp)
+	}
+
+	// 8. Load SSR compute shader and register compute pipeline.
+	ssrCompShader := shader.NewShader("_ssr_compute", shader.ShaderTypeCompute, "engine/light/assets/ssr-compute.wgsl")
+	ssrCompKey := "ssr_compute"
+	ssrCompPipe := pipeline.NewPipeline(ssrCompKey, pipeline.PipelineTypeCompute,
+		pipeline.WithComputeShader(ssrCompShader),
+	)
+	if err := s.r.RegisterPipelines(ssrCompPipe); err != nil {
+		panic(fmt.Sprintf("scene: failed to register SSR compute pipeline: %v", err))
+	}
+	ssrHandler.SetPipelineKey("ssr_compute", ssrCompKey)
+
+	// 9. Initialize SSR compute bind group (group 0):
+	//   binding 0: ssr_params uniform
+	//   binding 1: gbuffer_normal texture
+	//   binding 2: gbuffer_depth texture
+	//   binding 3: hdr_texture
+	//   binding 4: ssr_output storage texture
+	//   binding 5: hiz_texture (full mip chain)
+	ssrBGP := ssrHandler.Bgp("ssr_compute")
+	ssrDesc := ssrCompShader.BindGroupLayoutDescriptor(0)
+
+	ssrBGP.SetTextureView(1, gbHandler.NormalTextureView())
+	ssrBGP.SetTextureView(2, gbHandler.DepthTextureView())
+	ssrBGP.SetTextureView(3, compHandler.HDRTextureView())
+	ssrBGP.SetTextureView(4, ssrView)
+	ssrBGP.SetTextureView(5, hizView)
+
+	ssrSizeOverrides := map[int]uint64{
+		0: uint64((&light.GPUSSRParams{}).Size()),
+	}
+	if err := s.r.InitBindGroup(ssrBGP, ssrDesc, nil, ssrSizeOverrides); err != nil {
+		panic(fmt.Sprintf("scene: failed to init SSR compute bind group: %v", err))
+	}
+
+	ssrHandler.Resize(w, h)
+	ssrHandler.SetEnabled(true)
+}
+
 // initLighting initializes the entire lighting pipeline in the correct order:
 // light storage buffer, shadow map resources, shadow lit bind group, and Forward+
 // light culling. All lighting shaders are loaded internally from the engine's
-// standard light shader assets.
+// standard light shader assets. When VSM is enabled on the lighting handler, the
+// VSM-specific shaders and resources are used instead of the PCF defaults.
 func (s *scene) initLighting(screenWidth, screenHeight int) {
-	litFragShader := shader.NewShader("_lit_frag", shader.ShaderTypeFragment, "engine/light/assets/lit-frag.wgsl")
-	shadowVertShader := shader.NewShader("_shadow_depth_vert", shader.ShaderTypeVertex, "engine/light/assets/shadow-depth-vert.wgsl")
-	shadowSkinnedVertShader := shader.NewShader("_shadow_depth_skinned_vert", shader.ShaderTypeVertex, "engine/light/assets/shadow-depth-skinned-vert.wgsl")
+	pcssMode := s.lightHandler.PCSSEnabled()
+
+	// Select the correct lit fragment shader variant based on shadow mode.
+	var litFragShader shader.Shader
+	if pcssMode {
+		litFragShader = shader.NewShader("_lit_frag_pcss", shader.ShaderTypeFragment, "engine/light/assets/lit-frag-pcss.wgsl")
+	} else {
+		litFragShader = shader.NewShader("_lit_frag_vsm", shader.ShaderTypeFragment, "engine/light/assets/lit-frag-vsm.wgsl")
+	}
 	cullComputeShader := shader.NewShader("_light_cull_compute", shader.ShaderTypeCompute, "engine/light/assets/light-cull-compute.wgsl")
 
 	// 1. Light storage buffer (must be first — other steps share this buffer).
 	s.initLightBindGroup(litFragShader)
 
-	// 2. Shadow depth texture, comparison sampler, shadow data BGP, shadow pipelines.
-	s.initShadowMap(shadowVertShader, shadowSkinnedVertShader)
+	// 2. Shadow resources — VSM creates moments+scratch textures, a linear sampler,
+	// VSM render pipelines, and the separable blur compute pipeline.
+	// When PCSS is enabled, the SAT compute pipeline and textures are additionally created.
+	vsmVertShader := shader.NewShader("_vsm_depth_vert", shader.ShaderTypeVertex, "engine/light/assets/vsm-depth-vert.wgsl")
+	vsmSkinnedVertShader := shader.NewShader("_vsm_depth_skinned_vert", shader.ShaderTypeVertex, "engine/light/assets/vsm-depth-skinned-vert.wgsl")
+	vsmFragShader := shader.NewShader("_vsm_depth_frag", shader.ShaderTypeFragment, "engine/light/assets/vsm-depth-frag.wgsl")
+	blurComputeShader := shader.NewShader("_vsm_blur_compute", shader.ShaderTypeCompute, "engine/light/assets/vsm-blur-compute.wgsl")
+	s.initVSMShadowMap(vsmVertShader, vsmSkinnedVertShader, vsmFragShader, blurComputeShader)
+
+	if pcssMode {
+		satComputeShader := shader.NewShader("_vsm_sat_compute", shader.ShaderTypeCompute, "engine/light/assets/vsm-sat-compute.wgsl")
+		s.initSATResources(satComputeShader)
+	}
 
 	// 3. Shadow lit BGP (fragment-side shadow sampling — references shadow resources from step 2).
 	s.initShadowLitBindGroup(litFragShader)
@@ -1081,7 +2701,51 @@ func (s *scene) initLighting(screenWidth, screenHeight int) {
 	// camera BGL must be recreated with the combined visibility to pass validation.
 	s.reinitCameraBGPForLitPipeline(litFragShader)
 
-	// 6. Mark the lighting subsystem as GPU-initialized.
+	// 6. G-Buffer MRT pre-pass (required by SSAO and SSR).
+	s.initGBuffer()
+
+	// 7. SSAO — hemisphere sampling + bilateral blur (requires G-Buffer).
+	s.initSSAO()
+
+	// 8. SSAO lit bind group — binds blurred SSAO texture at @group(6) for the lit
+	// fragment shader. When SSAO is disabled, a 1×1 white fallback is used (ao=1.0).
+	s.initSSAOLitBindGroup(litFragShader)
+
+	// 9. Composition — offscreen HDR render target + fullscreen tone-mapping pass.
+	// Must come before SSR so the HDR texture exists for SSR to read.
+	s.initComposition()
+
+	// 10. SSR — screen-space reflections compute pass (requires G-Buffer + composition HDR texture).
+	s.initSSR()
+
+	// Re-bind the SSR texture on the composition BGP now that it exists.
+	if s.lightHandler.SSRHandler().Enabled() && s.lightHandler.CompositionHandler().Enabled() {
+		compBGP := s.lightHandler.CompositionHandler().Bgp("composition")
+		if compBGP != nil && s.lightHandler.SSRHandler().SSRTextureView() != nil {
+			compBGP.SetTextureView(2, s.lightHandler.SSRHandler().SSRTextureView())
+			// Rebuild the composition bind group to pick up the real SSR texture.
+			compFrag := shader.NewShader("_composition_frag_rebind", shader.ShaderTypeFragment, "engine/light/assets/composition-frag.wgsl")
+			compDesc := compFrag.BindGroupLayoutDescriptor(0)
+			sizeOverrides := map[int]uint64{
+				4: uint64((&light.GPUCompositionParams{}).Size()),
+			}
+			if err := s.r.InitBindGroup(compBGP, compDesc, nil, sizeOverrides); err != nil {
+				panic(fmt.Sprintf("scene: failed to re-init composition bind group with SSR texture: %v", err))
+			}
+		}
+	}
+
+	// 11. Irradiance probe grid (requires lighting GPU resources for bake passes).
+	if s.lightHandler.ProbeGrid() != nil {
+		s.initProbeGrid()
+	}
+
+	// 12. Probes lit bind group — binds probe storage buffer + grid params at
+	// @group(7) for the lit fragment shader. When probes are absent, minimal
+	// fallback buffers with total_probes = 0 are used (no indirect illumination).
+	s.initProbesLitBindGroup(litFragShader)
+
+	// 13. Mark the lighting subsystem as GPU-initialized.
 	s.lightHandler.SetEnabled(true)
 }
 
@@ -1116,30 +2780,24 @@ func (s *scene) Add(obj game_object.GameObject, pipelineOpts ...pipeline.Pipelin
 		panic("scene: cannot Add a GameObject without a Model")
 	}
 
-	// Auto-resolve standard shaders based on whether the model uses skeletal animation
-	// and whether the scene has lighting enabled.
+	// Auto-resolve standard shaders based on whether the model uses skeletal
+	// animation. The full GI lighting pipeline is always active, so lit shaders
+	// are always used.
 	var computeShader, vertexShader, fragmentShader shader.Shader
-	lit := s.lightHandler.Enabled()
 	if mdl.Skinned() {
 		computeShader = shader.NewShader(mdl.Name()+"_compute", shader.ShaderTypeCompute, "engine/renderer/animator/assets/skeletal-compute.wgsl")
-		if lit {
-			vertexShader = shader.NewShader(mdl.Name()+"_vertex", shader.ShaderTypeVertex, "engine/light/assets/lit-skinned-vert.wgsl")
-		} else {
-			vertexShader = shader.NewShader(mdl.Name()+"_vertex", shader.ShaderTypeVertex, "engine/model/assets/skinned-vert.wgsl")
-		}
+		vertexShader = shader.NewShader(mdl.Name()+"_vertex", shader.ShaderTypeVertex, "engine/light/assets/lit-skinned-vert.wgsl")
 	} else {
 		computeShader = shader.NewShader(mdl.Name()+"_compute", shader.ShaderTypeCompute, "engine/renderer/animator/assets/simple-compute.wgsl")
-		if lit {
-			vertexShader = shader.NewShader(mdl.Name()+"_vertex", shader.ShaderTypeVertex, "engine/light/assets/lit-vert.wgsl")
-		} else {
-			vertexShader = shader.NewShader(mdl.Name()+"_vertex", shader.ShaderTypeVertex, "engine/model/assets/simple-vert.wgsl")
-		}
+		vertexShader = shader.NewShader(mdl.Name()+"_vertex", shader.ShaderTypeVertex, "engine/light/assets/lit-vert.wgsl")
 	}
 	// Resolve fragment shader path: use the first material's custom path if set,
-	// otherwise fall back to the lit or standard textured fragment shader.
-	fragShaderPath := "engine/model/assets/textured-frag.wgsl"
-	if lit {
-		fragShaderPath = "engine/light/assets/lit-frag.wgsl"
+	// otherwise fall back to the lit VSM or PCSS variant.
+	var fragShaderPath string
+	if s.lightHandler.PCSSEnabled() {
+		fragShaderPath = "engine/light/assets/lit-frag-pcss.wgsl"
+	} else {
+		fragShaderPath = "engine/light/assets/lit-frag-vsm.wgsl"
 	}
 	for _, mat := range mdl.RenderMaterials() {
 		if p := mat.FragmentShaderPath(); p != "" {
@@ -2550,6 +4208,14 @@ func (s *scene) DrawCalls() error {
 							}
 						case shader.AnnotationArgAnimator:
 							provider = a.OutputBindGroupProvider()
+						case shader.AnnotationArgSSAO:
+							if s.lightHandler.Enabled() {
+								provider = s.lightHandler.Bgp("ssao_lit")
+							}
+						case shader.AnnotationArgProbes:
+							if s.lightHandler.Enabled() {
+								provider = s.lightHandler.Bgp("probe_lit")
+							}
 						}
 					case shader.AnnotationTypeBindingGroup:
 						typeArg := string(decl.Args[2])
@@ -2586,6 +4252,10 @@ func (s *scene) DrawCalls() error {
 								provider = ep
 							} else if mp := mat.Provider(g); mp != nil {
 								provider = mp
+							}
+						case shader.AnnotationArgIrradianceProbe, shader.AnnotationArgProbeGridParams:
+							if s.lightHandler.Enabled() {
+								provider = s.lightHandler.Bgp("probe_lit")
 							}
 						}
 					}

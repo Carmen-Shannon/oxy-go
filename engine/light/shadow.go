@@ -28,3 +28,24 @@ const DefaultShadowBias float32 = 0.001
 // self-shadowing on concave geometry at the cost of slight shadow
 // detachment from contact points. Typical values are 2.0–4.0.
 const DefaultShadowNormalBiasScale float32 = 3.0
+
+// DefaultVSMBlurRadius is the default half-width (in texels) of the separable
+// blur applied to the variance shadow map. The paper notes a minimum filter
+// width of at least 4 is required to eliminate aliasing. The full kernel width
+// is 2*radius+1 texels.
+const DefaultVSMBlurRadius int = 4
+
+// DefaultVSMMinVariance is the minimum variance clamped during Chebyshev's
+// inequality evaluation in the VSM sampling shader. Prevents division by near-zero
+// variance from producing hard shadow edges on perfectly planar geometry.
+const DefaultVSMMinVariance float32 = 0.00001
+
+// DefaultVSMLightBleedReduction is the exponent applied to the raw Chebyshev
+// shadow probability to reduce light-bleeding artifacts. Higher values reduce
+// light bleeding at the cost of darker shadow interiors. Typical range: 0.1–0.6.
+const DefaultVSMLightBleedReduction float32 = 0.3
+
+// DefaultVSMLightSize is the default world-space size of the area light used for
+// PCSS penumbra estimation. Larger values produce wider soft-shadow penumbrae.
+// Only relevant when PCSS (Phase 7) is enabled.
+const DefaultVSMLightSize float32 = 1.0

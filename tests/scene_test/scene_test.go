@@ -1033,6 +1033,9 @@ func (suite *sceneTest) TestDrawCalls() {
 			return nil
 		}).Maybe()
 
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+
 		captured := capturePipelines(r)
 		r.EXPECT().InitMeshBuffers(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 		r.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
@@ -1049,7 +1052,7 @@ func (suite *sceneTest) TestDrawCalls() {
 		mat.EXPECT().Provider(mock.Anything).Return(nil).Maybe()
 		mat.EXPECT().FragmentShaderPath().Return("").Maybe()
 
-		s := scene.NewScene("test", cam, r)
+		s := scene.NewScene("test", cam, r, scene.WithLighting(handler))
 
 		obj, mdl := newWiredObject("indcube", false, []material.Material{mat})
 		mdl.EXPECT().MeshProvider().Unset()
@@ -1070,7 +1073,9 @@ func (suite *sceneTest) TestDrawCalls() {
 	})
 
 	suite.Run("returns error when DrawCall fails", func() {
-		s, _, r := newMinimalScene("test")
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		s, _, r := newMinimalScene("test", scene.WithLighting(handler))
 		captured := capturePipelines(r)
 		r.EXPECT().InitMeshBuffers(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
@@ -1129,6 +1134,9 @@ func (suite *sceneTest) TestDrawCalls() {
 			return nil
 		}).Maybe()
 
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+
 		capturePipelines(r)
 		r.EXPECT().InitMeshBuffers(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 		r.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
@@ -1144,7 +1152,7 @@ func (suite *sceneTest) TestDrawCalls() {
 		mat.EXPECT().Provider(mock.Anything).Return(nil).Maybe()
 		mat.EXPECT().FragmentShaderPath().Return("").Maybe()
 
-		s := scene.NewScene("test", cam, r)
+		s := scene.NewScene("test", cam, r, scene.WithLighting(handler))
 
 		obj, mdl := newWiredObject("inderrcube", false, []material.Material{mat})
 		mdl.EXPECT().MeshProvider().Unset()
@@ -1478,13 +1486,39 @@ func (suite *sceneTest) TestAddLight() {
 
 	suite.Run("triggers initLighting on first call without pre-enabled handler", func() {
 		s, cam, r := newMinimalScene("test", scene.WithScreenSize(1280, 720))
-		r.EXPECT().CreateShadowDepthTexture(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
-		r.EXPECT().CreateComparisonSampler().Return(&wgpu.Sampler{}, nil).Maybe()
-		r.EXPECT().RegisterShadowPipeline(mock.Anything).Return(nil).Maybe()
 		r.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Maybe()
 		r.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
+		r.EXPECT().CreateVSMTextures(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
+		r.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}, nil).Maybe()
+		r.EXPECT().RegisterVSMShadowPipeline(mock.Anything).Return(nil).Maybe()
 		cam.EXPECT().BindGroupProvider().Unset()
 		cam.EXPECT().BindGroupProvider().Return(bind_group_provider.NewBindGroupProvider("cam_bgp")).Maybe()
+
+		// GBuffer (initLighting step 6)
+		r.EXPECT().CreateGBufferTextures(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
+		r.EXPECT().RegisterGBufferPipeline(mock.Anything).Return(nil).Maybe()
+
+		// SSAO (initLighting step 7)
+		r.EXPECT().CreateSSAOTextures(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
+		r.EXPECT().WriteTexture(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+		// SSAO lit fallback (initLighting step 8)
+		r.EXPECT().InitTextureView(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+		r.EXPECT().InitSampler(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
+		// Composition (initLighting step 9)
+		r.EXPECT().SampleCount().Return(uint32(1)).Maybe()
+		r.EXPECT().CreateCompositionTextures(mock.Anything, mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
+		r.EXPECT().SetRenderTargetFormat(mock.Anything).Return().Maybe()
+		r.EXPECT().RegisterCompositionPipeline(mock.Anything).Return(nil).Maybe()
+
+		// SSR (initLighting step 10)
+		r.EXPECT().CreateSSRTextures(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
+		r.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, []*wgpu.TextureView{{}}, []*wgpu.TextureView{{}}, 1, nil).Maybe()
+
+		// Probes lit fallback (initLighting step 12)
+		r.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).Return(&wgpu.Buffer{}, nil).Maybe()
+		r.EXPECT().WriteRawBuffer(mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 		l := &lightmocks.MockLight{}
 		s.AddLight(l)
@@ -1513,11 +1547,37 @@ func (suite *sceneTest) TestAddLight() {
 			return nil
 		}).Maybe()
 
-		r.EXPECT().CreateShadowDepthTexture(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
-		r.EXPECT().CreateComparisonSampler().Return(&wgpu.Sampler{}, nil).Maybe()
-		r.EXPECT().RegisterShadowPipeline(mock.Anything).Return(nil).Maybe()
+		r.EXPECT().CreateVSMTextures(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
+		r.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}, nil).Maybe()
+		r.EXPECT().RegisterVSMShadowPipeline(mock.Anything).Return(nil).Maybe()
 		r.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Maybe()
 		r.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
+
+		// GBuffer (initLighting step 6)
+		r.EXPECT().CreateGBufferTextures(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
+		r.EXPECT().RegisterGBufferPipeline(mock.Anything).Return(nil).Maybe()
+
+		// SSAO (initLighting step 7)
+		r.EXPECT().CreateSSAOTextures(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
+		r.EXPECT().WriteTexture(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+		// SSAO lit fallback (initLighting step 8)
+		r.EXPECT().InitTextureView(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+		r.EXPECT().InitSampler(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
+		// Composition (initLighting step 9)
+		r.EXPECT().SampleCount().Return(uint32(1)).Maybe()
+		r.EXPECT().CreateCompositionTextures(mock.Anything, mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
+		r.EXPECT().SetRenderTargetFormat(mock.Anything).Return().Maybe()
+		r.EXPECT().RegisterCompositionPipeline(mock.Anything).Return(nil).Maybe()
+
+		// SSR (initLighting step 10)
+		r.EXPECT().CreateSSRTextures(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
+		r.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, []*wgpu.TextureView{{}}, []*wgpu.TextureView{{}}, 1, nil).Maybe()
+
+		// Probes lit fallback (initLighting step 12)
+		r.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).Return(&wgpu.Buffer{}, nil).Maybe()
+		r.EXPECT().WriteRawBuffer(mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 		s := scene.NewScene("test", cam, r, scene.WithScreenSize(1280, 720))
 
@@ -1670,7 +1730,8 @@ func (suite *sceneTest) TestPrepareShadows() {
 	suite.Run("dispatches shadow depth pass for shadow-casting directional light", func() {
 		handler := light.NewLightingHandler()
 		handler.SetEnabled(true)
-		handler.SetShadowDepthTextureView(&wgpu.TextureView{})
+		handler.SetVSMTextureView(&wgpu.TextureView{})
+		handler.SetVSMAuxDepthTextureView(&wgpu.TextureView{})
 		handler.SetPipelineKey("shadow_static_back", "shadow_pipe")
 
 		s, cam, r := newMinimalScene("test", scene.WithLighting(handler))
@@ -1713,10 +1774,13 @@ func (suite *sceneTest) TestPrepareShadows() {
 		wirePipelineLookup(r, captured)
 		r.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		r.EXPECT().BeginShadowFrame().Return(nil).Maybe()
-		r.EXPECT().BeginShadowPass(mock.Anything).Return().Maybe()
+		r.EXPECT().BeginVSMShadowPass(mock.Anything, mock.Anything).Return().Maybe()
 		r.EXPECT().ShadowDrawCall(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 		r.EXPECT().EndShadowPass().Return().Maybe()
 		r.EXPECT().EndShadowFrame().Return().Maybe()
+		r.EXPECT().BeginComputeFrame().Return(nil).Maybe()
+		r.EXPECT().DispatchCompute(mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+		r.EXPECT().EndComputeFrame().Return().Maybe()
 
 		suite.NotPanics(func() {
 			s.PrepareShadows()
@@ -1727,7 +1791,8 @@ func (suite *sceneTest) TestPrepareShadows() {
 	suite.Run("writes to shadow lit BGP when buffer exists", func() {
 		handler := light.NewLightingHandler()
 		handler.SetEnabled(true)
-		handler.SetShadowDepthTextureView(&wgpu.TextureView{})
+		handler.SetVSMTextureView(&wgpu.TextureView{})
+		handler.SetVSMAuxDepthTextureView(&wgpu.TextureView{})
 		handler.SetPipelineKey("shadow_static_front", "shadow_front_pipe")
 		handler.Bgp("shadow_lit").SetBuffer(0, &wgpu.Buffer{})
 
@@ -1765,10 +1830,13 @@ func (suite *sceneTest) TestPrepareShadows() {
 		wirePipelineLookup(r, captured)
 		r.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		r.EXPECT().BeginShadowFrame().Return(nil).Maybe()
-		r.EXPECT().BeginShadowPass(mock.Anything).Return().Maybe()
+		r.EXPECT().BeginVSMShadowPass(mock.Anything, mock.Anything).Return().Maybe()
 		r.EXPECT().ShadowDrawCall(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 		r.EXPECT().EndShadowPass().Return().Maybe()
 		r.EXPECT().EndShadowFrame().Return().Maybe()
+		r.EXPECT().BeginComputeFrame().Return(nil).Maybe()
+		r.EXPECT().DispatchCompute(mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+		r.EXPECT().EndComputeFrame().Return().Maybe()
 
 		suite.NotPanics(func() {
 			s.PrepareShadows()
@@ -1778,7 +1846,8 @@ func (suite *sceneTest) TestPrepareShadows() {
 	suite.Run("handles shadow cull mode none", func() {
 		handler := light.NewLightingHandler()
 		handler.SetEnabled(true)
-		handler.SetShadowDepthTextureView(&wgpu.TextureView{})
+		handler.SetVSMTextureView(&wgpu.TextureView{})
+		handler.SetVSMAuxDepthTextureView(&wgpu.TextureView{})
 		handler.SetPipelineKey("shadow_static_none", "shadow_none_pipe")
 
 		s, cam, r := newMinimalScene("test", scene.WithLighting(handler))
@@ -1815,10 +1884,13 @@ func (suite *sceneTest) TestPrepareShadows() {
 		wirePipelineLookup(r, captured)
 		r.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		r.EXPECT().BeginShadowFrame().Return(nil).Maybe()
-		r.EXPECT().BeginShadowPass(mock.Anything).Return().Maybe()
+		r.EXPECT().BeginVSMShadowPass(mock.Anything, mock.Anything).Return().Maybe()
 		r.EXPECT().ShadowDrawCall(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 		r.EXPECT().EndShadowPass().Return().Maybe()
 		r.EXPECT().EndShadowFrame().Return().Maybe()
+		r.EXPECT().BeginComputeFrame().Return(nil).Maybe()
+		r.EXPECT().DispatchCompute(mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+		r.EXPECT().EndComputeFrame().Return().Maybe()
 
 		suite.NotPanics(func() {
 			s.PrepareShadows()
@@ -1828,7 +1900,8 @@ func (suite *sceneTest) TestPrepareShadows() {
 	suite.Run("uses skinned shadow pipeline key for skinned model", func() {
 		handler := light.NewLightingHandler()
 		handler.SetEnabled(true)
-		handler.SetShadowDepthTextureView(&wgpu.TextureView{})
+		handler.SetVSMTextureView(&wgpu.TextureView{})
+		handler.SetVSMAuxDepthTextureView(&wgpu.TextureView{})
 		handler.SetPipelineKey("shadow_skinned_back", "shadow_skinned_pipe")
 
 		s, cam, r := newMinimalScene("test", scene.WithLighting(handler))
@@ -1889,10 +1962,13 @@ func (suite *sceneTest) TestPrepareShadows() {
 		wirePipelineLookup(r, captured)
 		r.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		r.EXPECT().BeginShadowFrame().Return(nil).Maybe()
-		r.EXPECT().BeginShadowPass(mock.Anything).Return().Maybe()
+		r.EXPECT().BeginVSMShadowPass(mock.Anything, mock.Anything).Return().Maybe()
 		r.EXPECT().ShadowDrawCall(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 		r.EXPECT().EndShadowPass().Return().Maybe()
 		r.EXPECT().EndShadowFrame().Return().Maybe()
+		r.EXPECT().BeginComputeFrame().Return(nil).Maybe()
+		r.EXPECT().DispatchCompute(mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+		r.EXPECT().EndComputeFrame().Return().Maybe()
 
 		suite.NotPanics(func() {
 			s.PrepareShadows()
@@ -1903,7 +1979,8 @@ func (suite *sceneTest) TestPrepareShadows() {
 	suite.Run("skips model that does not cast shadows", func() {
 		handler := light.NewLightingHandler()
 		handler.SetEnabled(true)
-		handler.SetShadowDepthTextureView(&wgpu.TextureView{})
+		handler.SetVSMTextureView(&wgpu.TextureView{})
+		handler.SetVSMAuxDepthTextureView(&wgpu.TextureView{})
 		handler.SetPipelineKey("shadow_static_back", "shadow_pipe")
 
 		s, cam, r := newMinimalScene("test", scene.WithLighting(handler))
@@ -1939,9 +2016,12 @@ func (suite *sceneTest) TestPrepareShadows() {
 		wirePipelineLookup(r, captured)
 		r.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		r.EXPECT().BeginShadowFrame().Return(nil).Maybe()
-		r.EXPECT().BeginShadowPass(mock.Anything).Return().Maybe()
+		r.EXPECT().BeginVSMShadowPass(mock.Anything, mock.Anything).Return().Maybe()
 		r.EXPECT().EndShadowPass().Return().Maybe()
 		r.EXPECT().EndShadowFrame().Return().Maybe()
+		r.EXPECT().BeginComputeFrame().Return(nil).Maybe()
+		r.EXPECT().DispatchCompute(mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+		r.EXPECT().EndComputeFrame().Return().Maybe()
 
 		suite.NotPanics(func() {
 			s.PrepareShadows()
@@ -1951,7 +2031,8 @@ func (suite *sceneTest) TestPrepareShadows() {
 	suite.Run("skips shadow pass when BeginShadowFrame returns error", func() {
 		handler := light.NewLightingHandler()
 		handler.SetEnabled(true)
-		handler.SetShadowDepthTextureView(&wgpu.TextureView{})
+		handler.SetVSMTextureView(&wgpu.TextureView{})
+		handler.SetVSMAuxDepthTextureView(&wgpu.TextureView{})
 		handler.SetPipelineKey("shadow_static_back", "shadow_pipe")
 
 		s, cam, r := newMinimalScene("test", scene.WithLighting(handler))
@@ -2013,15 +2094,18 @@ func (suite *sceneTest) TestPrepareShadows() {
 		r.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		r.EXPECT().DispatchCompute(mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 		r.EXPECT().BeginShadowFrame().Return(nil).Maybe()
-		r.EXPECT().BeginShadowPass(mock.Anything).Return().Maybe()
+		r.EXPECT().BeginVSMShadowPass(mock.Anything, mock.Anything).Return().Maybe()
 		r.EXPECT().ShadowDrawCallIndirect(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 		r.EXPECT().ShadowDrawCall(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 		r.EXPECT().EndShadowPass().Return().Maybe()
 		r.EXPECT().EndShadowFrame().Return().Maybe()
+		r.EXPECT().BeginComputeFrame().Return(nil).Maybe()
+		r.EXPECT().EndComputeFrame().Return().Maybe()
 
 		handler := light.NewLightingHandler()
 		handler.SetEnabled(true)
-		handler.SetShadowDepthTextureView(&wgpu.TextureView{})
+		handler.SetVSMTextureView(&wgpu.TextureView{})
+		handler.SetVSMAuxDepthTextureView(&wgpu.TextureView{})
 		handler.SetPipelineKey("shadow_static_back", "shadow_indirect_pipe")
 
 		s := scene.NewScene("test", cam, r, scene.WithLighting(handler))
@@ -3146,7 +3230,7 @@ func (suite *sceneTest) TestInitPhysicsGPUErrors() {
 }
 
 func (suite *sceneTest) TestInitLightingErrors() {
-	suite.Run("initShadowMap panics on failed CreateShadowDepthTexture", func() {
+	suite.Run("initShadowMap panics on failed CreateVSMTextures", func() {
 		handler := light.NewLightingHandler()
 
 		cam := &cameramocks.MockCamera{}
@@ -3174,8 +3258,8 @@ func (suite *sceneTest) TestInitLightingErrors() {
 		captured := capturePipelines(r)
 		r.EXPECT().InitMeshBuffers(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
-		// CreateShadowDepthTexture fails
-		r.EXPECT().CreateShadowDepthTexture(mock.Anything, mock.Anything).Return(nil, nil, fmt.Errorf("shadow tex failed")).Maybe()
+		// CreateVSMTextures fails
+		r.EXPECT().CreateVSMTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, nil, nil, fmt.Errorf("vsm tex failed")).Maybe()
 
 		s := scene.NewScene("test", cam, r, scene.WithLighting(handler))
 
@@ -3226,9 +3310,9 @@ func (suite *sceneTest) TestInitLightingErrors() {
 
 		captured := capturePipelines(r)
 		r.EXPECT().InitMeshBuffers(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
-		r.EXPECT().CreateShadowDepthTexture(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
-		r.EXPECT().CreateComparisonSampler().Return(&wgpu.Sampler{}, nil).Maybe()
-		r.EXPECT().RegisterShadowPipeline(mock.Anything).Return(nil).Maybe()
+		r.EXPECT().CreateVSMTextures(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
+		r.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}, nil).Maybe()
+		r.EXPECT().RegisterVSMShadowPipeline(mock.Anything).Return(nil).Maybe()
 
 		s := scene.NewScene("test", cam, r, scene.WithLighting(handler), scene.WithScreenSize(800, 600))
 
@@ -3243,7 +3327,7 @@ func (suite *sceneTest) TestInitLightingErrors() {
 		_ = captured
 	})
 
-	suite.Run("initShadowMap panics on failed CreateComparisonSampler", func() {
+	suite.Run("initShadowMap panics on failed CreateLinearSampler", func() {
 		handler := light.NewLightingHandler()
 
 		cam := &cameramocks.MockCamera{}
@@ -3269,8 +3353,8 @@ func (suite *sceneTest) TestInitLightingErrors() {
 		}).Maybe()
 
 		capturePipelines(r)
-		r.EXPECT().CreateShadowDepthTexture(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
-		r.EXPECT().CreateComparisonSampler().Return(nil, fmt.Errorf("sampler failed")).Maybe()
+		r.EXPECT().CreateVSMTextures(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
+		r.EXPECT().CreateLinearSampler().Return(nil, fmt.Errorf("sampler failed")).Maybe()
 
 		s := scene.NewScene("test", cam, r, scene.WithLighting(handler))
 
@@ -3280,7 +3364,7 @@ func (suite *sceneTest) TestInitLightingErrors() {
 		})
 	})
 
-	suite.Run("initShadowMap panics on failed RegisterShadowPipeline", func() {
+	suite.Run("initShadowMap panics on failed RegisterVSMShadowPipeline", func() {
 		handler := light.NewLightingHandler()
 
 		cam := &cameramocks.MockCamera{}
@@ -3306,9 +3390,9 @@ func (suite *sceneTest) TestInitLightingErrors() {
 		}).Maybe()
 
 		capturePipelines(r)
-		r.EXPECT().CreateShadowDepthTexture(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
-		r.EXPECT().CreateComparisonSampler().Return(&wgpu.Sampler{}, nil).Maybe()
-		r.EXPECT().RegisterShadowPipeline(mock.Anything).Return(fmt.Errorf("shadow pipeline failed")).Maybe()
+		r.EXPECT().CreateVSMTextures(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
+		r.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}, nil).Maybe()
+		r.EXPECT().RegisterVSMShadowPipeline(mock.Anything).Return(fmt.Errorf("vsm shadow pipeline failed")).Maybe()
 
 		s := scene.NewScene("test", cam, r, scene.WithLighting(handler))
 
@@ -3318,7 +3402,7 @@ func (suite *sceneTest) TestInitLightingErrors() {
 		})
 	})
 
-	suite.Run("initShadowMap panics on failed skinned RegisterShadowPipeline", func() {
+	suite.Run("initShadowMap panics on failed skinned RegisterVSMShadowPipeline", func() {
 		handler := light.NewLightingHandler()
 
 		cam := &cameramocks.MockCamera{}
@@ -3344,15 +3428,15 @@ func (suite *sceneTest) TestInitLightingErrors() {
 		}).Maybe()
 
 		capturePipelines(r)
-		r.EXPECT().CreateShadowDepthTexture(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
-		r.EXPECT().CreateComparisonSampler().Return(&wgpu.Sampler{}, nil).Maybe()
+		r.EXPECT().CreateVSMTextures(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
+		r.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}, nil).Maybe()
 
-		// Let the 3 static shadow pipeline registrations succeed, then fail on the first skinned one
+		// Let the 3 static VSM shadow pipeline registrations succeed, then fail on the first skinned one
 		shadowCallCount := 0
-		r.EXPECT().RegisterShadowPipeline(mock.Anything).RunAndReturn(func(p pipeline.Pipeline) error {
+		r.EXPECT().RegisterVSMShadowPipeline(mock.Anything).RunAndReturn(func(p pipeline.Pipeline) error {
 			shadowCallCount++
 			if shadowCallCount > 3 {
-				return fmt.Errorf("skinned shadow pipeline failed")
+				return fmt.Errorf("skinned vsm shadow pipeline failed")
 			}
 			return nil
 		}).Maybe()
@@ -3435,8 +3519,8 @@ func (suite *sceneTest) TestInitLightingErrors() {
 			return nil
 		}).Maybe()
 
-		r.EXPECT().CreateShadowDepthTexture(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
-		r.EXPECT().CreateComparisonSampler().Return(&wgpu.Sampler{}, nil).Maybe()
+		r.EXPECT().CreateVSMTextures(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
+		r.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}, nil).Maybe()
 
 		s := scene.NewScene("test", cam, r, scene.WithLighting(handler))
 
@@ -3478,9 +3562,9 @@ func (suite *sceneTest) TestInitLightingErrors() {
 		}).Maybe()
 
 		capturePipelines(r)
-		r.EXPECT().CreateShadowDepthTexture(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
-		r.EXPECT().CreateComparisonSampler().Return(&wgpu.Sampler{}, nil).Maybe()
-		r.EXPECT().RegisterShadowPipeline(mock.Anything).Return(nil).Maybe()
+		r.EXPECT().CreateVSMTextures(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
+		r.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}, nil).Maybe()
+		r.EXPECT().RegisterVSMShadowPipeline(mock.Anything).Return(nil).Maybe()
 
 		s := scene.NewScene("test", cam, r, scene.WithLighting(handler))
 
@@ -3522,9 +3606,9 @@ func (suite *sceneTest) TestInitLightingErrors() {
 		}).Maybe()
 
 		captured := capturePipelines(r)
-		r.EXPECT().CreateShadowDepthTexture(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
-		r.EXPECT().CreateComparisonSampler().Return(&wgpu.Sampler{}, nil).Maybe()
-		r.EXPECT().RegisterShadowPipeline(mock.Anything).Return(nil).Maybe()
+		r.EXPECT().CreateVSMTextures(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
+		r.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}, nil).Maybe()
+		r.EXPECT().RegisterVSMShadowPipeline(mock.Anything).Return(nil).Maybe()
 
 		s := scene.NewScene("test", cam, r, scene.WithLighting(handler), scene.WithScreenSize(800, 600))
 
@@ -3560,9 +3644,9 @@ func (suite *sceneTest) TestInitLightingErrors() {
 			return nil
 		}).Maybe()
 
-		r.EXPECT().CreateShadowDepthTexture(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
-		r.EXPECT().CreateComparisonSampler().Return(&wgpu.Sampler{}, nil).Maybe()
-		r.EXPECT().RegisterShadowPipeline(mock.Anything).Return(nil).Maybe()
+		r.EXPECT().CreateVSMTextures(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
+		r.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}, nil).Maybe()
+		r.EXPECT().RegisterVSMShadowPipeline(mock.Anything).Return(nil).Maybe()
 
 		// RegisterPipelines fails for the cull compute pipeline
 		r.EXPECT().RegisterPipelines(mock.Anything).Return(fmt.Errorf("cull pipeline failed")).Maybe()
@@ -3608,9 +3692,9 @@ func (suite *sceneTest) TestInitLightingErrors() {
 		}).Maybe()
 
 		captured := capturePipelines(r)
-		r.EXPECT().CreateShadowDepthTexture(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
-		r.EXPECT().CreateComparisonSampler().Return(&wgpu.Sampler{}, nil).Maybe()
-		r.EXPECT().RegisterShadowPipeline(mock.Anything).Return(nil).Maybe()
+		r.EXPECT().CreateVSMTextures(mock.Anything, mock.Anything).Return(&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
+		r.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}, nil).Maybe()
+		r.EXPECT().RegisterVSMShadowPipeline(mock.Anything).Return(nil).Maybe()
 		r.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 
 		s := scene.NewScene("test", cam, r, scene.WithLighting(handler), scene.WithScreenSize(800, 600))
@@ -3741,5 +3825,612 @@ func (suite *sceneTest) TestInitLightingErrors() {
 		suite.Equal(1, s.Count())
 
 		_ = captured
+	})
+}
+
+func (suite *sceneTest) TestPrepareComposition() {
+	suite.Run("no-op when lighting not initialized", func() {
+		s, _, _ := newMinimalScene("test")
+		s.PrepareComposition()
+	})
+
+	suite.Run("no-op when composition handler disabled", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		s, _, _ := newMinimalScene("test", scene.WithLighting(handler))
+		s.PrepareComposition()
+	})
+
+	suite.Run("no-op when renderer is nil", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		handler.CompositionHandler().SetEnabled(true)
+		s, _, _ := newMinimalScene("test", scene.WithLighting(handler))
+		s.SetRenderer(nil)
+		s.PrepareComposition()
+	})
+
+	suite.Run("runs fullscreen composition pass", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		handler.CompositionHandler().SetEnabled(true)
+		handler.CompositionHandler().SetExposure(1.5)
+		handler.CompositionHandler().SetPipelineKey("composition", "comp_pipe")
+
+		s, _, r := newMinimalScene("test", scene.WithLighting(handler))
+
+		r.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
+		r.EXPECT().BeginCompositionFrame().Return(nil).Maybe()
+		r.EXPECT().BeginCompositionPass().Return().Maybe()
+		r.EXPECT().CompositionDrawCall(mock.Anything, mock.Anything).Return(nil).Maybe()
+		r.EXPECT().EndCompositionPass().Return().Maybe()
+		r.EXPECT().EndCompositionFrame().Return().Maybe()
+
+		suite.NotPanics(func() {
+			s.PrepareComposition()
+		})
+		r.AssertCalled(suite.T(), "CompositionDrawCall", "comp_pipe", mock.Anything)
+	})
+
+	suite.Run("returns early when BeginCompositionFrame fails", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		handler.CompositionHandler().SetEnabled(true)
+
+		s, _, r := newMinimalScene("test", scene.WithLighting(handler))
+
+		r.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
+		r.EXPECT().BeginCompositionFrame().Return(fmt.Errorf("swapchain error")).Maybe()
+
+		suite.NotPanics(func() {
+			s.PrepareComposition()
+		})
+		r.AssertNotCalled(suite.T(), "BeginCompositionPass")
+	})
+}
+
+func (suite *sceneTest) TestBeginHDRFrame() {
+	suite.Run("returns error when composition not initialized", func() {
+		s, _, _ := newMinimalScene("test")
+		err := s.BeginHDRFrame()
+		suite.Error(err)
+	})
+
+	suite.Run("returns error when composition handler disabled", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		s, _, _ := newMinimalScene("test", scene.WithLighting(handler))
+		err := s.BeginHDRFrame()
+		suite.Error(err)
+	})
+
+	suite.Run("returns error when renderer is nil", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		handler.CompositionHandler().SetEnabled(true)
+		s, _, _ := newMinimalScene("test", scene.WithLighting(handler))
+		s.SetRenderer(nil)
+		err := s.BeginHDRFrame()
+		suite.Error(err)
+	})
+
+	suite.Run("renders to MSAA texture when sample count > 1 and MSAA view exists", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		handler.CompositionHandler().SetEnabled(true)
+		handler.CompositionHandler().SetMSAATextureView(&wgpu.TextureView{})
+		handler.CompositionHandler().SetHDRTextureView(&wgpu.TextureView{})
+		handler.CompositionHandler().SetDepthTextureView(&wgpu.TextureView{})
+
+		s, _, r := newMinimalScene("test", scene.WithLighting(handler))
+
+		r.EXPECT().SampleCount().Return(uint32(4)).Maybe()
+		r.EXPECT().BeginHDRFrame(mock.Anything, mock.Anything, mock.Anything, uint32(4)).Return(nil).Maybe()
+
+		err := s.BeginHDRFrame()
+		suite.NoError(err)
+	})
+
+	suite.Run("renders directly to HDR texture when sample count is 1", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		handler.CompositionHandler().SetEnabled(true)
+		handler.CompositionHandler().SetHDRTextureView(&wgpu.TextureView{})
+		handler.CompositionHandler().SetDepthTextureView(&wgpu.TextureView{})
+
+		s, _, r := newMinimalScene("test", scene.WithLighting(handler))
+
+		r.EXPECT().SampleCount().Return(uint32(1)).Maybe()
+		r.EXPECT().BeginHDRFrame(mock.Anything, mock.Anything, mock.Anything, uint32(1)).Return(nil).Maybe()
+
+		err := s.BeginHDRFrame()
+		suite.NoError(err)
+	})
+
+	suite.Run("falls back to non-MSAA when MSAA view is nil", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		handler.CompositionHandler().SetEnabled(true)
+		handler.CompositionHandler().SetHDRTextureView(&wgpu.TextureView{})
+		handler.CompositionHandler().SetDepthTextureView(&wgpu.TextureView{})
+
+		s, _, r := newMinimalScene("test", scene.WithLighting(handler))
+
+		r.EXPECT().SampleCount().Return(uint32(4)).Maybe()
+		r.EXPECT().BeginHDRFrame(mock.Anything, mock.Anything, mock.Anything, uint32(1)).Return(nil).Maybe()
+
+		err := s.BeginHDRFrame()
+		suite.NoError(err)
+	})
+}
+
+func (suite *sceneTest) TestPrepareGBuffer() {
+	suite.Run("no-op when lighting not initialized", func() {
+		s, _, _ := newMinimalScene("test")
+		s.PrepareGBuffer()
+	})
+
+	suite.Run("no-op when gbuffer handler disabled", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		s, _, _ := newMinimalScene("test", scene.WithLighting(handler))
+		s.PrepareGBuffer()
+	})
+
+	suite.Run("no-op when renderer is nil", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		handler.GBufferHandler().SetEnabled(true)
+		s, _, _ := newMinimalScene("test", scene.WithLighting(handler))
+		s.SetRenderer(nil)
+		s.PrepareGBuffer()
+	})
+
+	suite.Run("returns early when BeginGBufferFrame fails", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		handler.GBufferHandler().SetEnabled(true)
+
+		s, _, r := newMinimalScene("test", scene.WithLighting(handler))
+
+		r.EXPECT().BeginGBufferFrame().Return(fmt.Errorf("device lost")).Maybe()
+
+		suite.NotPanics(func() {
+			s.PrepareGBuffer()
+		})
+	})
+
+	suite.Run("completes gbuffer pass with no objects", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		handler.GBufferHandler().SetEnabled(true)
+		handler.GBufferHandler().SetNormalTextureView(&wgpu.TextureView{})
+		handler.GBufferHandler().SetAlbedoTextureView(&wgpu.TextureView{})
+		handler.GBufferHandler().SetDepthTextureView(&wgpu.TextureView{})
+
+		s, _, r := newMinimalScene("test", scene.WithLighting(handler))
+
+		r.EXPECT().BeginGBufferFrame().Return(nil).Maybe()
+		r.EXPECT().BeginGBufferPass(mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+		r.EXPECT().EndGBufferPass().Return().Maybe()
+		r.EXPECT().EndGBufferFrame().Return().Maybe()
+
+		suite.NotPanics(func() {
+			s.PrepareGBuffer()
+		})
+		r.AssertCalled(suite.T(), "EndGBufferFrame")
+	})
+
+	suite.Run("issues gbuffer draw call for object with mesh and material", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		handler.GBufferHandler().SetEnabled(true)
+		handler.GBufferHandler().SetPipelineKey("static", "gbuffer_static_pipe")
+		handler.GBufferHandler().SetNormalTextureView(&wgpu.TextureView{})
+		handler.GBufferHandler().SetAlbedoTextureView(&wgpu.TextureView{})
+		handler.GBufferHandler().SetDepthTextureView(&wgpu.TextureView{})
+
+		s, _, r := newMinimalScene("test", scene.WithLighting(handler))
+		captured := capturePipelines(r)
+		r.EXPECT().InitMeshBuffers(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
+		meshBGP := bind_group_provider.NewBindGroupProvider("mesh")
+		matBGP := bind_group_provider.NewBindGroupProvider("mat")
+
+		mat := &materialmocks.MockMaterial{}
+		mat.EXPECT().PipelineKey().Return("cube").Maybe()
+		mat.EXPECT().BindGroupProvider().Return(matBGP).Maybe()
+		mat.EXPECT().Provider(mock.Anything).Return(nil).Maybe()
+		mat.EXPECT().FragmentShaderPath().Return("").Maybe()
+
+		obj, mdl := newWiredObject("cube", false, []material.Material{mat})
+		mdl.EXPECT().MeshProvider().Unset()
+		mdl.EXPECT().MeshProvider().Return(meshBGP).Maybe()
+		mdl.EXPECT().VertexData().Return([]byte{0, 0}).Maybe()
+		mdl.EXPECT().IndexData().Return([]byte{0, 0}).Maybe()
+		mdl.EXPECT().IndexCount().Return(1).Maybe()
+
+		s.Add(obj)
+
+		wirePipelineLookup(r, captured)
+		r.EXPECT().BeginGBufferFrame().Return(nil).Maybe()
+		r.EXPECT().BeginGBufferPass(mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+		r.EXPECT().GBufferDrawCall(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+		r.EXPECT().EndGBufferPass().Return().Maybe()
+		r.EXPECT().EndGBufferFrame().Return().Maybe()
+
+		suite.NotPanics(func() {
+			s.PrepareGBuffer()
+		})
+		r.AssertCalled(suite.T(), "GBufferDrawCall", "gbuffer_static_pipe", mock.Anything, mock.Anything, mock.Anything)
+	})
+}
+
+func (suite *sceneTest) TestPrepareSSAO() {
+	suite.Run("no-op when lighting not initialized", func() {
+		s, _, _ := newMinimalScene("test")
+		s.PrepareSSAO()
+	})
+
+	suite.Run("no-op when ssao handler disabled", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		s, _, _ := newMinimalScene("test", scene.WithLighting(handler))
+		s.PrepareSSAO()
+	})
+
+	suite.Run("no-op when renderer is nil", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		handler.SSAOHandler().SetEnabled(true)
+		s, _, _ := newMinimalScene("test", scene.WithLighting(handler))
+		s.SetRenderer(nil)
+		s.PrepareSSAO()
+	})
+
+	suite.Run("no-op when camera is nil", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		handler.SSAOHandler().SetEnabled(true)
+		s, _, _ := newMinimalScene("test", scene.WithLighting(handler))
+		s.SetCamera(nil)
+		s.PrepareSSAO()
+	})
+
+	suite.Run("dispatches ssao compute and blur passes", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		handler.SSAOHandler().SetEnabled(true)
+		handler.SSAOHandler().Resize(256, 256)
+		handler.SSAOHandler().SetPipelineKey("ssao_compute", "ssao_comp_pipe")
+		handler.SSAOHandler().SetPipelineKey("ssao_blur", "ssao_blur_pipe")
+
+		s, cam, r := newMinimalScene("test", scene.WithLighting(handler))
+
+		cam.EXPECT().ViewProjectionMatrix().Return([16]float32{}).Maybe()
+		cam.EXPECT().Controller().Return(nil).Maybe()
+
+		r.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
+		r.EXPECT().BeginComputeFrame().Return(nil).Maybe()
+		r.EXPECT().DispatchCompute(mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+		r.EXPECT().EndComputeFrame().Return().Maybe()
+
+		suite.NotPanics(func() {
+			s.PrepareSSAO()
+		})
+		r.AssertCalled(suite.T(), "DispatchCompute", "ssao_comp_pipe", mock.Anything, mock.Anything)
+		r.AssertCalled(suite.T(), "DispatchCompute", "ssao_blur_pipe", mock.Anything, mock.Anything)
+	})
+
+	suite.Run("returns early when BeginComputeFrame fails", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		handler.SSAOHandler().SetEnabled(true)
+		handler.SSAOHandler().Resize(256, 256)
+
+		s, cam, r := newMinimalScene("test", scene.WithLighting(handler))
+
+		cam.EXPECT().ViewProjectionMatrix().Return([16]float32{}).Maybe()
+		cam.EXPECT().Controller().Return(nil).Maybe()
+
+		r.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
+		r.EXPECT().BeginComputeFrame().Return(fmt.Errorf("device lost")).Maybe()
+
+		suite.NotPanics(func() {
+			s.PrepareSSAO()
+		})
+		r.AssertNotCalled(suite.T(), "DispatchCompute", mock.Anything, mock.Anything, mock.Anything)
+	})
+
+	suite.Run("uses half resolution gbuffer scale when enabled", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		handler.SSAOHandler().SetEnabled(true)
+		handler.SSAOHandler().Resize(512, 512)
+		handler.SSAOHandler().SetHalfResolution(true)
+		handler.SSAOHandler().SetPipelineKey("ssao_compute", "ssao_half_pipe")
+		handler.SSAOHandler().SetPipelineKey("ssao_blur", "ssao_blur_half_pipe")
+
+		s, cam, r := newMinimalScene("test", scene.WithLighting(handler))
+
+		cam.EXPECT().ViewProjectionMatrix().Return([16]float32{}).Maybe()
+		ctrl := &cameramocks.MockCameraController{}
+		ctrl.EXPECT().Position().Return(float32(1), float32(2), float32(3)).Maybe()
+		cam.EXPECT().Controller().Return(ctrl).Maybe()
+
+		r.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
+		r.EXPECT().BeginComputeFrame().Return(nil).Maybe()
+		r.EXPECT().DispatchCompute(mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+		r.EXPECT().EndComputeFrame().Return().Maybe()
+
+		suite.NotPanics(func() {
+			s.PrepareSSAO()
+		})
+	})
+}
+
+func (suite *sceneTest) TestPrepareSSR() {
+	suite.Run("no-op when lighting not initialized", func() {
+		s, _, _ := newMinimalScene("test")
+		s.PrepareSSR()
+	})
+
+	suite.Run("no-op when ssr handler disabled", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		s, _, _ := newMinimalScene("test", scene.WithLighting(handler))
+		s.PrepareSSR()
+	})
+
+	suite.Run("no-op when composition handler disabled", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		handler.SSRHandler().SetEnabled(true)
+		s, _, _ := newMinimalScene("test", scene.WithLighting(handler))
+		s.PrepareSSR()
+	})
+
+	suite.Run("no-op when renderer is nil", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		handler.SSRHandler().SetEnabled(true)
+		handler.CompositionHandler().SetEnabled(true)
+		s, _, _ := newMinimalScene("test", scene.WithLighting(handler))
+		s.SetRenderer(nil)
+		s.PrepareSSR()
+	})
+
+	suite.Run("no-op when camera is nil", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		handler.SSRHandler().SetEnabled(true)
+		handler.CompositionHandler().SetEnabled(true)
+		s, _, _ := newMinimalScene("test", scene.WithLighting(handler))
+		s.SetCamera(nil)
+		s.PrepareSSR()
+	})
+
+	suite.Run("dispatches hiz pyramid and ssr compute", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		handler.SSRHandler().SetEnabled(true)
+		handler.SSRHandler().Resize(256, 256)
+		handler.SSRHandler().SetHiZMipCount(3)
+		handler.SSRHandler().SetPipelineKey("hiz_init", "hiz_init_pipe")
+		handler.SSRHandler().SetPipelineKey("hiz_downsample", "hiz_down_pipe")
+		handler.SSRHandler().SetPipelineKey("ssr_compute", "ssr_comp_pipe")
+		handler.CompositionHandler().SetEnabled(true)
+
+		// Pre-create hiz_init and hiz_down BGPs expected by the code
+		handler.SSRHandler().SetBgp("hiz_init", bind_group_provider.NewBindGroupProvider("hiz_init"))
+		handler.SSRHandler().SetBgp("hiz_down_1", bind_group_provider.NewBindGroupProvider("hiz_down_1"))
+		handler.SSRHandler().SetBgp("hiz_down_2", bind_group_provider.NewBindGroupProvider("hiz_down_2"))
+
+		s, cam, r := newMinimalScene("test", scene.WithLighting(handler))
+
+		cam.EXPECT().ProjectionMatrix().Return([16]float32{}).Maybe()
+		cam.EXPECT().InverseProjectionMatrix().Return([16]float32{}).Maybe()
+		cam.EXPECT().ViewMatrix().Return([16]float32{}).Maybe()
+
+		r.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
+		r.EXPECT().BeginComputeFrame().Return(nil).Maybe()
+		r.EXPECT().DispatchCompute(mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+		r.EXPECT().EndComputeFrame().Return().Maybe()
+
+		suite.NotPanics(func() {
+			s.PrepareSSR()
+		})
+		r.AssertCalled(suite.T(), "DispatchCompute", "hiz_init_pipe", mock.Anything, mock.Anything)
+		r.AssertCalled(suite.T(), "DispatchCompute", "ssr_comp_pipe", mock.Anything, mock.Anything)
+	})
+
+	suite.Run("returns early when BeginComputeFrame fails", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		handler.SSRHandler().SetEnabled(true)
+		handler.SSRHandler().Resize(128, 128)
+		handler.SSRHandler().SetHiZMipCount(2)
+		handler.CompositionHandler().SetEnabled(true)
+
+		s, cam, r := newMinimalScene("test", scene.WithLighting(handler))
+
+		cam.EXPECT().ProjectionMatrix().Return([16]float32{}).Maybe()
+		cam.EXPECT().InverseProjectionMatrix().Return([16]float32{}).Maybe()
+		cam.EXPECT().ViewMatrix().Return([16]float32{}).Maybe()
+
+		r.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
+		r.EXPECT().BeginComputeFrame().Return(fmt.Errorf("device lost")).Maybe()
+
+		suite.NotPanics(func() {
+			s.PrepareSSR()
+		})
+		r.AssertNotCalled(suite.T(), "DispatchCompute", mock.Anything, mock.Anything, mock.Anything)
+	})
+}
+
+func (suite *sceneTest) TestPrepareProbes() {
+	suite.Run("no-op when probe grid is nil", func() {
+		s, _, _ := newLitScene("test")
+		s.PrepareProbes()
+	})
+
+	suite.Run("no-op when probe grid is disabled", func() {
+		handler := light.NewLightingHandler(light.WithProbeGrid(light.NewIrradianceProbeGrid()))
+		handler.SetEnabled(true)
+		s, _, _ := newMinimalScene("test", scene.WithLighting(handler))
+		s.PrepareProbes()
+	})
+
+	suite.Run("no-op when renderer is nil", func() {
+		pg := light.NewIrradianceProbeGrid()
+		pg.SetEnabled(true)
+		handler := light.NewLightingHandler(light.WithProbeGrid(pg))
+		handler.SetEnabled(true)
+		s, _, _ := newMinimalScene("test", scene.WithLighting(handler))
+		s.SetRenderer(nil)
+		s.PrepareProbes()
+	})
+
+	suite.Run("no-op when no dirty probes", func() {
+		pg := light.NewIrradianceProbeGrid()
+		pg.SetEnabled(true)
+		pg.ClearDirtyProbes()
+		handler := light.NewLightingHandler(light.WithProbeGrid(pg))
+		handler.SetEnabled(true)
+		s, _, _ := newMinimalScene("test", scene.WithLighting(handler))
+		s.PrepareProbes()
+	})
+
+	suite.Run("no-op when bake texture views are nil", func() {
+		pg := light.NewIrradianceProbeGrid()
+		pg.SetEnabled(true)
+		handler := light.NewLightingHandler(light.WithProbeGrid(pg))
+		handler.SetEnabled(true)
+		s, _, _ := newMinimalScene("test", scene.WithLighting(handler))
+		s.PrepareProbes()
+	})
+
+	suite.Run("no-op when bake camera bgp is nil", func() {
+		pg := light.NewIrradianceProbeGrid(light.WithProbeGridCounts(2, 1, 1))
+		pg.SetEnabled(true)
+		pg.SetBakeColorTextureView(&wgpu.TextureView{})
+		pg.SetBakeDepthTextureView(&wgpu.TextureView{})
+		pg.SetBgp("probe_bake_camera", nil)
+		handler := light.NewLightingHandler(light.WithProbeGrid(pg))
+		handler.SetEnabled(true)
+		s, _, _ := newMinimalScene("test", scene.WithLighting(handler))
+		s.PrepareProbes()
+	})
+
+	suite.Run("bakes dirty probes up to rate limit", func() {
+		pg := light.NewIrradianceProbeGrid(light.WithProbeGridCounts(2, 1, 1))
+		pg.SetEnabled(true)
+		pg.SetBakeColorTextureView(&wgpu.TextureView{})
+		pg.SetBakeDepthTextureView(&wgpu.TextureView{})
+		pg.SetProbeBuffer(&wgpu.Buffer{})
+		pg.SetPipelineKey("static", "probe_bake_static")
+		pg.SetPipelineKey("skinned", "probe_bake_skinned")
+		pg.SetPipelineKey("sh_project", "probe_sh_project")
+		handler := light.NewLightingHandler(light.WithProbeGrid(pg))
+		handler.SetEnabled(true)
+
+		s, _, r := newMinimalScene("test", scene.WithLighting(handler))
+
+		r.EXPECT().WriteRawBuffer(mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+		r.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
+		r.EXPECT().BeginProbeBakeFrame().Return(nil).Maybe()
+		r.EXPECT().BeginProbeBakePass(mock.Anything, mock.Anything).Return().Maybe()
+		r.EXPECT().EndProbeBakePass().Return().Maybe()
+		r.EXPECT().EndProbeBakeFrame().Return().Maybe()
+		r.EXPECT().BeginComputeFrame().Return(nil).Maybe()
+		r.EXPECT().DispatchCompute(mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+		r.EXPECT().EndComputeFrame().Return().Maybe()
+
+		suite.NotPanics(func() {
+			s.PrepareProbes()
+		})
+	})
+}
+
+func (suite *sceneTest) TestPrepareShadowBlur() {
+	suite.Run("no-op when lighting disabled", func() {
+		s, _, _ := newMinimalScene("test")
+		s.PrepareShadowBlur()
+	})
+
+	suite.Run("no-op when renderer is nil", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		s, _, _ := newMinimalScene("test", scene.WithLighting(handler))
+		s.SetRenderer(nil)
+		s.PrepareShadowBlur()
+	})
+
+	suite.Run("dispatches standard vsm blur when pcss disabled", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		handler.SetPipelineKey("vsm_blur", "vsm_blur_pipe")
+
+		s, _, r := newMinimalScene("test", scene.WithLighting(handler))
+
+		r.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
+		r.EXPECT().BeginComputeFrame().Return(nil).Maybe()
+		r.EXPECT().DispatchCompute(mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+		r.EXPECT().EndComputeFrame().Return().Maybe()
+
+		suite.NotPanics(func() {
+			s.PrepareShadowBlur()
+		})
+		r.AssertCalled(suite.T(), "DispatchCompute", "vsm_blur_pipe", mock.Anything, mock.Anything)
+	})
+
+	suite.Run("returns early when BeginComputeFrame fails for vsm blur", func() {
+		handler := light.NewLightingHandler()
+		handler.SetEnabled(true)
+		handler.SetPipelineKey("vsm_blur", "vsm_blur_pipe")
+
+		s, _, r := newMinimalScene("test", scene.WithLighting(handler))
+
+		r.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
+		r.EXPECT().BeginComputeFrame().Return(fmt.Errorf("device lost")).Maybe()
+
+		suite.NotPanics(func() {
+			s.PrepareShadowBlur()
+		})
+		r.AssertNotCalled(suite.T(), "DispatchCompute", mock.Anything, mock.Anything, mock.Anything)
+	})
+
+	suite.Run("dispatches SAT generation when pcss enabled", func() {
+		handler := light.NewLightingHandler(light.WithPCSSEnabled(true))
+		handler.SetEnabled(true)
+		handler.SetPipelineKey("vsm_sat", "vsm_sat_pipe")
+
+		s, _, r := newMinimalScene("test", scene.WithLighting(handler))
+
+		r.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
+		r.EXPECT().BeginComputeFrame().Return(nil).Maybe()
+		r.EXPECT().DispatchCompute(mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+		r.EXPECT().EndComputeFrame().Return().Maybe()
+
+		suite.NotPanics(func() {
+			s.PrepareShadowBlur()
+		})
+		r.AssertCalled(suite.T(), "DispatchCompute", "vsm_sat_pipe", mock.Anything, mock.Anything)
+	})
+
+	suite.Run("returns early from SAT generation when BeginComputeFrame fails", func() {
+		handler := light.NewLightingHandler(light.WithPCSSEnabled(true))
+		handler.SetEnabled(true)
+		handler.SetPipelineKey("vsm_sat", "vsm_sat_pipe")
+
+		s, _, r := newMinimalScene("test", scene.WithLighting(handler))
+
+		r.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
+		r.EXPECT().BeginComputeFrame().Return(fmt.Errorf("device lost")).Maybe()
+
+		suite.NotPanics(func() {
+			s.PrepareShadowBlur()
+		})
+		r.AssertNotCalled(suite.T(), "DispatchCompute", mock.Anything, mock.Anything, mock.Anything)
 	})
 }

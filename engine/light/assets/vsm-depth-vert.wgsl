@@ -1,11 +1,11 @@
-// Shadow depth vertex shader (static models)
+// VSM shadow depth vertex shader (static models)
 //
-// Minimal shader that transforms vertices to light clip space for shadow map
-// generation. Outputs only @builtin(position) — no color, normal, or UV data
-// is needed since the shadow pass only writes depth.
+// Transforms vertices to light clip space and computes a linear light-space
+// depth for the VSM fragment shader. The linear depth is computed from the
+// view-only matrix (no projection) and normalized to [0, 1] using near/far.
 //
 // Bind group layout:
-//   @group(0) @binding(0) shadow_uniform — light view-projection matrix (uniform)
+//   @group(0) @binding(0) shadow_uniform — light VP, view matrix, near/far (uniform)
 //   @group(1) @binding(0) instance_buffer — per-instance model matrices (storage)
 
 //@oxy:include vertex
@@ -14,6 +14,7 @@
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
+    @location(0) light_depth: f32,
 };
 
 //@oxy:group 0 0 storage_uniform shadow_uniform shadow_uniform
@@ -27,7 +28,13 @@ fn vs_main(
     let model_matrix = instance_buffer[instance_idx].model;
     let world_pos = model_matrix * vec4<f32>(vertex.position, 1.0);
 
+    // Compute linear depth from the view-only matrix, normalized to [0, 1].
+    let view_pos = shadow_uniform.light_view * world_pos;
+    let linear_depth = (-view_pos.z - shadow_uniform.shadow_near)
+                     / (shadow_uniform.shadow_far - shadow_uniform.shadow_near);
+
     var out: VertexOutput;
     out.clip_position = shadow_uniform.light_vp * world_pos;
+    out.light_depth = linear_depth;
     return out;
 }

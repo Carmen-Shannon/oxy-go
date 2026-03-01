@@ -280,22 +280,62 @@ func (e *engine) handleRender() {
 						frameRenderer.EndComputeFrame()
 					}
 
-					// Phase 1b — Shadows: render depth-only shadow passes for directional lights.
-					for _, s := range activeScenes {
-						s.PrepareShadows()
+					// Phase 1b+1c — Geometry pre-pass: merge shadow and G-Buffer render
+					// passes into a single command encoder and GPU submission. The VSM
+					// blur is deferred until after the geometry frame is submitted so the
+					// shadow textures are available for compute reads.
+					if err := frameRenderer.BeginGeometryFrame(); err == nil {
+						for _, s := range activeScenes {
+							s.PrepareShadows()
+						}
+						for _, s := range activeScenes {
+							s.PrepareGBuffer()
+						}
+						frameRenderer.EndGeometryFrame()
 					}
 
-					// Phase 1c — Light culling: dispatch the Forward+ tile culling compute shader.
-					for _, s := range activeScenes {
-						s.PrepareLightCulling()
+					// Phase 1b-post + 1d + 1e — Shadow blur, light culling, and SSAO:
+					// all compute work batched into a single GPU submission. Shadow
+					// textures were written by the geometry frame above, so they are
+					// safe to read here. The individual Prepare* methods call their
+					// own Begin/EndComputeFrame internally; the outer pair coalesces
+					// them via ref-counted nesting.
+					if err := frameRenderer.BeginComputeFrame(); err == nil {
+						for _, s := range activeScenes {
+							s.PrepareShadowBlur()
+						}
+						for _, s := range activeScenes {
+							s.PrepareLightCulling()
+						}
+						for _, s := range activeScenes {
+							s.PrepareSSAO()
+						}
+						frameRenderer.EndComputeFrame()
 					}
 
-					// Phase 2 — Render: batch all draw calls into a single render pass
-					if err := frameRenderer.BeginFrame(); err == nil {
+					// Phase 2 — Render: all lit scenes use the HDR pipeline (G-Buffer +
+					// SSAO + Forward+ tiling + HDR render → SSR → Composition → Present).
+					if err := activeScenes[0].BeginHDRFrame(); err == nil {
 						for _, s := range activeScenes {
 							_ = s.DrawCalls()
 						}
 						frameRenderer.EndFrame()
+
+						// Phase 2b — SSR: screen-space reflections reading HDR + G-Buffer.
+						// Wrapped in an outer compute frame so PrepareSSR's internal
+						// Begin/End are coalesced into one submission.
+						if err := frameRenderer.BeginComputeFrame(); err == nil {
+							for _, s := range activeScenes {
+								s.PrepareSSR()
+							}
+							frameRenderer.EndComputeFrame()
+						}
+
+						// Phase 2c — Composition: fullscreen tone mapping + gamma correction → swapchain.
+						for _, s := range activeScenes {
+							s.PrepareComposition()
+						}
+
 						frameRenderer.Present()
 					}
 				}

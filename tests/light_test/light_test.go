@@ -437,16 +437,16 @@ func (suite *gpuTypesTest) TestGPULightHeaderMarshal() {
 }
 
 func (suite *gpuTypesTest) TestGPUShadowDataSize() {
-	suite.Run("size is 80 bytes", func() {
+	suite.Run("size is 176 bytes", func() {
 		s := &light.GPUShadowData{}
-		suite.Equal(80, s.Size())
+		suite.Equal(176, s.Size())
 	})
 }
 
 func (suite *gpuTypesTest) TestGPUShadowDataMarshal() {
-	suite.Run("byte length is 80", func() {
+	suite.Run("byte length is 176", func() {
 		s := &light.GPUShadowData{}
-		suite.Len(s.Marshal(), 80)
+		suite.Len(s.Marshal(), 176)
 	})
 
 	suite.Run("light VP matrix is encoded in first 64 bytes", func() {
@@ -463,18 +463,18 @@ func (suite *gpuTypesTest) TestGPUShadowDataMarshal() {
 		suite.Equal(float32(1.0), readF32(buf, 60))
 	})
 
-	suite.Run("texel size is encoded at offset 64", func() {
+	suite.Run("texel size is encoded at offset 128", func() {
 		s := &light.GPUShadowData{TexelSize: [2]float32{0.001, 0.002}}
 		buf := s.Marshal()
-		suite.InDelta(0.001, float64(readF32(buf, 64)), 1e-6)
-		suite.InDelta(0.002, float64(readF32(buf, 68)), 1e-6)
+		suite.InDelta(0.001, float64(readF32(buf, 128)), 1e-6)
+		suite.InDelta(0.002, float64(readF32(buf, 132)), 1e-6)
 	})
 
-	suite.Run("bias and normal bias at offset 72", func() {
+	suite.Run("bias and normal bias at offset 136", func() {
 		s := &light.GPUShadowData{Bias: 0.005, NormalBias: 0.01}
 		buf := s.Marshal()
-		suite.InDelta(0.005, float64(readF32(buf, 72)), 1e-6)
-		suite.InDelta(0.01, float64(readF32(buf, 76)), 1e-6)
+		suite.InDelta(0.005, float64(readF32(buf, 136)), 1e-6)
+		suite.InDelta(0.01, float64(readF32(buf, 140)), 1e-6)
 	})
 }
 
@@ -559,16 +559,16 @@ func (suite *gpuTypesTest) TestGPUShadowDataComputeDirectionalLightVP() {
 }
 
 func (suite *gpuTypesTest) TestGPUShadowUniformSize() {
-	suite.Run("size is 64 bytes", func() {
+	suite.Run("size is 136 bytes", func() {
 		u := &light.GPUShadowUniform{}
-		suite.Equal(64, u.Size())
+		suite.Equal(136, u.Size())
 	})
 }
 
 func (suite *gpuTypesTest) TestGPUShadowUniformMarshal() {
-	suite.Run("byte length is 64", func() {
+	suite.Run("byte length is 136", func() {
 		u := &light.GPUShadowUniform{}
-		suite.Len(u.Marshal(), 64)
+		suite.Len(u.Marshal(), 136)
 	})
 
 	suite.Run("matrix values are encoded correctly", func() {
@@ -643,6 +643,70 @@ func (suite *gpuTypesTest) TestGPULightCullUniformsMarshal() {
 		u := &light.GPULightCullUniforms{LightCount: 10, Near: 1, Far: 100}
 		buf := u.Marshal()
 		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[156:160]))
+	})
+}
+
+func (suite *gpuTypesTest) TestGPUSATParamsSize() {
+	suite.Run("size is 16 bytes", func() {
+		p := &light.GPUSATParams{}
+		suite.Equal(16, p.Size())
+	})
+}
+
+func (suite *gpuTypesTest) TestGPUSATParamsMarshal() {
+	suite.Run("byte length is 16", func() {
+		p := &light.GPUSATParams{}
+		suite.Len(p.Marshal(), 16)
+	})
+
+	suite.Run("zero value produces all-zero bytes", func() {
+		p := &light.GPUSATParams{}
+		buf := p.Marshal()
+		for i, b := range buf {
+			suite.Equal(byte(0), b, "byte %d should be zero", i)
+		}
+	})
+
+	suite.Run("horizontal direction encoded at offset 0", func() {
+		p := &light.GPUSATParams{Direction: [2]int32{1, 0}, Offset: 0}
+		buf := p.Marshal()
+		suite.Equal(uint32(1), binary.LittleEndian.Uint32(buf[0:4]))
+		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[4:8]))
+	})
+
+	suite.Run("vertical direction encoded at offset 0", func() {
+		p := &light.GPUSATParams{Direction: [2]int32{0, 1}, Offset: 0}
+		buf := p.Marshal()
+		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[0:4]))
+		suite.Equal(uint32(1), binary.LittleEndian.Uint32(buf[4:8]))
+	})
+
+	suite.Run("offset encoded at offset 8", func() {
+		p := &light.GPUSATParams{Offset: 16}
+		buf := p.Marshal()
+		suite.Equal(uint32(16), binary.LittleEndian.Uint32(buf[8:12]))
+	})
+
+	suite.Run("padding at offset 12 is zero", func() {
+		p := &light.GPUSATParams{Direction: [2]int32{1, 1}, Offset: 128}
+		buf := p.Marshal()
+		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[12:16]))
+	})
+
+	suite.Run("negative direction values encode correctly", func() {
+		p := &light.GPUSATParams{Direction: [2]int32{-1, 0}, Offset: 0}
+		buf := p.Marshal()
+		// -1 as uint32 in two's complement is 0xFFFFFFFF
+		suite.Equal(uint32(0xFFFFFFFF), binary.LittleEndian.Uint32(buf[0:4]))
+	})
+
+	suite.Run("power-of-two offset for recursive doubling", func() {
+		p := &light.GPUSATParams{Direction: [2]int32{1, 0}, Offset: 1024}
+		buf := p.Marshal()
+		suite.Equal(uint32(1), binary.LittleEndian.Uint32(buf[0:4]))
+		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[4:8]))
+		suite.Equal(uint32(1024), binary.LittleEndian.Uint32(buf[8:12]))
+		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[12:16]))
 	})
 }
 
@@ -802,6 +866,374 @@ func (suite *gpuTypesTest) TestWGSLSources() {
 
 	suite.Run("GPUTileUniformsSource is non-empty", func() {
 		suite.NotEmpty(light.GPUTileUniformsSource)
+	})
+
+	suite.Run("GPUSATParamsSource is non-empty", func() {
+		suite.NotEmpty(light.GPUSATParamsSource)
+	})
+
+	suite.Run("GPUSATParamsSource contains SATParams struct", func() {
+		suite.Contains(light.GPUSATParamsSource, "SATParams")
+	})
+
+	suite.Run("GPUGBufferOutputSource is non-empty", func() {
+		suite.NotEmpty(light.GPUGBufferOutputSource)
+	})
+
+	suite.Run("GPUSSAOParamsSource is non-empty", func() {
+		suite.NotEmpty(light.GPUSSAOParamsSource)
+	})
+
+	suite.Run("GPUIrradianceProbeSource is non-empty", func() {
+		suite.NotEmpty(light.GPUIrradianceProbeSource)
+	})
+
+	suite.Run("GPUProbeGridParamsSource is non-empty", func() {
+		suite.NotEmpty(light.GPUProbeGridParamsSource)
+	})
+
+	suite.Run("GPUProbeBakeCameraSource is non-empty", func() {
+		suite.NotEmpty(light.GPUProbeBakeCameraSource)
+	})
+
+	suite.Run("GPUSHProjectParamsSource is non-empty", func() {
+		suite.NotEmpty(light.GPUSHProjectParamsSource)
+	})
+
+	suite.Run("GPUCompositionParamsSource is non-empty", func() {
+		suite.NotEmpty(light.GPUCompositionParamsSource)
+	})
+
+	suite.Run("GPUSSRParamsSource is non-empty", func() {
+		suite.NotEmpty(light.GPUSSRParamsSource)
+	})
+
+	suite.Run("GPUBlurParamsSource is non-empty", func() {
+		suite.NotEmpty(light.GPUBlurParamsSource)
+	})
+}
+
+func (suite *gpuTypesTest) TestGPUBlurParamsSize() {
+	suite.Run("size is 16 bytes", func() {
+		p := &light.GPUBlurParams{}
+		suite.Equal(16, p.Size())
+	})
+}
+
+func (suite *gpuTypesTest) TestGPUBlurParamsMarshal() {
+	suite.Run("round-trips direction and parameters", func() {
+		p := &light.GPUBlurParams{
+			Direction:    [2]int32{1, 0},
+			Radius:       4,
+			GBufferScale: 2,
+		}
+		buf := p.Marshal()
+		suite.Len(buf, 16)
+		suite.Equal(int32(1), int32(binary.LittleEndian.Uint32(buf[0:4])))
+		suite.Equal(int32(0), int32(binary.LittleEndian.Uint32(buf[4:8])))
+		suite.Equal(int32(4), int32(binary.LittleEndian.Uint32(buf[8:12])))
+		suite.Equal(int32(2), int32(binary.LittleEndian.Uint32(buf[12:16])))
+	})
+
+	suite.Run("vertical direction is serialized correctly", func() {
+		p := &light.GPUBlurParams{
+			Direction:    [2]int32{0, 1},
+			Radius:       8,
+			GBufferScale: 1,
+		}
+		buf := p.Marshal()
+		suite.Equal(int32(0), int32(binary.LittleEndian.Uint32(buf[0:4])))
+		suite.Equal(int32(1), int32(binary.LittleEndian.Uint32(buf[4:8])))
+	})
+}
+
+func (suite *gpuTypesTest) TestGPUGBufferOutputSize() {
+	suite.Run("size is 48 bytes", func() {
+		g := &light.GPUGBufferOutput{}
+		suite.Equal(48, g.Size())
+	})
+}
+
+func (suite *gpuTypesTest) TestGPUGBufferOutputMarshal() {
+	suite.Run("round-trips position normal and albedo", func() {
+		g := &light.GPUGBufferOutput{
+			Position: [4]float32{1.0, 2.0, 3.0, 0.5},
+			Normal:   [4]float32{0.0, 1.0, 0.0, 0.25},
+			Albedo:   [4]float32{0.8, 0.2, 0.1, 0.9},
+		}
+		buf := g.Marshal()
+		suite.Len(buf, 48)
+		suite.InDelta(1.0, float64(readF32(buf, 0)), 1e-6)
+		suite.InDelta(2.0, float64(readF32(buf, 4)), 1e-6)
+		suite.InDelta(3.0, float64(readF32(buf, 8)), 1e-6)
+		suite.InDelta(0.5, float64(readF32(buf, 12)), 1e-6)
+		suite.InDelta(0.0, float64(readF32(buf, 16)), 1e-6)
+		suite.InDelta(1.0, float64(readF32(buf, 20)), 1e-6)
+		suite.InDelta(0.0, float64(readF32(buf, 24)), 1e-6)
+		suite.InDelta(0.25, float64(readF32(buf, 28)), 1e-6)
+		suite.InDelta(0.8, float64(readF32(buf, 32)), 1e-6)
+		suite.InDelta(0.2, float64(readF32(buf, 36)), 1e-6)
+		suite.InDelta(0.1, float64(readF32(buf, 40)), 1e-6)
+		suite.InDelta(0.9, float64(readF32(buf, 44)), 1e-6)
+	})
+}
+
+func (suite *gpuTypesTest) TestGPUSSAOParamsSize() {
+	suite.Run("size is 176 bytes", func() {
+		p := &light.GPUSSAOParams{}
+		suite.Equal(176, p.Size())
+	})
+}
+
+func (suite *gpuTypesTest) TestGPUSSAOParamsMarshal() {
+	suite.Run("round-trips scalar fields", func() {
+		p := &light.GPUSSAOParams{
+			Radius:         0.5,
+			Bias:           0.025,
+			Power:          2.0,
+			SampleCount:    16,
+			ScreenWidth:    1920.0,
+			ScreenHeight:   1080.0,
+			GBufferScale:   1.0,
+			CameraPosition: [3]float32{5, 10, 15},
+		}
+		buf := p.Marshal()
+		suite.Len(buf, 176)
+		// Scalar fields start at offset 128
+		suite.InDelta(0.5, float64(readF32(buf, 128)), 1e-6)
+		suite.InDelta(0.025, float64(readF32(buf, 132)), 1e-6)
+		suite.InDelta(2.0, float64(readF32(buf, 136)), 1e-6)
+		suite.Equal(uint32(16), binary.LittleEndian.Uint32(buf[140:144]))
+		suite.InDelta(1920.0, float64(readF32(buf, 144)), 1e-6)
+		suite.InDelta(1080.0, float64(readF32(buf, 148)), 1e-6)
+		suite.InDelta(1.0, float64(readF32(buf, 152)), 1e-6)
+		// Camera position at offset 160
+		suite.InDelta(5.0, float64(readF32(buf, 160)), 1e-6)
+		suite.InDelta(10.0, float64(readF32(buf, 164)), 1e-6)
+		suite.InDelta(15.0, float64(readF32(buf, 168)), 1e-6)
+	})
+}
+
+func (suite *gpuTypesTest) TestGPUIrradianceProbeSize() {
+	suite.Run("size is 160 bytes", func() {
+		p := &light.GPUIrradianceProbe{}
+		suite.Equal(160, p.Size())
+	})
+}
+
+func (suite *gpuTypesTest) TestGPUIrradianceProbeMarshal() {
+	suite.Run("round-trips position and SH coefficients", func() {
+		p := &light.GPUIrradianceProbe{
+			Position: [4]float32{1, 2, 3, 1},
+		}
+		// Set first SH coefficient for each channel
+		p.SH_R[0] = 0.5
+		p.SH_G[0] = 0.6
+		p.SH_B[0] = 0.7
+		buf := p.Marshal()
+		suite.Len(buf, 160)
+		suite.InDelta(1.0, float64(readF32(buf, 0)), 1e-6)
+		suite.InDelta(2.0, float64(readF32(buf, 4)), 1e-6)
+		suite.InDelta(3.0, float64(readF32(buf, 8)), 1e-6)
+		suite.InDelta(1.0, float64(readF32(buf, 12)), 1e-6)
+		// SH_R[0] at offset 16
+		suite.InDelta(0.5, float64(readF32(buf, 16)), 1e-6)
+		// SH_G[0] at offset 64
+		suite.InDelta(0.6, float64(readF32(buf, 64)), 1e-6)
+		// SH_B[0] at offset 112
+		suite.InDelta(0.7, float64(readF32(buf, 112)), 1e-6)
+	})
+}
+
+func (suite *gpuTypesTest) TestGPUProbeGridParamsSize() {
+	suite.Run("size is 80 bytes", func() {
+		p := &light.GPUProbeGridParams{}
+		suite.Equal(80, p.Size())
+	})
+}
+
+func (suite *gpuTypesTest) TestGPUProbeGridParamsMarshal() {
+	suite.Run("round-trips grid parameters", func() {
+		p := &light.GPUProbeGridParams{
+			GridMin:     [3]float32{-10, -2, -10},
+			ProbeCountX: 8,
+			GridMax:     [3]float32{10, 6, 10},
+			ProbeCountY: 4,
+			Spacing:     [3]float32{2.857, 2.667, 2.857},
+			ProbeCountZ: 8,
+			TotalProbes: 256,
+		}
+		buf := p.Marshal()
+		suite.Len(buf, 80)
+		suite.InDelta(-10.0, float64(readF32(buf, 0)), 1e-3)
+		suite.InDelta(-2.0, float64(readF32(buf, 4)), 1e-3)
+		suite.InDelta(-10.0, float64(readF32(buf, 8)), 1e-3)
+		suite.Equal(uint32(8), binary.LittleEndian.Uint32(buf[12:16]))
+		suite.InDelta(10.0, float64(readF32(buf, 16)), 1e-3)
+		suite.InDelta(6.0, float64(readF32(buf, 20)), 1e-3)
+		suite.InDelta(10.0, float64(readF32(buf, 24)), 1e-3)
+		suite.Equal(uint32(4), binary.LittleEndian.Uint32(buf[28:32]))
+		suite.Equal(uint32(8), binary.LittleEndian.Uint32(buf[44:48]))
+		suite.Equal(uint32(256), binary.LittleEndian.Uint32(buf[48:52]))
+	})
+}
+
+func (suite *gpuTypesTest) TestGPUProbeBakeCameraSize() {
+	suite.Run("size is 80 bytes", func() {
+		c := &light.GPUProbeBakeCamera{}
+		suite.Equal(80, c.Size())
+	})
+}
+
+func (suite *gpuTypesTest) TestGPUProbeBakeCameraMarshal() {
+	suite.Run("round-trips camera data", func() {
+		c := &light.GPUProbeBakeCamera{
+			CameraPosition: [3]float32{5, 10, 15},
+		}
+		// Set identity-like view*proj matrix
+		c.ViewProj[0] = 1.0
+		c.ViewProj[5] = 1.0
+		c.ViewProj[10] = 1.0
+		c.ViewProj[15] = 1.0
+		buf := c.Marshal()
+		suite.Len(buf, 80)
+		suite.InDelta(1.0, float64(readF32(buf, 0)), 1e-6)
+		suite.InDelta(1.0, float64(readF32(buf, 20)), 1e-6)
+		suite.InDelta(1.0, float64(readF32(buf, 40)), 1e-6)
+		suite.InDelta(1.0, float64(readF32(buf, 60)), 1e-6)
+		// Camera position at offset 64
+		suite.InDelta(5.0, float64(readF32(buf, 64)), 1e-6)
+		suite.InDelta(10.0, float64(readF32(buf, 68)), 1e-6)
+		suite.InDelta(15.0, float64(readF32(buf, 72)), 1e-6)
+		// Padding at offset 76 should be zero
+		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[76:80]))
+	})
+}
+
+func (suite *gpuTypesTest) TestMarshalProbeBuffer() {
+	suite.Run("empty slice returns empty buffer", func() {
+		buf := light.MarshalProbeBuffer(nil)
+		suite.Len(buf, 0)
+	})
+
+	suite.Run("single probe marshals correctly", func() {
+		p := light.GPUIrradianceProbe{
+			Position: [4]float32{1, 2, 3, 1},
+		}
+		buf := light.MarshalProbeBuffer([]light.GPUIrradianceProbe{p})
+		suite.Len(buf, 160)
+		suite.InDelta(1.0, float64(readF32(buf, 0)), 1e-6)
+		suite.InDelta(2.0, float64(readF32(buf, 4)), 1e-6)
+	})
+
+	suite.Run("multiple probes are tightly packed", func() {
+		probes := []light.GPUIrradianceProbe{
+			{Position: [4]float32{1, 0, 0, 1}},
+			{Position: [4]float32{2, 0, 0, 1}},
+		}
+		buf := light.MarshalProbeBuffer(probes)
+		suite.Len(buf, 320)
+		suite.InDelta(1.0, float64(readF32(buf, 0)), 1e-6)
+		suite.InDelta(2.0, float64(readF32(buf, 160)), 1e-6)
+	})
+}
+
+func (suite *gpuTypesTest) TestGPUSHProjectParamsSize() {
+	suite.Run("size is 16 bytes", func() {
+		p := &light.GPUSHProjectParams{}
+		suite.Equal(16, p.Size())
+	})
+}
+
+func (suite *gpuTypesTest) TestGPUSHProjectParamsMarshal() {
+	suite.Run("round-trips projection params", func() {
+		p := &light.GPUSHProjectParams{
+			ProbeIndex: 5,
+			FaceIndex:  3,
+			Resolution: 32,
+		}
+		buf := p.Marshal()
+		suite.Len(buf, 16)
+		suite.Equal(uint32(5), binary.LittleEndian.Uint32(buf[0:4]))
+		suite.Equal(uint32(3), binary.LittleEndian.Uint32(buf[4:8]))
+		suite.Equal(uint32(32), binary.LittleEndian.Uint32(buf[8:12]))
+		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[12:16]))
+	})
+}
+
+func (suite *gpuTypesTest) TestGPUCompositionParamsSize() {
+	suite.Run("size is 16 bytes", func() {
+		p := &light.GPUCompositionParams{}
+		suite.Equal(16, p.Size())
+	})
+}
+
+func (suite *gpuTypesTest) TestGPUCompositionParamsMarshal() {
+	suite.Run("round-trips composition params", func() {
+		p := &light.GPUCompositionParams{
+			ToneMappingEnabled: 1,
+			Exposure:           2.0,
+		}
+		buf := p.Marshal()
+		suite.Len(buf, 16)
+		suite.Equal(uint32(1), binary.LittleEndian.Uint32(buf[0:4]))
+		suite.InDelta(2.0, float64(readF32(buf, 4)), 1e-6)
+		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[8:12]))
+		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[12:16]))
+	})
+
+	suite.Run("disabled tone mapping is serialized", func() {
+		p := &light.GPUCompositionParams{
+			ToneMappingEnabled: 0,
+			Exposure:           1.0,
+		}
+		buf := p.Marshal()
+		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[0:4]))
+	})
+}
+
+func (suite *gpuTypesTest) TestGPUSSRParamsSize() {
+	suite.Run("size is 224 bytes", func() {
+		p := &light.GPUSSRParams{}
+		suite.Equal(224, p.Size())
+	})
+}
+
+func (suite *gpuTypesTest) TestGPUSSRParamsMarshal() {
+	suite.Run("round-trips scalar fields", func() {
+		p := &light.GPUSSRParams{
+			MaxDistance:     50.0,
+			Thickness:       0.1,
+			Stride:          1.0,
+			MaxSteps:        64,
+			ScreenWidth:     1920.0,
+			ScreenHeight:    1080.0,
+			RoughnessCutoff: 0.5,
+			HiZMipCount:     10,
+		}
+		buf := p.Marshal()
+		suite.Len(buf, 224)
+		// Scalars start at offset 192 (after 3 × mat4x4 = 192 bytes)
+		suite.InDelta(50.0, float64(readF32(buf, 192)), 1e-6)
+		suite.InDelta(0.1, float64(readF32(buf, 196)), 1e-6)
+		suite.InDelta(1.0, float64(readF32(buf, 200)), 1e-6)
+		suite.Equal(uint32(64), binary.LittleEndian.Uint32(buf[204:208]))
+		suite.InDelta(1920.0, float64(readF32(buf, 208)), 1e-6)
+		suite.InDelta(1080.0, float64(readF32(buf, 212)), 1e-6)
+		suite.InDelta(0.5, float64(readF32(buf, 216)), 1e-6)
+		suite.Equal(uint32(10), binary.LittleEndian.Uint32(buf[220:224]))
+	})
+
+	suite.Run("identity projection matrix round-trips", func() {
+		p := &light.GPUSSRParams{}
+		p.Projection[0] = 1
+		p.Projection[5] = 1
+		p.Projection[10] = 1
+		p.Projection[15] = 1
+		buf := p.Marshal()
+		suite.InDelta(1.0, float64(readF32(buf, 0)), 1e-6)
+		suite.InDelta(0.0, float64(readF32(buf, 4)), 1e-6)
+		suite.InDelta(1.0, float64(readF32(buf, 20)), 1e-6)
 	})
 }
 

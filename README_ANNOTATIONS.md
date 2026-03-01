@@ -183,6 +183,16 @@ These are the valid `struct_type` values for `@oxy:include` and `@oxy:group` ann
 | `physics_grid`            | `GridCell`              | `physics.GPUGridCell`               | `engine/physics/assets/grid-cell.wgsl`                         |
 | `physics_globals`         | `PhysicsGlobals`        | `physics.GPUPhysicsGlobals`         | `engine/physics/assets/physics-globals.wgsl`                   |
 | `physics_grid_params`     | `GridParams`            | `physics.GPUGridParams`             | `engine/physics/assets/grid-params.wgsl`                       |
+| `gbuffer_output`          | `GBufferOutput`         | `light.GPUGBufferOutput`            | `engine/light/assets/gbuffer-output.wgsl`                      |
+| `ssao_params`\*           | `SSAOParams`            | `light.GPUSSAOParams`               | `engine/light/assets/ssao-params.wgsl`                         |
+| `blur_params`\*           | `BlurParams`            | `light.GPUBlurParams`               | `engine/light/assets/blur-params.wgsl`                         |
+| `sat_params`\*            | `SATParams`             | `light.GPUSATParams`                | `engine/light/assets/sat-params.wgsl`                          |
+| `irradiance_probe`        | `IrradianceProbe`       | `light.GPUIrradianceProbe`          | `engine/light/assets/irradiance-probe.wgsl`                    |
+| `probe_grid_params`       | `ProbeGridParams`       | `light.GPUProbeGridParams`          | `engine/light/assets/probe-grid-params.wgsl`                   |
+| `probe_bake_camera`\*     | `ProbeBakeCamera`       | `light.GPUProbeBakeCamera`          | `engine/light/assets/probe-bake-camera.wgsl`                   |
+| `sh_project_params`\*     | `SHProjectParams`       | `light.GPUSHProjectParams`          | `engine/light/assets/sh-project-params.wgsl`                   |
+| `composition_params`\*    | `CompositionParams`     | `light.GPUCompositionParams`        | `engine/light/assets/composition-params.wgsl`                  |
+| `ssr_params`\*            | `SSRParams`             | `light.GPUSSRParams`                | `engine/light/assets/ssr-params.wgsl`                          |
 
 \* Unexported keys — used internally by the pre-processor but cannot be matched from outside the shader package.
 
@@ -216,6 +226,12 @@ These are the valid `provider_identity` values for `@oxy:provider` annotations. 
 | `animator_output`  | Compute shader output transforms buffer            | `array<f32>` (shared with vertex shader instance buffer) |
 | `animator_packed`  | Packed animation data (clips, channels, keyframes) | `array<u32>` flat packed buffer                          |
 | `animator_scratch` | Scratch bone matrix workspace for blending         | `array<mat4x4<f32>>`                                     |
+| `ssao`             | SSAO blurred occlusion texture + sampler (lit pass) | `texture_2d<f32>`, `sampler`                             |
+| `probes`           | Irradiance probe grid storage + params (lit pass)   | `array<IrradianceProbe>`, `ProbeGridParams`              |
+| `composition`      | Composition HDR + SSR textures + sampler + params   | `texture_2d<f32>`, `sampler`, `CompositionParams`        |
+| `ssr`              | SSR compute I/O (G-Buffer + HDR + output + params)  | `texture_2d<f32>`, `texture_storage_2d`, `SSRParams`     |
+| `hiz_init`         | Hi-Z init (G-Buffer depth → Hi-Z mip 0 copy)       | `texture_2d<f32>`, `texture_storage_2d`                  |
+| `hiz_down`         | Hi-Z downsample (mip N-1 → mip N min-downsample)   | `texture_2d<f32>`, `texture_storage_2d`                  |
 
 ---
 
@@ -231,8 +247,19 @@ These are the valid `binding_role` values for the optional fourth argument of `@
 | `normal_sampler`             | Sampler paired with the normal map                    |
 | `metallic_roughness_texture` | Combined metallic-roughness `texture_2d<f32>` binding |
 | `metallic_roughness_sampler` | Sampler paired with the metallic-roughness texture    |
+| `ssao_texture`               | SSAO blurred occlusion `texture_2d<f32>` binding      |
+| `ssao_sampler`               | Sampler paired with the SSAO occlusion texture        |
+| `gbuffer_normal`             | G-Buffer world-normal `texture_2d<f32>` binding       |
+| `gbuffer_depth`              | G-Buffer depth `texture_2d<f32>` binding              |
+| `hdr_texture`                | HDR lit result `texture_2d<f32>` binding               |
+| `ssr_output`                 | SSR compute output `texture_storage_2d` binding        |
+| `ssr_texture`                | SSR result `texture_2d<f32>` binding (composition)     |
+| `composition_sampler`        | Linear sampler for composition pass                    |
+| `hiz_out`                    | Hi-Z output `texture_storage_2d` binding               |
+| `hiz_in`                     | Hi-Z input `texture_2d<f32>` binding (previous mip)    |
+| `hiz_texture`                | Full Hi-Z depth pyramid `texture_2d<f32>` binding      |
 
-**Usage:** Binding roles are only valid when the provider identity is `material`. Each binding in the material group should have its own `@oxy:provider` annotation with a role:
+**Usage:** Material binding roles are only valid when the provider identity is `material`. The remaining roles listed above (`ssao_*`, `gbuffer_*`, `hdr_*`, `ssr_*`, `composition_*`, `hiz_*`) are used by the GI subsystem providers (`ssao`, `composition`, `ssr`, `hiz_init`, `hiz_down`). Each binding in the material group should have its own `@oxy:provider` annotation with a role:
 
 ```wgsl
 //@oxy:provider 2 0 material diffuse_texture

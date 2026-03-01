@@ -201,6 +201,46 @@ const (
 	// AnnotationArgPhysicsGridParams identifies the GridParams struct for GPU-writable grid origin and dimensions.
 	// Source: engine/physics/assets/grid-params.wgsl
 	AnnotationArgPhysicsGridParams AnnotationArg = "physics_grid_params"
+
+	// AnnotationArgGBufferOutput identifies the GBufferOutput struct for the G-Buffer MRT fragment shader.
+	// Source: engine/light/assets/gbuffer-output.wgsl
+	AnnotationArgGBufferOutput AnnotationArg = "gbuffer_output"
+
+	// annotationArgSSAOParams identifies the SSAOParams struct for the SSAO compute shader.
+	// Source: engine/light/assets/ssao-params.wgsl
+	annotationArgSSAOParams AnnotationArg = "ssao_params"
+
+	// annotationArgBlurParams identifies the BlurParams struct for the VSM separable blur compute shader.
+	// Source: engine/light/assets/blur-params.wgsl
+	annotationArgBlurParams AnnotationArg = "blur_params"
+
+	// annotationArgSATParams identifies the SATParams struct for the SAT recursive-doubling compute shader.
+	// Source: engine/light/assets/sat-params.wgsl
+	annotationArgSATParams AnnotationArg = "sat_params"
+
+	// AnnotationArgIrradianceProbe identifies the IrradianceProbe struct for probe grid storage.
+	// Source: engine/light/assets/irradiance-probe.wgsl
+	AnnotationArgIrradianceProbe AnnotationArg = "irradiance_probe"
+
+	// AnnotationArgProbeGridParams identifies the ProbeGridParams struct for probe grid uniform data.
+	// Source: engine/light/assets/probe-grid-params.wgsl
+	AnnotationArgProbeGridParams AnnotationArg = "probe_grid_params"
+
+	// annotationArgProbeBakeCamera identifies the ProbeBakeCamera struct for cubemap face baking uniforms.
+	// Source: engine/light/assets/probe-bake-camera.wgsl
+	annotationArgProbeBakeCamera AnnotationArg = "probe_bake_camera"
+
+	// annotationArgSHProjectParams identifies the SHProjectParams struct for the SH projection compute shader.
+	// Source: engine/light/assets/sh-project-params.wgsl
+	annotationArgSHProjectParams AnnotationArg = "sh_project_params"
+
+	// annotationArgCompositionParams identifies the CompositionParams struct for the composition fragment shader.
+	// Source: engine/light/assets/composition-params.wgsl
+	annotationArgCompositionParams AnnotationArg = "composition_params"
+
+	// annotationArgSSRParams identifies the SSRParams struct for the SSR compute shader.
+	// Source: engine/light/assets/ssr-params.wgsl
+	annotationArgSSRParams AnnotationArg = "ssr_params"
 )
 
 // ── Address space arguments ────────────────────────────────────────────────────
@@ -250,6 +290,24 @@ const (
 
 	// AnnotationArgAnimatorScratch identifies the scratch bone matrix workspace buffer used during skeletal animation blending.
 	AnnotationArgAnimatorScratch AnnotationArg = "animator_scratch"
+
+	// AnnotationArgSSAO identifies the SSAO provider (blurred occlusion texture + sampler for the lit shader).
+	AnnotationArgSSAO AnnotationArg = "ssao"
+
+	// AnnotationArgProbes identifies the irradiance probe grid provider (probe storage buffer + grid params uniform for the lit shader).
+	AnnotationArgProbes AnnotationArg = "probes"
+
+	// AnnotationArgComposition identifies the composition provider (HDR texture + SSR texture + sampler + params uniform).
+	AnnotationArgComposition AnnotationArg = "composition"
+
+	// AnnotationArgSSR identifies the SSR provider (G-Buffer textures + HDR texture + SSR output + params uniform).
+	AnnotationArgSSR AnnotationArg = "ssr"
+
+	// AnnotationArgHiZInit identifies the Hi-Z init provider (GBuffer depth → Hi-Z mip 0 copy).
+	AnnotationArgHiZInit AnnotationArg = "hiz_init"
+
+	// AnnotationArgHiZDown identifies the Hi-Z downsample provider (mip N-1 → mip N min-downsample).
+	AnnotationArgHiZDown AnnotationArg = "hiz_down"
 )
 
 // ── Material binding role arguments ────────────────────────────────────────────
@@ -276,6 +334,39 @@ const (
 
 	// AnnotationArgMetallicRoughnessSampler identifies the sampler paired with the metallic-roughness texture.
 	AnnotationArgMetallicRoughnessSampler AnnotationArg = "metallic_roughness_sampler"
+
+	// AnnotationArgSSAOTexture identifies the SSAO blurred occlusion texture binding role.
+	AnnotationArgSSAOTexture AnnotationArg = "ssao_texture"
+
+	// AnnotationArgSSAOSampler identifies the sampler paired with the SSAO occlusion texture.
+	AnnotationArgSSAOSampler AnnotationArg = "ssao_sampler"
+
+	// AnnotationArgGBufferNormal identifies the G-Buffer normal texture binding role.
+	AnnotationArgGBufferNormal AnnotationArg = "gbuffer_normal"
+
+	// AnnotationArgGBufferDepth identifies the G-Buffer depth texture binding role.
+	AnnotationArgGBufferDepth AnnotationArg = "gbuffer_depth"
+
+	// AnnotationArgHDRTexture identifies the HDR lit result texture binding role.
+	AnnotationArgHDRTexture AnnotationArg = "hdr_texture"
+
+	// AnnotationArgSSROutput identifies the SSR compute output storage texture binding role.
+	AnnotationArgSSROutput AnnotationArg = "ssr_output"
+
+	// AnnotationArgSSRTexture identifies the SSR result texture binding role (sampled in composition).
+	AnnotationArgSSRTexture AnnotationArg = "ssr_texture"
+
+	// AnnotationArgCompositionSampler identifies the linear sampler binding role for composition.
+	AnnotationArgCompositionSampler AnnotationArg = "composition_sampler"
+
+	// AnnotationArgHiZOut identifies the Hi-Z output storage texture binding role.
+	AnnotationArgHiZOut AnnotationArg = "hiz_out"
+
+	// AnnotationArgHiZIn identifies the Hi-Z input texture binding role (previous mip read view).
+	AnnotationArgHiZIn AnnotationArg = "hiz_in"
+
+	// AnnotationArgHiZTexture identifies the full Hi-Z depth pyramid texture binding role.
+	AnnotationArgHiZTexture AnnotationArg = "hiz_texture"
 )
 
 // validStructTypes lists all AnnotationArg values that are accepted as struct type
@@ -307,6 +398,16 @@ var validStructTypes = []AnnotationArg{
 	AnnotationArgPhysicsGrid,
 	AnnotationArgPhysicsGlobals,
 	AnnotationArgPhysicsGridParams,
+	AnnotationArgGBufferOutput,
+	annotationArgSSAOParams,
+	annotationArgBlurParams,
+	annotationArgSATParams,
+	AnnotationArgIrradianceProbe,
+	AnnotationArgProbeGridParams,
+	annotationArgProbeBakeCamera,
+	annotationArgSHProjectParams,
+	annotationArgCompositionParams,
+	annotationArgSSRParams,
 }
 
 // validAddressSpaces lists all AnnotationArg values that are accepted as address
@@ -331,6 +432,12 @@ var validProviderIdentities = []AnnotationArg{
 	AnnotationArgAnimatorOutput,
 	AnnotationArgAnimatorPacked,
 	AnnotationArgAnimatorScratch,
+	AnnotationArgSSAO,
+	AnnotationArgProbes,
+	AnnotationArgComposition,
+	AnnotationArgSSR,
+	AnnotationArgHiZInit,
+	AnnotationArgHiZDown,
 }
 
 // validBindingRoles lists all AnnotationArg values that are accepted as binding
@@ -343,6 +450,17 @@ var validBindingRoles = []AnnotationArg{
 	AnnotationArgNormalSampler,
 	AnnotationArgMetallicRoughnessTexture,
 	AnnotationArgMetallicRoughnessSampler,
+	AnnotationArgSSAOTexture,
+	AnnotationArgSSAOSampler,
+	AnnotationArgGBufferNormal,
+	AnnotationArgGBufferDepth,
+	AnnotationArgHDRTexture,
+	AnnotationArgSSROutput,
+	AnnotationArgSSRTexture,
+	AnnotationArgCompositionSampler,
+	AnnotationArgHiZOut,
+	AnnotationArgHiZIn,
+	AnnotationArgHiZTexture,
 }
 
 // parseAnnotation attempts to parse a single line of WGSL source as an @oxy: annotation.
