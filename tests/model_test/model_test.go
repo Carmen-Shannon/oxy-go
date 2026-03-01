@@ -98,6 +98,16 @@ func (suite *modelTest) TestNewModel() {
 		m := model.NewModel()
 		suite.Nil(m.EffectProvider())
 	})
+
+	suite.Run("default casts shadows is true", func() {
+		m := model.NewModel()
+		suite.True(m.CastsShadows())
+	})
+
+	suite.Run("default shadow cull mode is ShadowCullModeBack", func() {
+		m := model.NewModel()
+		suite.Equal(model.ShadowCullModeBack, m.ShadowCullMode())
+	})
 }
 
 func (suite *modelTest) TestWithName() {
@@ -459,6 +469,86 @@ func (suite *modelTest) TestSetIndexCount() {
 		m := model.NewModel(model.WithIndexCount(100))
 		m.SetIndexCount(0)
 		suite.Equal(0, m.IndexCount())
+	})
+}
+
+func (suite *modelTest) TestWithCastsShadows() {
+	suite.Run("sets casts shadows to false", func() {
+		m := model.NewModel(model.WithCastsShadows(false))
+		suite.False(m.CastsShadows())
+	})
+
+	suite.Run("sets casts shadows to true", func() {
+		m := model.NewModel(model.WithCastsShadows(true))
+		suite.True(m.CastsShadows())
+	})
+
+	suite.Run("overrides the default true value", func() {
+		m := model.NewModel(model.WithCastsShadows(false))
+		suite.False(m.CastsShadows())
+	})
+}
+
+func (suite *modelTest) TestWithShadowCullMode() {
+	suite.Run("sets shadow cull mode to back", func() {
+		m := model.NewModel(model.WithShadowCullMode(model.ShadowCullModeBack))
+		suite.Equal(model.ShadowCullModeBack, m.ShadowCullMode())
+	})
+
+	suite.Run("sets shadow cull mode to front", func() {
+		m := model.NewModel(model.WithShadowCullMode(model.ShadowCullModeFront))
+		suite.Equal(model.ShadowCullModeFront, m.ShadowCullMode())
+	})
+
+	suite.Run("sets shadow cull mode to none", func() {
+		m := model.NewModel(model.WithShadowCullMode(model.ShadowCullModeNone))
+		suite.Equal(model.ShadowCullModeNone, m.ShadowCullMode())
+	})
+}
+
+func (suite *modelTest) TestSetCastsShadows() {
+	suite.Run("toggles from default true to false", func() {
+		m := model.NewModel()
+		suite.True(m.CastsShadows())
+		m.SetCastsShadows(false)
+		suite.False(m.CastsShadows())
+	})
+
+	suite.Run("toggles from false back to true", func() {
+		m := model.NewModel(model.WithCastsShadows(false))
+		m.SetCastsShadows(true)
+		suite.True(m.CastsShadows())
+	})
+}
+
+func (suite *modelTest) TestSetShadowCullMode() {
+	suite.Run("updates shadow cull mode from default", func() {
+		m := model.NewModel()
+		suite.Equal(model.ShadowCullModeBack, m.ShadowCullMode())
+		m.SetShadowCullMode(model.ShadowCullModeFront)
+		suite.Equal(model.ShadowCullModeFront, m.ShadowCullMode())
+	})
+
+	suite.Run("can set to all modes", func() {
+		m := model.NewModel()
+		m.SetShadowCullMode(model.ShadowCullModeNone)
+		suite.Equal(model.ShadowCullModeNone, m.ShadowCullMode())
+		m.SetShadowCullMode(model.ShadowCullModeBack)
+		suite.Equal(model.ShadowCullModeBack, m.ShadowCullMode())
+	})
+}
+
+func (suite *modelTest) TestShadowCullModeConstants() {
+	suite.Run("ShadowCullModeBack is 0", func() {
+		suite.Equal(model.ShadowCullMode(0), model.ShadowCullModeBack)
+	})
+
+	suite.Run("ShadowCullModeFront is 1", func() {
+		suite.Equal(model.ShadowCullMode(1), model.ShadowCullModeFront)
+	})
+
+	suite.Run("ShadowCullModeNone is 2", func() {
+		suite.Equal(model.ShadowCullMode(2), model.ShadowCullModeNone)
 	})
 }
 

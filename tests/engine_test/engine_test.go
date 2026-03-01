@@ -498,17 +498,15 @@ func (suite *engineTest) TestRenderPipeline() {
 		w, stop := newBlockingMockWindow()
 
 		r := &renderermocks.MockRenderer{}
-		var computeCount, frameCount atomic.Int32
+		var computeCount, hdrFrameCount atomic.Int32
 
 		r.EXPECT().BeginComputeFrame().RunAndReturn(func() error {
 			computeCount.Add(1)
 			return nil
 		}).Maybe()
 		r.EXPECT().EndComputeFrame().Return().Maybe()
-		r.EXPECT().BeginFrame().RunAndReturn(func() error {
-			frameCount.Add(1)
-			return nil
-		}).Maybe()
+		r.EXPECT().BeginGeometryFrame().Return(nil).Maybe()
+		r.EXPECT().EndGeometryFrame().Return().Maybe()
 		r.EXPECT().EndFrame().Return().Maybe()
 		r.EXPECT().Present().Return().Maybe()
 
@@ -517,8 +515,17 @@ func (suite *engineTest) TestRenderPipeline() {
 		s.EXPECT().Renderer().Return(r).Maybe()
 		s.EXPECT().PrepareCompute(mock.AnythingOfType("float32")).Return().Maybe()
 		s.EXPECT().PrepareShadows().Return().Maybe()
+		s.EXPECT().PrepareGBuffer().Return().Maybe()
+		s.EXPECT().PrepareShadowBlur().Return().Maybe()
 		s.EXPECT().PrepareLightCulling().Return().Maybe()
+		s.EXPECT().PrepareSSAO().Return().Maybe()
+		s.EXPECT().BeginHDRFrame().RunAndReturn(func() error {
+			hdrFrameCount.Add(1)
+			return nil
+		}).Maybe()
 		s.EXPECT().DrawCalls().Return(nil).Maybe()
+		s.EXPECT().PrepareSSR().Return().Maybe()
+		s.EXPECT().PrepareComposition().Return().Maybe()
 
 		eng := engine.NewEngine(
 			engine.WithWindow(w),
@@ -542,7 +549,7 @@ func (suite *engineTest) TestRenderPipeline() {
 		}
 
 		suite.Greater(computeCount.Load(), int32(0))
-		suite.Greater(frameCount.Load(), int32(0))
+		suite.Greater(hdrFrameCount.Load(), int32(0))
 	})
 
 	suite.Run("inactive scene is skipped during render", func() {
@@ -586,7 +593,8 @@ func (suite *engineTest) TestRenderPipeline() {
 		r := &renderermocks.MockRenderer{}
 		r.EXPECT().BeginComputeFrame().Return(nil).Maybe()
 		r.EXPECT().EndComputeFrame().Return().Maybe()
-		r.EXPECT().BeginFrame().Return(nil).Maybe()
+		r.EXPECT().BeginGeometryFrame().Return(nil).Maybe()
+		r.EXPECT().EndGeometryFrame().Return().Maybe()
 		r.EXPECT().EndFrame().Return().Maybe()
 		r.EXPECT().Present().Return().Maybe()
 
@@ -599,8 +607,14 @@ func (suite *engineTest) TestRenderPipeline() {
 			s1PrepCount.Add(1)
 		}).Return().Maybe()
 		s1.EXPECT().PrepareShadows().Return().Maybe()
+		s1.EXPECT().PrepareGBuffer().Return().Maybe()
+		s1.EXPECT().PrepareShadowBlur().Return().Maybe()
 		s1.EXPECT().PrepareLightCulling().Return().Maybe()
+		s1.EXPECT().PrepareSSAO().Return().Maybe()
+		s1.EXPECT().BeginHDRFrame().Return(nil).Maybe()
 		s1.EXPECT().DrawCalls().Return(nil).Maybe()
+		s1.EXPECT().PrepareSSR().Return().Maybe()
+		s1.EXPECT().PrepareComposition().Return().Maybe()
 
 		s2 := &scenemocks.MockScene{}
 		s2.EXPECT().Active().Return(true).Maybe()
@@ -609,8 +623,14 @@ func (suite *engineTest) TestRenderPipeline() {
 			s2PrepCount.Add(1)
 		}).Return().Maybe()
 		s2.EXPECT().PrepareShadows().Return().Maybe()
+		s2.EXPECT().PrepareGBuffer().Return().Maybe()
+		s2.EXPECT().PrepareShadowBlur().Return().Maybe()
 		s2.EXPECT().PrepareLightCulling().Return().Maybe()
+		s2.EXPECT().PrepareSSAO().Return().Maybe()
+		s2.EXPECT().BeginHDRFrame().Return(nil).Maybe()
 		s2.EXPECT().DrawCalls().Return(nil).Maybe()
+		s2.EXPECT().PrepareSSR().Return().Maybe()
+		s2.EXPECT().PrepareComposition().Return().Maybe()
 
 		eng := engine.NewEngine(
 			engine.WithWindow(w),
@@ -702,7 +722,8 @@ func (suite *engineTest) TestRenderPipeline() {
 
 		r := &renderermocks.MockRenderer{}
 		r.EXPECT().BeginComputeFrame().Return(fmt.Errorf("compute error")).Maybe()
-		r.EXPECT().BeginFrame().Return(nil).Maybe()
+		r.EXPECT().BeginGeometryFrame().Return(nil).Maybe()
+		r.EXPECT().EndGeometryFrame().Return().Maybe()
 		r.EXPECT().EndFrame().Return().Maybe()
 		r.EXPECT().Present().Return().Maybe()
 
@@ -710,8 +731,11 @@ func (suite *engineTest) TestRenderPipeline() {
 		s.EXPECT().Active().Return(true).Maybe()
 		s.EXPECT().Renderer().Return(r).Maybe()
 		s.EXPECT().PrepareShadows().Return().Maybe()
+		s.EXPECT().PrepareGBuffer().Return().Maybe()
 		s.EXPECT().PrepareLightCulling().Return().Maybe()
+		s.EXPECT().BeginHDRFrame().Return(nil).Maybe()
 		s.EXPECT().DrawCalls().Return(nil).Maybe()
+		s.EXPECT().PrepareComposition().Return().Maybe()
 
 		eng := engine.NewEngine(
 			engine.WithWindow(w),
@@ -739,20 +763,25 @@ func (suite *engineTest) TestRenderPipeline() {
 		r.AssertNotCalled(suite.T(), "EndComputeFrame")
 	})
 
-	suite.Run("BeginFrame error skips draw phase", func() {
+	suite.Run("BeginHDRFrame error skips draw phase", func() {
 		w, stop := newBlockingMockWindow()
 
 		r := &renderermocks.MockRenderer{}
 		r.EXPECT().BeginComputeFrame().Return(nil).Maybe()
 		r.EXPECT().EndComputeFrame().Return().Maybe()
-		r.EXPECT().BeginFrame().Return(fmt.Errorf("frame error")).Maybe()
+		r.EXPECT().BeginGeometryFrame().Return(nil).Maybe()
+		r.EXPECT().EndGeometryFrame().Return().Maybe()
 
 		s := &scenemocks.MockScene{}
 		s.EXPECT().Active().Return(true).Maybe()
 		s.EXPECT().Renderer().Return(r).Maybe()
 		s.EXPECT().PrepareCompute(mock.AnythingOfType("float32")).Return().Maybe()
 		s.EXPECT().PrepareShadows().Return().Maybe()
+		s.EXPECT().PrepareGBuffer().Return().Maybe()
+		s.EXPECT().PrepareShadowBlur().Return().Maybe()
 		s.EXPECT().PrepareLightCulling().Return().Maybe()
+		s.EXPECT().PrepareSSAO().Return().Maybe()
+		s.EXPECT().BeginHDRFrame().Return(fmt.Errorf("hdr frame error")).Maybe()
 
 		eng := engine.NewEngine(
 			engine.WithWindow(w),

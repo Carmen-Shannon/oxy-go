@@ -29,7 +29,7 @@ func main() {
 		engine.WithProfiling(true),
 		engine.WithTickRate(60),
 		engine.WithWindow(window.NewWindow(
-			window.WithTitle("Oxy Engine - Lit Scene (Forward+)"),
+			window.WithTitle("Oxy Engine - Lit Scene (Forward+ / VSM+PCSS / SSAO / SSR / HDR)"),
 			window.WithWidth(1920),
 			window.WithHeight(1080),
 		)),
@@ -68,6 +68,31 @@ func main() {
 			light.WithShadowHalfExtent(120),
 			light.WithShadowNearFar(0.1, 400),
 			light.WithShadowBias(0.001),
+			light.WithShadowMapResolution(720),
+			light.WithPCSSEnabled(false),
+			light.WithVSMLightSize(10.0),
+			light.WithVSMMinVariance(0.001),
+			light.WithVSMLightBleedReduction(0.1),
+			light.WithGBufferHandler(light.NewGBufferHandler()),
+			light.WithSSAOHandler(light.NewSSAOHandler(
+				light.WithSSAOSampleCount(16),
+				light.WithSSAORadius(0.5),
+				light.WithSSAOBias(0.025),
+				light.WithSSAOPower(2.0),
+				light.WithSSAOBlurRadius(2),
+				light.WithSSAOHalfResolution(true),
+			)),
+			light.WithCompositionHandler(light.NewCompositionHandler(
+				light.WithToneMappingEnabled(true),
+				light.WithExposure(1.5),
+			)),
+			light.WithSSRHandler(light.NewSSRHandler(
+				light.WithSSRMaxSteps(64),
+				light.WithSSRMaxDistance(300.0),
+				light.WithSSRThickness(2.0),
+				light.WithSSRStride(1.5),
+				light.WithSSRRoughnessCutoff(0.5),
+			)),
 		)),
 	)
 
@@ -137,15 +162,16 @@ func main() {
 		fox.Animator().PlayAnimation(0, 0, true)
 	}
 
-	// ── Transparent Quad ──────────────────────────────────────────────────
-	// A horizontal canopy above the fox that casts a shadow from the sun.
-	// Positioned so the shadow falls directly onto the fox. Initially fully
-	// opaque (alpha=1.0). Press V to cycle transparency.
+	// ── Reflective Floor ──────────────────────────────────────────────────
+	// A reflective metallic floor beneath the fox. Roughness is low and
+	// metallic is high so the surface picks up screen-space reflections
+	// (SSR). The fox shadow from the directional sun also appears here.
+	// Press V to cycle transparency.
 	quadAlpha := float32(1.0)
 	quadVerts, quadIdx := buildLitQuad(quadAlpha)
 	quadObj := game_object.NewGameObject(
 		game_object.WithModel(model.NewModel(
-			model.WithName("transparent_quad"),
+			model.WithName("reflective_floor"),
 			model.WithBoundingRadius(100.0),
 			model.WithVertexData(common.SliceToBytes(quadVerts)),
 			model.WithIndexData(common.SliceToBytes(quadIdx)),
@@ -155,11 +181,13 @@ func main() {
 			)),
 			model.WithRenderMaterials(material.NewMaterial(
 				material.WithName("quad_material"),
-				material.WithBaseColor([4]float32{0.3, 0.5, 0.9, quadAlpha}),
-				material.WithPipelineKey("transparent_quad"),
+				material.WithBaseColor([4]float32{0.7, 0.8, 0.95, quadAlpha}),
+				material.WithRoughness(0.05),
+				material.WithMetallic(1.0),
+				material.WithPipelineKey("reflective_floor"),
 			)),
 		)),
-		game_object.WithPosition(0, 120, 0),
+		game_object.WithPosition(0, -1, 0),
 		game_object.WithScale(1, 1, 1),
 		game_object.WithEphemeral(true),
 	)
@@ -214,7 +242,7 @@ func main() {
 	setupLitInput(eng, cam, fox, sun, bluePoint, orangePoint, spot, quadObj, sunIndicator)
 
 	fmt.Println("╔══════════════════════════════════════════════════════╗")
-	fmt.Println("║  Oxy Engine - Lit Scene (Forward+)                  ║")
+	fmt.Println("║  Oxy Engine - Lit Scene (Forward+ / VSM+PCSS)        ║")
 	fmt.Println("╠══════════════════════════════════════════════════════╣")
 	fmt.Println("║  Camera: WASD=Pan  Q/E=Up/Down  Scroll=Zoom        ║")
 	fmt.Println("║          Middle-mouse drag=Orbit                    ║")
@@ -224,9 +252,10 @@ func main() {
 	fmt.Println("║  T:      Toggle sun orbit (day/night cycle)          ║")
 	fmt.Println("║  V:      Cycle quad transparency                     ║")
 	fmt.Println("║  1-3:    Switch fox animation                       ║")
+	fmt.Println("║  Shadow: VSM + PCSS (contact-hardening soft shadows) ║")
 	fmt.Println("╚══════════════════════════════════════════════════════╝")
 
-	log.Println("Starting Oxy Engine - Lit Scene (Forward+)")
+	log.Println("Starting Oxy Engine - Lit Scene (Forward+ / VSM+PCSS)")
 	eng.Run()
 }
 

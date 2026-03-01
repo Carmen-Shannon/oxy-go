@@ -1,6 +1,8 @@
 package light
 
 import (
+	"fmt"
+
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/cogentcore/webgpu/wgpu"
 )
@@ -15,10 +17,6 @@ type lightingHandlerImpl struct {
 	bgps         map[string]bind_group_provider.BindGroupProvider
 	pipelineKeys map[string]string
 
-	shadowDepthTexture     *wgpu.Texture
-	shadowDepthTextureView *wgpu.TextureView
-	shadowComparisonSamp   *wgpu.Sampler
-
 	shadowHalfExtent      float32
 	shadowNear            float32
 	shadowFar             float32
@@ -26,10 +24,38 @@ type lightingHandlerImpl struct {
 	shadowNormalBiasScale float32
 	shadowMapResolution   int
 
+	// VSM-specific resources and configuration.
+	vsmTexture             *wgpu.Texture
+	vsmTextureView         *wgpu.TextureView
+	vsmScratchTexture      *wgpu.Texture
+	vsmScratchTextureView  *wgpu.TextureView
+	vsmAuxDepthTexture     *wgpu.Texture
+	vsmAuxDepthTextureView *wgpu.TextureView
+	vsmLinearSampler       *wgpu.Sampler
+	vsmBlurRadius          int
+	vsmMinVariance         float32
+	vsmLightBleedReduction float32
+	vsmLightSize           float32
+
+	// PCSS (Percentage-Closer Soft Shadows) resources and configuration.
+	pcssEnabled     bool
+	satTextureA     *wgpu.Texture
+	satTextureAView *wgpu.TextureView
+	satTextureB     *wgpu.Texture
+	satTextureBView *wgpu.TextureView
+
 	screenWidth  int
 	screenHeight int
 	tileCountX   uint32
 	tileCountY   uint32
+
+	// GI sub-handlers — owned by the lighting system and lazily initialized
+	// by the scene when the first light is added.
+	gBufferHandler     GBufferHandler
+	ssaoHandler        SSAOHandler
+	probeGrid          IrradianceProbeGrid
+	compositionHandler CompositionHandler
+	ssrHandler         SSRHandler
 }
 
 // LightingHandler defines the interface for the scene's lighting subsystem.
@@ -96,6 +122,7 @@ type LightingHandler interface {
 	//   - "shadow_lit": lit pass shadow sampling BGP (texture + sampler + uniform)
 	//   - "light_cull": compute shader cull BGP
 	//   - "tile_lit": fragment shader tile data BGP
+	//   - "ssao_lit": lit pass SSAO occlusion texture + sampler BGP (real or fallback white)
 	//
 	// Parameters:
 	//   - key: the bind group provider identifier
@@ -132,42 +159,6 @@ type LightingHandler interface {
 	//   - name: the pipeline name
 	//   - key: the pipeline key
 	SetPipelineKey(name, key string)
-
-	// ShadowDepthTexture returns the depth texture used for shadow mapping.
-	//
-	// Returns:
-	//   - *wgpu.Texture: the shadow depth texture, or nil if not initialized
-	ShadowDepthTexture() *wgpu.Texture
-
-	// SetShadowDepthTexture sets the depth texture used for shadow mapping.
-	//
-	// Parameters:
-	//   - t: the shadow depth texture
-	SetShadowDepthTexture(t *wgpu.Texture)
-
-	// ShadowDepthTextureView returns the texture view into the shadow depth texture.
-	//
-	// Returns:
-	//   - *wgpu.TextureView: the shadow depth texture view, or nil if not initialized
-	ShadowDepthTextureView() *wgpu.TextureView
-
-	// SetShadowDepthTextureView sets the texture view into the shadow depth texture.
-	//
-	// Parameters:
-	//   - tv: the shadow depth texture view
-	SetShadowDepthTextureView(tv *wgpu.TextureView)
-
-	// ShadowComparisonSampler returns the comparison sampler used for PCF shadow sampling.
-	//
-	// Returns:
-	//   - *wgpu.Sampler: the comparison sampler, or nil if not initialized
-	ShadowComparisonSampler() *wgpu.Sampler
-
-	// SetShadowComparisonSampler sets the comparison sampler used for PCF shadow sampling.
-	//
-	// Parameters:
-	//   - s: the comparison sampler
-	SetShadowComparisonSampler(s *wgpu.Sampler)
 
 	// ShadowHalfExtent returns the orthographic half-extent of the directional shadow frustum
 	// in world units.
@@ -207,6 +198,180 @@ type LightingHandler interface {
 	//   - int: the shadow map resolution
 	ShadowMapResolution() int
 
+	// VSMTexture returns the RG32Float variance shadow map texture.
+	//
+	// Returns:
+	//   - *wgpu.Texture: the VSM texture, or nil if not initialized
+	VSMTexture() *wgpu.Texture
+
+	// SetVSMTexture sets the RG32Float variance shadow map texture.
+	//
+	// Parameters:
+	//   - t: the VSM texture
+	SetVSMTexture(t *wgpu.Texture)
+
+	// VSMTextureView returns the texture view for the VSM texture.
+	//
+	// Returns:
+	//   - *wgpu.TextureView: the VSM texture view, or nil if not initialized
+	VSMTextureView() *wgpu.TextureView
+
+	// SetVSMTextureView sets the texture view for the VSM texture.
+	//
+	// Parameters:
+	//   - tv: the VSM texture view
+	SetVSMTextureView(tv *wgpu.TextureView)
+
+	// VSMScratchTexture returns the scratch RG32Float texture used as intermediate
+	// storage during the separable blur pass.
+	//
+	// Returns:
+	//   - *wgpu.Texture: the scratch texture, or nil if not initialized
+	VSMScratchTexture() *wgpu.Texture
+
+	// SetVSMScratchTexture sets the scratch texture used during the separable blur pass.
+	//
+	// Parameters:
+	//   - t: the scratch texture
+	SetVSMScratchTexture(t *wgpu.Texture)
+
+	// VSMScratchTextureView returns the texture view for the scratch texture.
+	//
+	// Returns:
+	//   - *wgpu.TextureView: the scratch texture view, or nil if not initialized
+	VSMScratchTextureView() *wgpu.TextureView
+
+	// SetVSMScratchTextureView sets the texture view for the scratch texture.
+	//
+	// Parameters:
+	//   - tv: the scratch texture view
+	SetVSMScratchTextureView(tv *wgpu.TextureView)
+
+	// VSMAuxDepthTexture returns the auxiliary Depth32Float texture used for hardware
+	// z-testing during the VSM shadow render pass.
+	//
+	// Returns:
+	//   - *wgpu.Texture: the auxiliary depth texture, or nil if not initialized
+	VSMAuxDepthTexture() *wgpu.Texture
+
+	// SetVSMAuxDepthTexture sets the auxiliary depth texture for the VSM shadow pass.
+	//
+	// Parameters:
+	//   - t: the auxiliary depth texture
+	SetVSMAuxDepthTexture(t *wgpu.Texture)
+
+	// VSMAuxDepthTextureView returns the texture view for the auxiliary depth texture.
+	//
+	// Returns:
+	//   - *wgpu.TextureView: the auxiliary depth texture view, or nil if not initialized
+	VSMAuxDepthTextureView() *wgpu.TextureView
+
+	// SetVSMAuxDepthTextureView sets the texture view for the auxiliary depth texture.
+	//
+	// Parameters:
+	//   - tv: the auxiliary depth texture view
+	SetVSMAuxDepthTextureView(tv *wgpu.TextureView)
+
+	// VSMLinearSampler returns the linear sampler used for VSM texture lookups in
+	// the lit fragment shader (replaces the comparison sampler used by PCF).
+	//
+	// Returns:
+	//   - *wgpu.Sampler: the linear sampler, or nil if not initialized
+	VSMLinearSampler() *wgpu.Sampler
+
+	// SetVSMLinearSampler sets the linear sampler used for VSM texture lookups.
+	//
+	// Parameters:
+	//   - s: the linear sampler
+	SetVSMLinearSampler(s *wgpu.Sampler)
+
+	// VSMBlurRadius returns the half-width (in texels) of the separable blur
+	// applied to the variance shadow map.
+	//
+	// Returns:
+	//   - int: the blur radius
+	VSMBlurRadius() int
+
+	// VSMMinVariance returns the minimum variance clamp for Chebyshev's inequality.
+	//
+	// Returns:
+	//   - float32: the minimum variance
+	VSMMinVariance() float32
+
+	// VSMLightBleedReduction returns the exponent applied to the raw Chebyshev shadow
+	// probability to reduce light-bleeding artifacts.
+	//
+	// Returns:
+	//   - float32: the light bleed reduction exponent
+	VSMLightBleedReduction() float32
+
+	// VSMLightSize returns the world-space area light size used for PCSS penumbra estimation.
+	//
+	// Returns:
+	//   - float32: the light size
+	VSMLightSize() float32
+
+	// PCSSEnabled returns whether PCSS contact-hardening soft shadows are enabled.
+	// PCSS requires VSM to also be enabled.
+	//
+	// Returns:
+	//   - bool: true if PCSS is enabled
+	PCSSEnabled() bool
+
+	// SetPCSSEnabled sets whether PCSS contact-hardening soft shadows are enabled.
+	//
+	// Parameters:
+	//   - enabled: true to enable PCSS
+	SetPCSSEnabled(enabled bool)
+
+	// SATTextureA returns the first RGBA32Float SAT ping-pong texture.
+	//
+	// Returns:
+	//   - *wgpu.Texture: SAT texture A, or nil if not initialized
+	SATTextureA() *wgpu.Texture
+
+	// SetSATTextureA sets the first SAT ping-pong texture.
+	//
+	// Parameters:
+	//   - t: SAT texture A
+	SetSATTextureA(t *wgpu.Texture)
+
+	// SATTextureAView returns the texture view for SAT texture A.
+	//
+	// Returns:
+	//   - *wgpu.TextureView: SAT texture A view, or nil if not initialized
+	SATTextureAView() *wgpu.TextureView
+
+	// SetSATTextureAView sets the texture view for SAT texture A.
+	//
+	// Parameters:
+	//   - tv: SAT texture A view
+	SetSATTextureAView(tv *wgpu.TextureView)
+
+	// SATTextureB returns the second RGBA32Float SAT ping-pong texture.
+	//
+	// Returns:
+	//   - *wgpu.Texture: SAT texture B, or nil if not initialized
+	SATTextureB() *wgpu.Texture
+
+	// SetSATTextureB sets the second SAT ping-pong texture.
+	//
+	// Parameters:
+	//   - t: SAT texture B
+	SetSATTextureB(t *wgpu.Texture)
+
+	// SATTextureBView returns the texture view for SAT texture B.
+	//
+	// Returns:
+	//   - *wgpu.TextureView: SAT texture B view, or nil if not initialized
+	SATTextureBView() *wgpu.TextureView
+
+	// SetSATTextureBView sets the texture view for SAT texture B.
+	//
+	// Parameters:
+	//   - tv: SAT texture B view
+	SetSATTextureBView(tv *wgpu.TextureView)
+
 	// ScreenWidth returns the current screen width in pixels used for tile calculations.
 	//
 	// Returns:
@@ -238,6 +403,41 @@ type LightingHandler interface {
 	//   - width: the new screen width in pixels
 	//   - height: the new screen height in pixels
 	Resize(width, height int)
+
+	// GBufferHandler returns the GBufferHandler attached to this lighting
+	// subsystem, or nil if no G-Buffer pre-pass is configured.
+	//
+	// Returns:
+	//   - GBufferHandler: the G-Buffer handler, or nil
+	GBufferHandler() GBufferHandler
+
+	// SSAOHandler returns the SSAOHandler attached to this lighting
+	// subsystem, or nil if SSAO is not configured.
+	//
+	// Returns:
+	//   - SSAOHandler: the SSAO handler, or nil
+	SSAOHandler() SSAOHandler
+
+	// ProbeGrid returns the IrradianceProbeGrid attached to this lighting
+	// subsystem, or nil if probe-based GI is not configured.
+	//
+	// Returns:
+	//   - IrradianceProbeGrid: the probe grid handler, or nil
+	ProbeGrid() IrradianceProbeGrid
+
+	// CompositionHandler returns the CompositionHandler attached to this lighting
+	// subsystem, or nil if composition/tone mapping is not configured.
+	//
+	// Returns:
+	//   - CompositionHandler: the composition handler, or nil
+	CompositionHandler() CompositionHandler
+
+	// SSRHandler returns the SSRHandler attached to this lighting
+	// subsystem, or nil if screen-space reflections are not configured.
+	//
+	// Returns:
+	//   - SSRHandler: the SSR handler, or nil
+	SSRHandler() SSRHandler
 }
 
 var _ LightingHandler = &lightingHandlerImpl{}
@@ -257,23 +457,69 @@ func NewLightingHandler(opts ...LightingHandlerOption) LightingHandler {
 		enabled: false,
 		lights:  make([]Light, 0),
 		bgps: map[string]bind_group_provider.BindGroupProvider{
-			"lights":      bind_group_provider.NewBindGroupProvider("lights"),
-			"shadow_data": bind_group_provider.NewBindGroupProvider("shadow_data"),
-			"shadow_lit":  bind_group_provider.NewBindGroupProvider("shadow_lit"),
-			"light_cull":  bind_group_provider.NewBindGroupProvider("light_cull"),
-			"tile_lit":    bind_group_provider.NewBindGroupProvider("tile_lit"),
+			"lights":          bind_group_provider.NewBindGroupProvider("lights"),
+			"shadow_data":     bind_group_provider.NewBindGroupProvider("shadow_data"),
+			"shadow_lit":      bind_group_provider.NewBindGroupProvider("shadow_lit"),
+			"light_cull":      bind_group_provider.NewBindGroupProvider("light_cull"),
+			"tile_lit":        bind_group_provider.NewBindGroupProvider("tile_lit"),
+			"vsm_blur_h":      bind_group_provider.NewBindGroupProvider("vsm_blur_h"),
+			"vsm_blur_v":      bind_group_provider.NewBindGroupProvider("vsm_blur_v"),
+			"sat_prepare":     bind_group_provider.NewBindGroupProvider("sat_prepare"),
+			"ssao_lit":        bind_group_provider.NewBindGroupProvider("ssao_lit"),
+			"probe_lit":       bind_group_provider.NewBindGroupProvider("probe_lit"),
+			"composition_lit": bind_group_provider.NewBindGroupProvider("composition_lit"),
+			"ssr_lit":         bind_group_provider.NewBindGroupProvider("ssr_lit"),
 		},
-		pipelineKeys:          make(map[string]string),
-		shadowHalfExtent:      DefaultShadowHalfExtent,
-		shadowNear:            DefaultShadowNear,
-		shadowFar:             DefaultShadowFar,
-		shadowBias:            DefaultShadowBias,
-		shadowNormalBiasScale: DefaultShadowNormalBiasScale,
-		shadowMapResolution:   ShadowMapResolution,
+		pipelineKeys:           make(map[string]string),
+		shadowHalfExtent:       DefaultShadowHalfExtent,
+		shadowNear:             DefaultShadowNear,
+		shadowFar:              DefaultShadowFar,
+		shadowBias:             DefaultShadowBias,
+		shadowNormalBiasScale:  DefaultShadowNormalBiasScale,
+		shadowMapResolution:    ShadowMapResolution,
+		vsmBlurRadius:          DefaultVSMBlurRadius,
+		vsmMinVariance:         DefaultVSMMinVariance,
+		vsmLightBleedReduction: DefaultVSMLightBleedReduction,
+		vsmLightSize:           DefaultVSMLightSize,
+		pcssEnabled:            false,
 	}
 	for _, opt := range opts {
 		opt(h)
 	}
+
+	// Always create the GI subsystems (GBuffer, SSAO, Composition, SSR) with
+	// sensible defaults if they were not explicitly provided via options. The
+	// full GI pipeline is mandatory for lit scenes.
+	if h.gBufferHandler == nil {
+		h.gBufferHandler = NewGBufferHandler()
+	}
+	if h.ssaoHandler == nil {
+		h.ssaoHandler = NewSSAOHandler()
+	}
+	if h.compositionHandler == nil {
+		h.compositionHandler = NewCompositionHandler(
+			WithToneMappingEnabled(true),
+			WithExposure(1.0),
+		)
+	}
+	if h.ssrHandler == nil {
+		h.ssrHandler = NewSSRHandler()
+	}
+
+	// Pre-create per-pass SAT bind group providers. Each prefix-sum pass gets
+	// its own BGP (and thus its own uniform buffer) so that all params can be
+	// written upfront and dispatches batched into a single GPU submission.
+	if h.pcssEnabled {
+		numPasses := 0
+		for v := h.shadowMapResolution; v > 1; v >>= 1 {
+			numPasses++
+		}
+		for i := 0; i < 2*numPasses; i++ {
+			name := fmt.Sprintf("sat_pass_%d", i)
+			h.bgps[name] = bind_group_provider.NewBindGroupProvider(name)
+		}
+	}
+
 	return h
 }
 
@@ -332,30 +578,6 @@ func (h *lightingHandlerImpl) SetPipelineKey(name, key string) {
 	h.pipelineKeys[name] = key
 }
 
-func (h *lightingHandlerImpl) ShadowDepthTexture() *wgpu.Texture {
-	return h.shadowDepthTexture
-}
-
-func (h *lightingHandlerImpl) SetShadowDepthTexture(t *wgpu.Texture) {
-	h.shadowDepthTexture = t
-}
-
-func (h *lightingHandlerImpl) ShadowDepthTextureView() *wgpu.TextureView {
-	return h.shadowDepthTextureView
-}
-
-func (h *lightingHandlerImpl) SetShadowDepthTextureView(tv *wgpu.TextureView) {
-	h.shadowDepthTextureView = tv
-}
-
-func (h *lightingHandlerImpl) ShadowComparisonSampler() *wgpu.Sampler {
-	return h.shadowComparisonSamp
-}
-
-func (h *lightingHandlerImpl) SetShadowComparisonSampler(s *wgpu.Sampler) {
-	h.shadowComparisonSamp = s
-}
-
 func (h *lightingHandlerImpl) ShadowHalfExtent() float32 {
 	return h.shadowHalfExtent
 }
@@ -380,6 +602,118 @@ func (h *lightingHandlerImpl) ShadowMapResolution() int {
 	return h.shadowMapResolution
 }
 
+func (h *lightingHandlerImpl) VSMTexture() *wgpu.Texture {
+	return h.vsmTexture
+}
+
+func (h *lightingHandlerImpl) SetVSMTexture(t *wgpu.Texture) {
+	h.vsmTexture = t
+}
+
+func (h *lightingHandlerImpl) VSMTextureView() *wgpu.TextureView {
+	return h.vsmTextureView
+}
+
+func (h *lightingHandlerImpl) SetVSMTextureView(tv *wgpu.TextureView) {
+	h.vsmTextureView = tv
+}
+
+func (h *lightingHandlerImpl) VSMScratchTexture() *wgpu.Texture {
+	return h.vsmScratchTexture
+}
+
+func (h *lightingHandlerImpl) SetVSMScratchTexture(t *wgpu.Texture) {
+	h.vsmScratchTexture = t
+}
+
+func (h *lightingHandlerImpl) VSMScratchTextureView() *wgpu.TextureView {
+	return h.vsmScratchTextureView
+}
+
+func (h *lightingHandlerImpl) SetVSMScratchTextureView(tv *wgpu.TextureView) {
+	h.vsmScratchTextureView = tv
+}
+
+func (h *lightingHandlerImpl) VSMAuxDepthTexture() *wgpu.Texture {
+	return h.vsmAuxDepthTexture
+}
+
+func (h *lightingHandlerImpl) SetVSMAuxDepthTexture(t *wgpu.Texture) {
+	h.vsmAuxDepthTexture = t
+}
+
+func (h *lightingHandlerImpl) VSMAuxDepthTextureView() *wgpu.TextureView {
+	return h.vsmAuxDepthTextureView
+}
+
+func (h *lightingHandlerImpl) SetVSMAuxDepthTextureView(tv *wgpu.TextureView) {
+	h.vsmAuxDepthTextureView = tv
+}
+
+func (h *lightingHandlerImpl) VSMLinearSampler() *wgpu.Sampler {
+	return h.vsmLinearSampler
+}
+
+func (h *lightingHandlerImpl) SetVSMLinearSampler(s *wgpu.Sampler) {
+	h.vsmLinearSampler = s
+}
+
+func (h *lightingHandlerImpl) VSMBlurRadius() int {
+	return h.vsmBlurRadius
+}
+
+func (h *lightingHandlerImpl) VSMMinVariance() float32 {
+	return h.vsmMinVariance
+}
+
+func (h *lightingHandlerImpl) VSMLightBleedReduction() float32 {
+	return h.vsmLightBleedReduction
+}
+
+func (h *lightingHandlerImpl) VSMLightSize() float32 {
+	return h.vsmLightSize
+}
+
+func (h *lightingHandlerImpl) PCSSEnabled() bool {
+	return h.pcssEnabled
+}
+
+func (h *lightingHandlerImpl) SetPCSSEnabled(enabled bool) {
+	h.pcssEnabled = enabled
+}
+
+func (h *lightingHandlerImpl) SATTextureA() *wgpu.Texture {
+	return h.satTextureA
+}
+
+func (h *lightingHandlerImpl) SetSATTextureA(t *wgpu.Texture) {
+	h.satTextureA = t
+}
+
+func (h *lightingHandlerImpl) SATTextureAView() *wgpu.TextureView {
+	return h.satTextureAView
+}
+
+func (h *lightingHandlerImpl) SetSATTextureAView(tv *wgpu.TextureView) {
+	h.satTextureAView = tv
+}
+
+func (h *lightingHandlerImpl) SATTextureB() *wgpu.Texture {
+	return h.satTextureB
+}
+
+func (h *lightingHandlerImpl) SetSATTextureB(t *wgpu.Texture) {
+	h.satTextureB = t
+}
+
+func (h *lightingHandlerImpl) SATTextureBView() *wgpu.TextureView {
+	return h.satTextureBView
+}
+
+func (h *lightingHandlerImpl) SetSATTextureBView(tv *wgpu.TextureView) {
+	h.satTextureBView = tv
+}
+
 func (h *lightingHandlerImpl) ScreenWidth() int {
 	return h.screenWidth
 }
@@ -400,4 +734,24 @@ func (h *lightingHandlerImpl) Resize(width, height int) {
 	h.screenWidth = width
 	h.screenHeight = height
 	h.tileCountX, h.tileCountY = TileCounts(width, height)
+}
+
+func (h *lightingHandlerImpl) GBufferHandler() GBufferHandler {
+	return h.gBufferHandler
+}
+
+func (h *lightingHandlerImpl) SSAOHandler() SSAOHandler {
+	return h.ssaoHandler
+}
+
+func (h *lightingHandlerImpl) ProbeGrid() IrradianceProbeGrid {
+	return h.probeGrid
+}
+
+func (h *lightingHandlerImpl) CompositionHandler() CompositionHandler {
+	return h.compositionHandler
+}
+
+func (h *lightingHandlerImpl) SSRHandler() SSRHandler {
+	return h.ssrHandler
 }

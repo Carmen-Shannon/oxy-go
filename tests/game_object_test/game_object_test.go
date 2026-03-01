@@ -7,6 +7,7 @@ import (
 	animatormocks "github.com/Carmen-Shannon/oxy-go/tests/mocks/animator"
 	lightmocks "github.com/Carmen-Shannon/oxy-go/tests/mocks/light"
 	modelmocks "github.com/Carmen-Shannon/oxy-go/tests/mocks/model"
+	physicsmocks "github.com/Carmen-Shannon/oxy-go/tests/mocks/physics"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
@@ -53,6 +54,11 @@ func (suite *gameObjectTest) TestNewGameObject() {
 	suite.Run("light defaults to nil", func() {
 		obj := game_object.NewGameObject()
 		suite.Nil(obj.Light())
+	})
+
+	suite.Run("rigid body defaults to nil", func() {
+		obj := game_object.NewGameObject()
+		suite.Nil(obj.RigidBody())
 	})
 
 	suite.Run("position defaults to zero", func() {
@@ -146,6 +152,12 @@ func (suite *gameObjectTest) TestNewGameObjectWithOptions() {
 		l := &lightmocks.MockLight{}
 		obj := game_object.NewGameObject(game_object.WithLight(l))
 		suite.Equal(l, obj.Light())
+	})
+
+	suite.Run("WithRigidBody sets the attached rigid body", func() {
+		rb := &physicsmocks.MockRigidBody{}
+		obj := game_object.NewGameObject(game_object.WithRigidBody(rb))
+		suite.Equal(rb, obj.RigidBody())
 	})
 
 	suite.Run("combined options apply correctly", func() {
@@ -244,6 +256,20 @@ func (suite *gameObjectTest) TestSettersAndGetters() {
 		obj := game_object.NewGameObject(game_object.WithLight(l))
 		obj.SetLight(nil)
 		suite.Nil(obj.Light())
+	})
+
+	suite.Run("SetRigidBody and RigidBody", func() {
+		obj := game_object.NewGameObject()
+		rb := &physicsmocks.MockRigidBody{}
+		obj.SetRigidBody(rb)
+		suite.Equal(rb, obj.RigidBody())
+	})
+
+	suite.Run("SetRigidBody to nil detaches rigid body", func() {
+		rb := &physicsmocks.MockRigidBody{}
+		obj := game_object.NewGameObject(game_object.WithRigidBody(rb))
+		obj.SetRigidBody(nil)
+		suite.Nil(obj.RigidBody())
 	})
 }
 

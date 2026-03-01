@@ -250,6 +250,23 @@ func (suite *pipelineTest) TestWithDepthWriteEnabledOption() {
 	})
 }
 
+func (suite *pipelineTest) TestWithDepthCompareOption() {
+	suite.Run("default depth compare is undefined", func() {
+		p := pipeline.NewPipeline("key", pipeline.PipelineTypeRender)
+		suite.Equal(wgpu.CompareFunctionUndefined, p.DepthCompare())
+	})
+
+	suite.Run("sets depth compare to less-equal", func() {
+		p := pipeline.NewPipeline("key", pipeline.PipelineTypeRender, pipeline.WithDepthCompare(wgpu.CompareFunctionLessEqual))
+		suite.Equal(wgpu.CompareFunctionLessEqual, p.DepthCompare())
+	})
+
+	suite.Run("sets depth compare to always", func() {
+		p := pipeline.NewPipeline("key", pipeline.PipelineTypeRender, pipeline.WithDepthCompare(wgpu.CompareFunctionAlways))
+		suite.Equal(wgpu.CompareFunctionAlways, p.DepthCompare())
+	})
+}
+
 func (suite *pipelineTest) TestWithDepthBiasOption() {
 	suite.Run("sets depth bias and slope scale", func() {
 		p := pipeline.NewPipeline("key", pipeline.PipelineTypeRender, pipeline.WithDepthBias(4, 1.5))

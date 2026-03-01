@@ -511,6 +511,7 @@ func (suite *animatorTest) TestSimpleBackendSkeletalNoOps() {
 		a := animator.NewAnimator(animator.BackendTypeSimple)
 		a.CancelBlend(0)
 	})
+
 }
 
 func (suite *animatorTest) TestReleaseSimple() {
@@ -1108,6 +1109,24 @@ func (suite *animatorTest) TestFlushCoalesceSimple() {
 
 		writes := a.StagedWriteData()
 		// 3 non-contiguous indices should produce 3 separate writes
+		suite.Equal(3, len(writes))
+	})
+
+	suite.Run("reverse-order dirty instances are sorted before flush", func() {
+		a := animator.NewAnimator(animator.BackendTypeSimple, animator.WithMaxInstances(100))
+		for i := 0; i < 10; i++ {
+			_, _ = a.AddInstance()
+		}
+
+		// Dirty instances in descending order so sortUint32 must actually swap
+		a.SetInstanceTransform(9, [3]float32{9, 0, 0}, [3]float32{1, 1, 1})
+		a.SetInstanceTransform(5, [3]float32{5, 0, 0}, [3]float32{1, 1, 1})
+		a.SetInstanceTransform(0, [3]float32{0, 0, 0}, [3]float32{1, 1, 1})
+
+		count := a.Flush(0, 1, 2)
+		suite.Equal(uint32(3), count)
+
+		writes := a.StagedWriteData()
 		suite.Equal(3, len(writes))
 	})
 }
@@ -1747,5 +1766,210 @@ func (suite *animatorTest) TestSkeletalPrepareFrameBlendLooping() {
 		_ = a.StagedWriteData()
 
 		suite.True(a.IsBlending(0))
+	})
+}
+
+func (suite *animatorTest) TestIndirectBufferSkeletal() {
+	suite.Run("returns nil when no buffer at binding", func() {
+		a := animator.NewAnimator(animator.BackendTypeSkeletal, animator.WithMaxInstances(10))
+		buf := a.IndirectBuffer(99)
+		suite.Nil(buf)
+	})
+}
+
+func (suite *animatorTest) TestSetBoneCountZeroSkeletal() {
+	suite.Run("zero count does not panic", func() {
+		a := animator.NewAnimator(animator.BackendTypeSkeletal, animator.WithMaxInstances(10))
+		a.SetBoneCount(0)
+	})
+}
+
+func (suite *animatorTest) TestInstanceRotationOutOfBoundsSkeletal() {
+	suite.Run("returns zeros for out of bounds index", func() {
+		a := animator.NewAnimator(animator.BackendTypeSkeletal, animator.WithMaxInstances(10))
+		_, _ = a.AddInstance()
+		rotSpeed, rot := a.InstanceRotation(999)
+		suite.Equal([3]float32{}, rotSpeed)
+		suite.Equal([3]float32{}, rot)
+	})
+}
+
+func (suite *animatorTest) TestInstanceTransformOutOfBoundsSkeletal() {
+	suite.Run("returns zeros for out of bounds index", func() {
+		a := animator.NewAnimator(animator.BackendTypeSkeletal, animator.WithMaxInstances(10))
+		_, _ = a.AddInstance()
+		pos, scale := a.InstanceTransform(999)
+		suite.Equal([3]float32{}, pos)
+		suite.Equal([3]float32{}, scale)
+	})
+}
+
+func (suite *animatorTest) TestSetInstanceRotationFirstDirtySkeletal() {
+	suite.Run("sets model dirty when called without prior transform", func() {
+		a := animator.NewAnimator(animator.BackendTypeSkeletal, animator.WithMaxInstances(10))
+		_, _ = a.AddInstance()
+		// Call SetInstanceRotation directly without SetInstanceTransform
+		// so modelDirty starts as false and the first-dirty branch executes
+		a.SetInstanceRotation(0, [3]float32{0.1, 0.2, 0.3}, [3]float32{0.4, 0.5, 0.6})
+
+		_, rot := a.InstanceRotation(0)
+		suite.InDelta(float32(0.6), rot[2], 1e-5)
+	})
+
+	suite.Run("expands dirty range when called on multiple instances", func() {
+		a := animator.NewAnimator(animator.BackendTypeSkeletal, animator.WithMaxInstances(10))
+		_, _ = a.AddInstance() // 0
+		_, _ = a.AddInstance() // 1
+		_, _ = a.AddInstance() // 2
+		// First call sets dirty range to [2,3)
+		a.SetInstanceRotation(2, [3]float32{}, [3]float32{0.1, 0, 0})
+		// Second call with lower index expands start
+		a.SetInstanceRotation(0, [3]float32{}, [3]float32{0.2, 0, 0})
+		// Third call with higher index expands end — already covered since 2 > 0+1
+
+		_, rot0 := a.InstanceRotation(0)
+		_, rot2 := a.InstanceRotation(2)
+		suite.InDelta(float32(0.2), rot0[0], 1e-5)
+		suite.InDelta(float32(0.1), rot2[0], 1e-5)
+	})
+}
+
+func (suite *animatorTest) TestSetInstanceTransformDirtyExpansionSkeletal() {
+	suite.Run("expands dirty range when setting high then low index", func() {
+		a := animator.NewAnimator(animator.BackendTypeSkeletal, animator.WithMaxInstances(10))
+		_, _ = a.AddInstance() // 0
+		_, _ = a.AddInstance() // 1
+		_, _ = a.AddInstance() // 2
+		// Set high index first to establish dirty range at [2,3)
+		a.SetInstanceTransform(2, [3]float32{30, 0, 0}, [3]float32{1, 1, 1})
+		// Now set low index to trigger dirty range expansion at start
+		a.SetInstanceTransform(0, [3]float32{10, 0, 0}, [3]float32{1, 1, 1})
+
+		pos0, _ := a.InstanceTransform(0)
+		pos2, _ := a.InstanceTransform(2)
+		suite.InDelta(float32(10), pos0[0], 1e-5)
+		suite.InDelta(float32(30), pos2[0], 1e-5)
+	})
+}
+
+func (suite *animatorTest) TestSetInstanceDataOutOfBoundsSkeletal() {
+	suite.Run("out of bounds index is no-op", func() {
+		a := animator.NewAnimator(animator.BackendTypeSkeletal, animator.WithMaxInstances(10))
+		a.SetInstanceData(999, [3]float32{}, [3]float32{1, 1, 1}, [3]float32{}, [3]float32{})
+	})
+
+	suite.Run("expands dirty range when setting high then low index", func() {
+		a := animator.NewAnimator(animator.BackendTypeSkeletal, animator.WithMaxInstances(10))
+		_, _ = a.AddInstance() // 0
+		_, _ = a.AddInstance() // 1
+		_, _ = a.AddInstance() // 2
+		a.SetInstanceData(2, [3]float32{30, 0, 0}, [3]float32{1, 1, 1}, [3]float32{}, [3]float32{})
+		a.SetInstanceData(0, [3]float32{10, 0, 0}, [3]float32{1, 1, 1}, [3]float32{}, [3]float32{})
+
+		pos0, _ := a.InstanceTransform(0)
+		pos2, _ := a.InstanceTransform(2)
+		suite.InDelta(float32(10), pos0[0], 1e-5)
+		suite.InDelta(float32(30), pos2[0], 1e-5)
+	})
+}
+
+func (suite *animatorTest) TestRemoveInstanceDirtyExpansionSkeletal() {
+	suite.Run("second swap-remove expands dirty start range", func() {
+		a := animator.NewAnimator(animator.BackendTypeSkeletal, animator.WithMaxInstances(10))
+		_, _ = a.AddInstance() // 0
+		_, _ = a.AddInstance() // 1
+		_, _ = a.AddInstance() // 2
+		_, _ = a.AddInstance() // 3
+
+		// Flush initial state so dirty flags reset
+		a.Flush(0, 1, 2)
+		_ = a.StagedWriteData()
+
+		// First remove sets dirtyStart=2 (swaps 3 into 2, count=3)
+		a.RemoveInstance(2)
+		// Second remove with lower index expands dirtyStart (swaps 2 into 0, count=2)
+		a.RemoveInstance(0)
+
+		suite.Equal(uint32(2), a.InstanceCount())
+	})
+}
+
+func (suite *animatorTest) TestPrepareFrameBlendCompletesSkeletal() {
+	suite.Run("blend completes when progress reaches 1", func() {
+		a := animator.NewAnimator(animator.BackendTypeSkeletal, animator.WithMaxInstances(10))
+		_, _ = a.AddInstance()
+		a.SetBoneCount(1)
+
+		channels := []uint32{0, 0, 2, 0, 0, 0, 0}
+		kf := []float32{0.0, 0.5}
+		trans := [][3]float32{{0, 0, 0}, {1, 0, 0}}
+		rots := [][4]float32{{0, 0, 0, 1}, {0, 0, 0, 1}}
+		scls := [][3]float32{{1, 1, 1}, {1, 1, 1}}
+		a.AddClip(1.0, 1.0, channels, kf, trans, rots, scls, 2) // clip 0
+		a.AddClip(1.0, 1.0, channels, kf, trans, rots, scls, 2) // clip 1
+		_ = a.StagedWriteData()
+
+		a.PlayAnimation(0, 0, false)
+		a.BlendToAnimation(0, 1, 0.01) // very short blend duration
+
+		// Advance enough to complete the blend (deltaTime >> blendDuration)
+		a.PrepareFrame(1.0, 0)
+		_ = a.StagedWriteData()
+
+		suite.False(a.IsBlending(0))
+	})
+}
+
+func (suite *animatorTest) TestSetInstanceTransformOutOfBoundsSkeletal() {
+	suite.Run("out of bounds index is no-op", func() {
+		a := animator.NewAnimator(animator.BackendTypeSkeletal, animator.WithMaxInstances(10))
+		a.SetInstanceTransform(999, [3]float32{1, 2, 3}, [3]float32{1, 1, 1})
+	})
+}
+
+func (suite *animatorTest) TestPrepareFrameNonLoopingExceedsDurationSkeletal() {
+	suite.Run("non-looping animation time exceeds duration without wrapping", func() {
+		a := animator.NewAnimator(animator.BackendTypeSkeletal, animator.WithMaxInstances(10))
+		_, _ = a.AddInstance()
+		a.SetBoneCount(1)
+
+		channels := []uint32{0, 0, 2, 0, 0, 0, 0}
+		kf := []float32{0.0, 0.5}
+		trans := [][3]float32{{0, 0, 0}, {1, 0, 0}}
+		rots := [][4]float32{{0, 0, 0, 1}, {0, 0, 0, 1}}
+		scls := [][3]float32{{1, 1, 1}, {1, 1, 1}}
+		a.AddClip(0.5, 1.0, channels, kf, trans, rots, scls, 2)
+		_ = a.StagedWriteData()
+
+		// Play non-looping, advance past clip duration
+		a.PlayAnimation(0, 0, false)
+		a.PrepareFrame(2.0, 0) // time=2.0 exceeds 0.5 duration, but no loop so no wrap
+
+		writes := a.StagedWriteData()
+		suite.True(len(writes) > 0)
+	})
+
+	suite.Run("multiple instances expand dirty range in PrepareFrame", func() {
+		a := animator.NewAnimator(animator.BackendTypeSkeletal, animator.WithMaxInstances(10))
+		_, _ = a.AddInstance() // 0
+		_, _ = a.AddInstance() // 1
+		_, _ = a.AddInstance() // 2
+		a.SetBoneCount(1)
+
+		channels := []uint32{0, 0, 2, 0, 0, 0, 0}
+		kf := []float32{0.0, 0.5}
+		trans := [][3]float32{{0, 0, 0}, {1, 0, 0}}
+		rots := [][4]float32{{0, 0, 0, 1}, {0, 0, 0, 1}}
+		scls := [][3]float32{{1, 1, 1}, {1, 1, 1}}
+		a.AddClip(0.5, 1.0, channels, kf, trans, rots, scls, 2)
+		// Drain initial staged writes
+		a.Flush(0, 1, 2)
+		_ = a.StagedWriteData()
+
+		// PrepareFrame with 3 instances exercises the dirty range expansion
+		a.PrepareFrame(0.016, 0)
+
+		writes := a.StagedWriteData()
+		suite.True(len(writes) > 0)
 	})
 }

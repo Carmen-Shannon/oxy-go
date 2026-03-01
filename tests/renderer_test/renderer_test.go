@@ -349,45 +349,6 @@ func (suite *rendererTest) TestRegisterPipelines() {
 	})
 }
 
-func (suite *rendererTest) TestRegisterShadowPipeline() {
-	suite.Run("skips pipeline with key already in cache", func() {
-		w, r := newTestRenderer()
-		defer w.Close()
-
-		p := pipeline.NewPipeline("shadow-preloaded", pipeline.PipelineTypeRender)
-		r.SetPipeline("shadow-preloaded", p)
-
-		err := r.RegisterShadowPipeline(p)
-		suite.NoError(err)
-		suite.NotNil(r.Pipeline("shadow-preloaded"))
-	})
-
-	suite.Run("registers a real shadow pipeline with vertex shader", func() {
-		w, r := newTestRenderer()
-		defer w.Close()
-
-		vs := shader.NewShader("shadow-vert", shader.ShaderTypeVertex, shaderPath("test_shadow_vert.wgsl"))
-		p := pipeline.NewPipeline("shadow-pipe", pipeline.PipelineTypeRender,
-			pipeline.WithVertexShader(vs),
-			pipeline.WithDepthBias(2, 1.5),
-		)
-
-		err := r.RegisterShadowPipeline(p)
-		suite.NoError(err)
-		suite.NotNil(r.Pipeline("shadow-pipe"))
-		suite.NotNil(r.Pipeline("shadow-pipe").Pipeline())
-	})
-
-	suite.Run("returns error when vertex shader is missing", func() {
-		w, r := newTestRenderer()
-		defer w.Close()
-
-		p := pipeline.NewPipeline("bad-shadow", pipeline.PipelineTypeRender)
-		err := r.RegisterShadowPipeline(p)
-		suite.Error(err)
-	})
-}
-
 func (suite *rendererTest) TestResize() {
 	suite.Run("does not panic on positive dimensions", func() {
 		w, r := newTestRenderer()
@@ -929,20 +890,21 @@ func (suite *rendererTest) TestShadowDrawCallIndirect() {
 		suite.Contains(err.Error(), "nonexistent")
 	})
 
-	suite.Run("succeeds with registered shadow pipeline and indirect buffer", func() {
+	suite.Run("succeeds with registered VSM shadow pipeline and indirect buffer", func() {
 		w, r := newTestRenderer()
 		defer w.Close()
 
-		vs := shader.NewShader("shadow-vert", shader.ShaderTypeVertex, shaderPath("test_shadow_vert.wgsl"))
+		vs := shader.NewShader("vsm-shadow-vert", shader.ShaderTypeVertex, shaderPath("test_vsm_shadow_vert.wgsl"))
+		fs := shader.NewShader("vsm-shadow-frag", shader.ShaderTypeFragment, shaderPath("test_vsm_shadow_frag.wgsl"))
 		p := pipeline.NewPipeline("shadow-indirect-pipe", pipeline.PipelineTypeRender,
 			pipeline.WithVertexShader(vs),
-			pipeline.WithDepthBias(2, 1.5),
+			pipeline.WithFragmentShader(fs),
 		)
 
-		err := r.RegisterShadowPipeline(p)
+		err := r.RegisterVSMShadowPipeline(p)
 		suite.NoError(err)
 
-		view, _, err := r.CreateShadowDepthTexture(256, 256)
+		vsmView, _, _, _, depthView, _, err := r.CreateVSMTextures(256, 256)
 		suite.NoError(err)
 
 		meshProvider := bind_group_provider.NewBindGroupProvider("shadow-indirect-mesh")
@@ -990,7 +952,7 @@ func (suite *rendererTest) TestShadowDrawCallIndirect() {
 		err = r.BeginShadowFrame()
 		suite.NoError(err)
 
-		r.BeginShadowPass(view)
+		r.BeginVSMShadowPass(vsmView, depthView)
 
 		err = r.ShadowDrawCallIndirect("shadow-indirect-pipe", meshProvider, indirectBuffer, []bind_group_provider.BindGroupProvider{
 			shadowUniformProvider,
@@ -1082,27 +1044,6 @@ func (suite *rendererTest) TestBeginShadowFrameEndShadowFrame() {
 	})
 }
 
-func (suite *rendererTest) TestCreateShadowDepthTexture() {
-	suite.Run("returns non-nil texture view and texture", func() {
-		w, r := newTestRenderer()
-		defer w.Close()
-		view, tex, err := r.CreateShadowDepthTexture(256, 256)
-		suite.NoError(err)
-		suite.NotNil(view)
-		suite.NotNil(tex)
-	})
-}
-
-func (suite *rendererTest) TestCreateComparisonSampler() {
-	suite.Run("returns non-nil sampler", func() {
-		w, r := newTestRenderer()
-		defer w.Close()
-		samp, err := r.CreateComparisonSampler()
-		suite.NoError(err)
-		suite.NotNil(samp)
-	})
-}
-
 func (suite *rendererTest) TestEndComputeFrameWithoutBegin() {
 	suite.Run("does not panic when called without BeginComputeFrame", func() {
 		w, r := newTestRenderer()
@@ -1143,41 +1084,121 @@ func (suite *rendererTest) TestPresentWithoutBeginFrame() {
 	})
 }
 
-func (suite *rendererTest) TestShadowPassLifecycle() {
-	suite.Run("full shadow lifecycle with registered pipeline and draw call", func() {
+func (suite *rendererTest) TestCreateVSMTextures() {
+	suite.Run("returns non-nil textures and views", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		vsmView, vsmTex, scratchView, scratchTex, depthView, depthTex, err := r.CreateVSMTextures(256, 256)
+		suite.NoError(err)
+		suite.NotNil(vsmView)
+		suite.NotNil(vsmTex)
+		suite.NotNil(scratchView)
+		suite.NotNil(scratchTex)
+		suite.NotNil(depthView)
+		suite.NotNil(depthTex)
+	})
+}
+
+func (suite *rendererTest) TestCreateSATTextures() {
+	suite.Run("returns non-nil textures and views", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		satAView, satATex, satBView, satBTex, err := r.CreateSATTextures(256, 256)
+		suite.NoError(err)
+		suite.NotNil(satAView)
+		suite.NotNil(satATex)
+		suite.NotNil(satBView)
+		suite.NotNil(satBTex)
+	})
+}
+
+func (suite *rendererTest) TestCreateLinearSampler() {
+	suite.Run("returns non-nil sampler", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		samp, err := r.CreateLinearSampler()
+		suite.NoError(err)
+		suite.NotNil(samp)
+	})
+}
+
+func (suite *rendererTest) TestRegisterVSMShadowPipeline() {
+	suite.Run("skips pipeline with key already in cache", func() {
 		w, r := newTestRenderer()
 		defer w.Close()
 
-		vs := shader.NewShader("shadow-vert", shader.ShaderTypeVertex, shaderPath("test_shadow_vert.wgsl"))
-		p := pipeline.NewPipeline("shadow-pipe", pipeline.PipelineTypeRender,
+		p := pipeline.NewPipeline("vsm-preloaded", pipeline.PipelineTypeRender)
+		r.SetPipeline("vsm-preloaded", p)
+
+		err := r.RegisterVSMShadowPipeline(p)
+		suite.NoError(err)
+		suite.NotNil(r.Pipeline("vsm-preloaded"))
+	})
+
+	suite.Run("registers a VSM shadow pipeline with vertex and fragment shaders", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		vs := shader.NewShader("vsm-vert", shader.ShaderTypeVertex, shaderPath("test_vsm_shadow_vert.wgsl"))
+		fs := shader.NewShader("vsm-frag", shader.ShaderTypeFragment, shaderPath("test_vsm_shadow_frag.wgsl"))
+		p := pipeline.NewPipeline("vsm-pipe", pipeline.PipelineTypeRender,
 			pipeline.WithVertexShader(vs),
+			pipeline.WithFragmentShader(fs),
 		)
 
-		err := r.RegisterShadowPipeline(p)
+		err := r.RegisterVSMShadowPipeline(p)
+		suite.NoError(err)
+		suite.NotNil(r.Pipeline("vsm-pipe"))
+		suite.NotNil(r.Pipeline("vsm-pipe").Pipeline())
+	})
+
+	suite.Run("returns error when vertex shader is missing", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		p := pipeline.NewPipeline("bad-vsm", pipeline.PipelineTypeRender)
+		err := r.RegisterVSMShadowPipeline(p)
+		suite.Error(err)
+	})
+}
+
+func (suite *rendererTest) TestVSMShadowPassLifecycle() {
+	suite.Run("full VSM shadow lifecycle with registered pipeline and draw call", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		vs := shader.NewShader("vsm-vert", shader.ShaderTypeVertex, shaderPath("test_vsm_shadow_vert.wgsl"))
+		fs := shader.NewShader("vsm-frag", shader.ShaderTypeFragment, shaderPath("test_vsm_shadow_frag.wgsl"))
+		p := pipeline.NewPipeline("vsm-shadow-pipe", pipeline.PipelineTypeRender,
+			pipeline.WithVertexShader(vs),
+			pipeline.WithFragmentShader(fs),
+		)
+
+		err := r.RegisterVSMShadowPipeline(p)
 		suite.NoError(err)
 
-		view, _, err := r.CreateShadowDepthTexture(256, 256)
+		vsmView, _, _, _, depthView, _, err := r.CreateVSMTextures(256, 256)
 		suite.NoError(err)
 
-		meshProvider := bind_group_provider.NewBindGroupProvider("shadow-mesh")
+		meshProvider := bind_group_provider.NewBindGroupProvider("vsm-shadow-mesh")
 		vertexData, indexData := buildTriangleGeometry()
 		err = r.InitMeshBuffers(meshProvider, vertexData, indexData, 3)
 		suite.NoError(err)
 
-		shadowUniformProvider := bind_group_provider.NewBindGroupProvider("shadow-uniform")
+		shadowUniformProvider := bind_group_provider.NewBindGroupProvider("vsm-shadow-uniform")
 		err = r.InitBindGroup(shadowUniformProvider, vs.BindGroupLayoutDescriptor(0), nil, nil)
 		suite.NoError(err)
 
-		instanceProvider := bind_group_provider.NewBindGroupProvider("shadow-instance")
+		instanceProvider := bind_group_provider.NewBindGroupProvider("vsm-shadow-instance")
 		err = r.InitBindGroup(instanceProvider, vs.BindGroupLayoutDescriptor(1), nil, map[int]uint64{0: 64})
 		suite.NoError(err)
 
 		err = r.BeginShadowFrame()
 		suite.NoError(err)
 
-		r.BeginShadowPass(view)
+		r.BeginVSMShadowPass(vsmView, depthView)
 
-		err = r.ShadowDrawCall("shadow-pipe", meshProvider, 1, []bind_group_provider.BindGroupProvider{
+		err = r.ShadowDrawCall("vsm-shadow-pipe", meshProvider, 1, []bind_group_provider.BindGroupProvider{
 			shadowUniformProvider,
 			instanceProvider,
 		})
@@ -1653,6 +1674,767 @@ func (suite *rendererTest) TestReadMappedBuffer() {
 		suite.InDelta(2.0, v1, 0.001)
 		suite.InDelta(3.0, v2, 0.001)
 		suite.InDelta(4.0, v3, 0.001)
+	})
+}
+
+func (suite *rendererTest) TestSampleCount() {
+	suite.Run("returns default sample count", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		count := r.SampleCount()
+		suite.Greater(count, uint32(0))
+	})
+
+	suite.Run("returns 1 when MSAA is off", func() {
+		w, r := newTestRenderer(renderer.WithMSAA(renderer.MSAAOff))
+		defer w.Close()
+		suite.Equal(uint32(1), r.SampleCount())
+	})
+}
+
+func (suite *rendererTest) TestSetRenderTargetFormat() {
+	suite.Run("does not panic with a valid format", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		suite.NotPanics(func() {
+			r.SetRenderTargetFormat(wgpu.TextureFormatRGBA8Unorm)
+		})
+	})
+}
+
+func (suite *rendererTest) TestWriteRawBuffer() {
+	suite.Run("writes raw data to a GPU buffer", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		buf, err := r.CreateBuffer("raw-write-test", 64, wgpu.BufferUsageCopyDst|wgpu.BufferUsageStorage)
+		suite.NoError(err)
+		suite.NotNil(buf)
+
+		data := make([]byte, 16)
+		binary.LittleEndian.PutUint32(data[0:], math.Float32bits(1.0))
+		binary.LittleEndian.PutUint32(data[4:], math.Float32bits(2.0))
+		binary.LittleEndian.PutUint32(data[8:], math.Float32bits(3.0))
+		binary.LittleEndian.PutUint32(data[12:], math.Float32bits(4.0))
+
+		suite.NotPanics(func() {
+			r.WriteRawBuffer(buf, 0, data)
+		})
+	})
+}
+
+func (suite *rendererTest) TestWriteTexture() {
+	suite.Run("writes pixel data to a GPU texture", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		ssrView, ssrTex, err := r.CreateSSRTextures(4, 4)
+		suite.NoError(err)
+		suite.NotNil(ssrView)
+		suite.NotNil(ssrTex)
+
+		pixelData := make([]byte, 4*4*8)
+		suite.NotPanics(func() {
+			r.WriteTexture(ssrTex, pixelData, 4, 4, 4*8)
+		})
+	})
+}
+
+func (suite *rendererTest) TestBeginGeometryFrameEndGeometryFrame() {
+	suite.Run("geometry lifecycle completes without error", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		err := r.BeginGeometryFrame()
+		suite.NoError(err)
+		suite.NotPanics(func() {
+			r.EndGeometryFrame()
+		})
+	})
+}
+
+func (suite *rendererTest) TestEndGeometryFrameWithoutBegin() {
+	suite.Run("does not panic when called without BeginGeometryFrame", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		suite.NotPanics(func() {
+			r.EndGeometryFrame()
+		})
+	})
+}
+
+func (suite *rendererTest) TestCreateGBufferTextures() {
+	suite.Run("returns non-nil textures and views", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		normView, normTex, albedoView, albedoTex, depthView, depthTex, err := r.CreateGBufferTextures(64, 64)
+		suite.NoError(err)
+		suite.NotNil(normView)
+		suite.NotNil(normTex)
+		suite.NotNil(albedoView)
+		suite.NotNil(albedoTex)
+		suite.NotNil(depthView)
+		suite.NotNil(depthTex)
+	})
+}
+
+func (suite *rendererTest) TestRegisterGBufferPipeline() {
+	suite.Run("skips pipeline with key already in cache", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		p := pipeline.NewPipeline("gbuf-preloaded", pipeline.PipelineTypeRender)
+		r.SetPipeline("gbuf-preloaded", p)
+
+		err := r.RegisterGBufferPipeline(p)
+		suite.NoError(err)
+		suite.NotNil(r.Pipeline("gbuf-preloaded"))
+	})
+
+	suite.Run("registers a GBuffer pipeline with vertex and fragment shaders", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		vs := shader.NewShader("gbuf-vert", shader.ShaderTypeVertex, shaderPath("test_vert.wgsl"))
+		fs := shader.NewShader("gbuf-frag", shader.ShaderTypeFragment, shaderPath("test_gbuffer_frag.wgsl"))
+		p := pipeline.NewPipeline("gbuf-pipe", pipeline.PipelineTypeRender,
+			pipeline.WithVertexShader(vs),
+			pipeline.WithFragmentShader(fs),
+		)
+
+		err := r.RegisterGBufferPipeline(p)
+		suite.NoError(err)
+		suite.NotNil(r.Pipeline("gbuf-pipe"))
+		suite.NotNil(r.Pipeline("gbuf-pipe").Pipeline())
+	})
+
+	suite.Run("returns error when vertex shader is missing", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		p := pipeline.NewPipeline("bad-gbuf", pipeline.PipelineTypeRender)
+		err := r.RegisterGBufferPipeline(p)
+		suite.Error(err)
+	})
+
+	suite.Run("returns error when fragment shader is missing", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		vs := shader.NewShader("gbuf-vert-only", shader.ShaderTypeVertex, shaderPath("test_vert.wgsl"))
+		p := pipeline.NewPipeline("no-frag-gbuf", pipeline.PipelineTypeRender,
+			pipeline.WithVertexShader(vs),
+		)
+		err := r.RegisterGBufferPipeline(p)
+		suite.Error(err)
+	})
+}
+
+func (suite *rendererTest) TestBeginGBufferFrameEndGBufferFrame() {
+	suite.Run("GBuffer lifecycle completes without error", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		err := r.BeginGBufferFrame()
+		suite.NoError(err)
+		suite.NotPanics(func() {
+			r.EndGBufferFrame()
+		})
+	})
+}
+
+func (suite *rendererTest) TestEndGBufferFrameWithoutBegin() {
+	suite.Run("does not panic when called without BeginGBufferFrame", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		suite.NotPanics(func() {
+			r.EndGBufferFrame()
+		})
+	})
+}
+
+func (suite *rendererTest) TestEndGBufferPassWithoutBegin() {
+	suite.Run("does not panic when called without BeginGBufferPass", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		suite.NotPanics(func() {
+			r.EndGBufferPass()
+		})
+	})
+}
+
+func (suite *rendererTest) TestGBufferDrawCall() {
+	suite.Run("returns error when pipeline key is not found", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		err := r.GBufferDrawCall("nonexistent", nil, 0, nil)
+		suite.Error(err)
+		suite.Contains(err.Error(), "nonexistent")
+	})
+}
+
+func (suite *rendererTest) TestGBufferDrawCallIndirect() {
+	suite.Run("returns error when pipeline key is not found", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		err := r.GBufferDrawCallIndirect("nonexistent", nil, nil, nil)
+		suite.Error(err)
+		suite.Contains(err.Error(), "nonexistent")
+	})
+
+	suite.Run("full GBuffer indirect draw lifecycle", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		vs := shader.NewShader("gbuf-ind-vert", shader.ShaderTypeVertex, shaderPath("test_vert.wgsl"))
+		fs := shader.NewShader("gbuf-ind-frag", shader.ShaderTypeFragment, shaderPath("test_gbuffer_frag.wgsl"))
+		p := pipeline.NewPipeline("gbuf-ind-pipe", pipeline.PipelineTypeRender,
+			pipeline.WithVertexShader(vs),
+			pipeline.WithFragmentShader(fs),
+		)
+
+		err := r.RegisterGBufferPipeline(p)
+		suite.NoError(err)
+
+		normView, _, albedoView, _, depthView, _, err := r.CreateGBufferTextures(64, 64)
+		suite.NoError(err)
+
+		meshProvider := bind_group_provider.NewBindGroupProvider("gbuf-ind-mesh")
+		vertexData, indexData := buildTriangleGeometry()
+		err = r.InitMeshBuffers(meshProvider, vertexData, indexData, 3)
+		suite.NoError(err)
+
+		cameraProvider := bind_group_provider.NewBindGroupProvider("gbuf-ind-camera")
+		err = r.InitBindGroup(cameraProvider, vs.BindGroupLayoutDescriptor(0), nil, nil)
+		suite.NoError(err)
+
+		instanceProvider := bind_group_provider.NewBindGroupProvider("gbuf-ind-instance")
+		err = r.InitBindGroup(instanceProvider, vs.BindGroupLayoutDescriptor(1), nil, map[int]uint64{0: 64})
+		suite.NoError(err)
+
+		indirectArgs := buildIndirectArgs(3, 1, 0, 0, 0)
+		indirectBuf, err := r.CreateBuffer("gbuf-indirect", uint64(len(indirectArgs)), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst)
+		suite.NoError(err)
+		r.WriteRawBuffer(indirectBuf, 0, indirectArgs)
+
+		err = r.BeginGBufferFrame()
+		suite.NoError(err)
+
+		r.BeginGBufferPass(normView, albedoView, depthView)
+
+		err = r.GBufferDrawCallIndirect("gbuf-ind-pipe", meshProvider, indirectBuf, []bind_group_provider.BindGroupProvider{
+			cameraProvider,
+			instanceProvider,
+		})
+		suite.NoError(err)
+
+		r.EndGBufferPass()
+		r.EndGBufferFrame()
+	})
+}
+
+func (suite *rendererTest) TestGBufferFullLifecycle() {
+	suite.Run("full GBuffer lifecycle with registered pipeline and draw call", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		vs := shader.NewShader("gbuf-lc-vert", shader.ShaderTypeVertex, shaderPath("test_vert.wgsl"))
+		fs := shader.NewShader("gbuf-lc-frag", shader.ShaderTypeFragment, shaderPath("test_gbuffer_frag.wgsl"))
+		p := pipeline.NewPipeline("gbuf-lc-pipe", pipeline.PipelineTypeRender,
+			pipeline.WithVertexShader(vs),
+			pipeline.WithFragmentShader(fs),
+		)
+
+		err := r.RegisterGBufferPipeline(p)
+		suite.NoError(err)
+
+		normView, _, albedoView, _, depthView, _, err := r.CreateGBufferTextures(64, 64)
+		suite.NoError(err)
+
+		meshProvider := bind_group_provider.NewBindGroupProvider("gbuf-mesh")
+		vertexData, indexData := buildTriangleGeometry()
+		err = r.InitMeshBuffers(meshProvider, vertexData, indexData, 3)
+		suite.NoError(err)
+
+		cameraProvider := bind_group_provider.NewBindGroupProvider("gbuf-camera")
+		err = r.InitBindGroup(cameraProvider, vs.BindGroupLayoutDescriptor(0), nil, nil)
+		suite.NoError(err)
+
+		instanceProvider := bind_group_provider.NewBindGroupProvider("gbuf-instance")
+		err = r.InitBindGroup(instanceProvider, vs.BindGroupLayoutDescriptor(1), nil, map[int]uint64{0: 64})
+		suite.NoError(err)
+
+		err = r.BeginGBufferFrame()
+		suite.NoError(err)
+
+		r.BeginGBufferPass(normView, albedoView, depthView)
+
+		err = r.GBufferDrawCall("gbuf-lc-pipe", meshProvider, 1, []bind_group_provider.BindGroupProvider{
+			cameraProvider,
+			instanceProvider,
+		})
+		suite.NoError(err)
+
+		r.EndGBufferPass()
+		r.EndGBufferFrame()
+	})
+}
+
+func (suite *rendererTest) TestCreateSSAOTextures() {
+	suite.Run("returns non-nil textures and views", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		rawView, rawTex, blurredView, blurredTex, scratchView, scratchTex, noiseView, noiseTex, err := r.CreateSSAOTextures(64, 64)
+		suite.NoError(err)
+		suite.NotNil(rawView)
+		suite.NotNil(rawTex)
+		suite.NotNil(blurredView)
+		suite.NotNil(blurredTex)
+		suite.NotNil(scratchView)
+		suite.NotNil(scratchTex)
+		suite.NotNil(noiseView)
+		suite.NotNil(noiseTex)
+	})
+}
+
+func (suite *rendererTest) TestCreateProbeBakeTextures() {
+	suite.Run("returns non-nil textures and views", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		colorView, colorTex, depthView, depthTex, err := r.CreateProbeBakeTextures(32)
+		suite.NoError(err)
+		suite.NotNil(colorView)
+		suite.NotNil(colorTex)
+		suite.NotNil(depthView)
+		suite.NotNil(depthTex)
+	})
+}
+
+func (suite *rendererTest) TestRegisterProbeBakePipeline() {
+	suite.Run("skips pipeline with key already in cache", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		p := pipeline.NewPipeline("probe-preloaded", pipeline.PipelineTypeRender)
+		r.SetPipeline("probe-preloaded", p)
+
+		err := r.RegisterProbeBakePipeline(p)
+		suite.NoError(err)
+		suite.NotNil(r.Pipeline("probe-preloaded"))
+	})
+
+	suite.Run("registers a probe bake pipeline with vertex and fragment shaders", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		vs := shader.NewShader("probe-vert", shader.ShaderTypeVertex, shaderPath("test_vert.wgsl"))
+		fs := shader.NewShader("probe-frag", shader.ShaderTypeFragment, shaderPath("test_frag.wgsl"))
+		p := pipeline.NewPipeline("probe-pipe", pipeline.PipelineTypeRender,
+			pipeline.WithVertexShader(vs),
+			pipeline.WithFragmentShader(fs),
+		)
+
+		err := r.RegisterProbeBakePipeline(p)
+		suite.NoError(err)
+		suite.NotNil(r.Pipeline("probe-pipe"))
+		suite.NotNil(r.Pipeline("probe-pipe").Pipeline())
+	})
+
+	suite.Run("returns error when vertex shader is missing", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		p := pipeline.NewPipeline("bad-probe", pipeline.PipelineTypeRender)
+		err := r.RegisterProbeBakePipeline(p)
+		suite.Error(err)
+	})
+
+	suite.Run("returns error when fragment shader is missing", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		vs := shader.NewShader("probe-vert-only", shader.ShaderTypeVertex, shaderPath("test_vert.wgsl"))
+		p := pipeline.NewPipeline("no-frag-probe", pipeline.PipelineTypeRender,
+			pipeline.WithVertexShader(vs),
+		)
+		err := r.RegisterProbeBakePipeline(p)
+		suite.Error(err)
+	})
+}
+
+func (suite *rendererTest) TestBeginProbeBakeFrameEndProbeBakeFrame() {
+	suite.Run("probe bake lifecycle completes without error", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		err := r.BeginProbeBakeFrame()
+		suite.NoError(err)
+		suite.NotPanics(func() {
+			r.EndProbeBakeFrame()
+		})
+	})
+}
+
+func (suite *rendererTest) TestEndProbeBakeFrameWithoutBegin() {
+	suite.Run("does not panic when called without BeginProbeBakeFrame", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		suite.NotPanics(func() {
+			r.EndProbeBakeFrame()
+		})
+	})
+}
+
+func (suite *rendererTest) TestEndProbeBakePassWithoutBegin() {
+	suite.Run("does not panic when called without BeginProbeBakePass", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		suite.NotPanics(func() {
+			r.EndProbeBakePass()
+		})
+	})
+}
+
+func (suite *rendererTest) TestProbeBakeDrawCall() {
+	suite.Run("returns error when pipeline key is not found", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		err := r.ProbeBakeDrawCall("nonexistent", nil, 0, nil)
+		suite.Error(err)
+		suite.Contains(err.Error(), "nonexistent")
+	})
+}
+
+func (suite *rendererTest) TestProbeBakeDrawCallIndirect() {
+	suite.Run("returns error when pipeline key is not found", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		err := r.ProbeBakeDrawCallIndirect("nonexistent", nil, nil, nil)
+		suite.Error(err)
+		suite.Contains(err.Error(), "nonexistent")
+	})
+
+	suite.Run("full probe bake indirect draw lifecycle", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		vs := shader.NewShader("probe-ind-vert", shader.ShaderTypeVertex, shaderPath("test_vert.wgsl"))
+		fs := shader.NewShader("probe-ind-frag", shader.ShaderTypeFragment, shaderPath("test_frag.wgsl"))
+		p := pipeline.NewPipeline("probe-ind-pipe", pipeline.PipelineTypeRender,
+			pipeline.WithVertexShader(vs),
+			pipeline.WithFragmentShader(fs),
+		)
+
+		err := r.RegisterProbeBakePipeline(p)
+		suite.NoError(err)
+
+		colorView, _, depthView, _, err := r.CreateProbeBakeTextures(32)
+		suite.NoError(err)
+
+		meshProvider := bind_group_provider.NewBindGroupProvider("probe-ind-mesh")
+		vertexData, indexData := buildTriangleGeometry()
+		err = r.InitMeshBuffers(meshProvider, vertexData, indexData, 3)
+		suite.NoError(err)
+
+		cameraProvider := bind_group_provider.NewBindGroupProvider("probe-ind-camera")
+		err = r.InitBindGroup(cameraProvider, vs.BindGroupLayoutDescriptor(0), nil, nil)
+		suite.NoError(err)
+
+		instanceProvider := bind_group_provider.NewBindGroupProvider("probe-ind-instance")
+		err = r.InitBindGroup(instanceProvider, vs.BindGroupLayoutDescriptor(1), nil, map[int]uint64{0: 64})
+		suite.NoError(err)
+
+		indirectArgs := buildIndirectArgs(3, 1, 0, 0, 0)
+		indirectBuf, err := r.CreateBuffer("probe-indirect", uint64(len(indirectArgs)), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst)
+		suite.NoError(err)
+		r.WriteRawBuffer(indirectBuf, 0, indirectArgs)
+
+		err = r.BeginProbeBakeFrame()
+		suite.NoError(err)
+
+		r.BeginProbeBakePass(colorView, depthView)
+
+		err = r.ProbeBakeDrawCallIndirect("probe-ind-pipe", meshProvider, indirectBuf, []bind_group_provider.BindGroupProvider{
+			cameraProvider,
+			instanceProvider,
+		})
+		suite.NoError(err)
+
+		r.EndProbeBakePass()
+		r.EndProbeBakeFrame()
+	})
+}
+
+func (suite *rendererTest) TestProbeBakeFullLifecycle() {
+	suite.Run("full probe bake lifecycle with registered pipeline and draw call", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		vs := shader.NewShader("probe-lc-vert", shader.ShaderTypeVertex, shaderPath("test_vert.wgsl"))
+		fs := shader.NewShader("probe-lc-frag", shader.ShaderTypeFragment, shaderPath("test_frag.wgsl"))
+		p := pipeline.NewPipeline("probe-lc-pipe", pipeline.PipelineTypeRender,
+			pipeline.WithVertexShader(vs),
+			pipeline.WithFragmentShader(fs),
+		)
+
+		err := r.RegisterProbeBakePipeline(p)
+		suite.NoError(err)
+
+		colorView, _, depthView, _, err := r.CreateProbeBakeTextures(32)
+		suite.NoError(err)
+
+		meshProvider := bind_group_provider.NewBindGroupProvider("probe-mesh")
+		vertexData, indexData := buildTriangleGeometry()
+		err = r.InitMeshBuffers(meshProvider, vertexData, indexData, 3)
+		suite.NoError(err)
+
+		cameraProvider := bind_group_provider.NewBindGroupProvider("probe-camera")
+		err = r.InitBindGroup(cameraProvider, vs.BindGroupLayoutDescriptor(0), nil, nil)
+		suite.NoError(err)
+
+		instanceProvider := bind_group_provider.NewBindGroupProvider("probe-instance")
+		err = r.InitBindGroup(instanceProvider, vs.BindGroupLayoutDescriptor(1), nil, map[int]uint64{0: 64})
+		suite.NoError(err)
+
+		err = r.BeginProbeBakeFrame()
+		suite.NoError(err)
+
+		r.BeginProbeBakePass(colorView, depthView)
+
+		err = r.ProbeBakeDrawCall("probe-lc-pipe", meshProvider, 1, []bind_group_provider.BindGroupProvider{
+			cameraProvider,
+			instanceProvider,
+		})
+		suite.NoError(err)
+
+		r.EndProbeBakePass()
+		r.EndProbeBakeFrame()
+	})
+}
+
+func (suite *rendererTest) TestCreateCompositionTextures() {
+	suite.Run("returns non-nil textures and views with MSAAOff", func() {
+		w, r := newTestRenderer(renderer.WithMSAA(renderer.MSAAOff))
+		defer w.Close()
+		hdrView, hdrTex, msaaView, msaaTex, depthView, depthTex, err := r.CreateCompositionTextures(64, 64, 1)
+		suite.NoError(err)
+		suite.NotNil(hdrView)
+		suite.NotNil(hdrTex)
+		suite.NotNil(depthView)
+		suite.NotNil(depthTex)
+		// msaa textures are nil when sample count is 1
+		_ = msaaView
+		_ = msaaTex
+	})
+
+	suite.Run("returns non-nil MSAA textures and views with sampleCount 4", func() {
+		w, r := newTestRenderer(renderer.WithMSAA(renderer.MSAA4x))
+		defer w.Close()
+		hdrView, hdrTex, msaaView, msaaTex, depthView, depthTex, err := r.CreateCompositionTextures(64, 64, 4)
+		suite.NoError(err)
+		suite.NotNil(hdrView)
+		suite.NotNil(hdrTex)
+		suite.NotNil(msaaView)
+		suite.NotNil(msaaTex)
+		suite.NotNil(depthView)
+		suite.NotNil(depthTex)
+	})
+}
+
+func (suite *rendererTest) TestCreateSSRTextures() {
+	suite.Run("returns non-nil textures and views", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		ssrView, ssrTex, err := r.CreateSSRTextures(64, 64)
+		suite.NoError(err)
+		suite.NotNil(ssrView)
+		suite.NotNil(ssrTex)
+	})
+}
+
+func (suite *rendererTest) TestCreateHiZTextures() {
+	suite.Run("returns non-nil textures, views and positive mip count", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		hizView, hizTex, mipReadViews, mipStorageViews, mipCount, err := r.CreateHiZTextures(64, 64)
+		suite.NoError(err)
+		suite.NotNil(hizView)
+		suite.NotNil(hizTex)
+		suite.NotEmpty(mipReadViews)
+		suite.NotEmpty(mipStorageViews)
+		suite.Greater(mipCount, 0)
+	})
+
+	suite.Run("handles non-square dimensions where height exceeds width", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		hizView, hizTex, mipReadViews, mipStorageViews, mipCount, err := r.CreateHiZTextures(32, 128)
+		suite.NoError(err)
+		suite.NotNil(hizView)
+		suite.NotNil(hizTex)
+		suite.NotEmpty(mipReadViews)
+		suite.NotEmpty(mipStorageViews)
+		suite.Greater(mipCount, 0)
+	})
+}
+
+func (suite *rendererTest) TestRegisterCompositionPipeline() {
+	suite.Run("skips pipeline with key already in cache", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		p := pipeline.NewPipeline("comp-preloaded", pipeline.PipelineTypeRender)
+		r.SetPipeline("comp-preloaded", p)
+
+		err := r.RegisterCompositionPipeline(p)
+		suite.NoError(err)
+		suite.NotNil(r.Pipeline("comp-preloaded"))
+	})
+
+	suite.Run("registers a composition pipeline with fullscreen shaders", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		vs := shader.NewShader("comp-vert", shader.ShaderTypeVertex, shaderPath("test_composition_vert.wgsl"))
+		fs := shader.NewShader("comp-frag", shader.ShaderTypeFragment, shaderPath("test_composition_frag.wgsl"))
+		p := pipeline.NewPipeline("comp-pipe", pipeline.PipelineTypeRender,
+			pipeline.WithVertexShader(vs),
+			pipeline.WithFragmentShader(fs),
+		)
+
+		err := r.RegisterCompositionPipeline(p)
+		suite.NoError(err)
+		suite.NotNil(r.Pipeline("comp-pipe"))
+		suite.NotNil(r.Pipeline("comp-pipe").Pipeline())
+	})
+
+	suite.Run("returns error when vertex shader is missing", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		p := pipeline.NewPipeline("bad-comp", pipeline.PipelineTypeRender)
+		err := r.RegisterCompositionPipeline(p)
+		suite.Error(err)
+	})
+
+	suite.Run("returns error when fragment shader is missing", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		vs := shader.NewShader("comp-vert-only", shader.ShaderTypeVertex, shaderPath("test_composition_vert.wgsl"))
+		p := pipeline.NewPipeline("no-frag-comp", pipeline.PipelineTypeRender,
+			pipeline.WithVertexShader(vs),
+		)
+		err := r.RegisterCompositionPipeline(p)
+		suite.Error(err)
+	})
+}
+
+func (suite *rendererTest) TestBeginCompositionFrameEndCompositionFrame() {
+	suite.Run("composition lifecycle completes without error", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		err := r.BeginCompositionFrame()
+		suite.NoError(err)
+		suite.NotPanics(func() {
+			r.EndCompositionFrame()
+		})
+	})
+
+	suite.Run("returns error when called twice without end", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		err := r.BeginCompositionFrame()
+		suite.NoError(err)
+		err = r.BeginCompositionFrame()
+		suite.Error(err)
+		suite.Contains(err.Error(), "previous composition frame")
+		r.EndCompositionFrame()
+	})
+}
+
+func (suite *rendererTest) TestEndCompositionFrameWithoutBegin() {
+	suite.Run("does not panic when called without BeginCompositionFrame", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		suite.NotPanics(func() {
+			r.EndCompositionFrame()
+		})
+	})
+}
+
+func (suite *rendererTest) TestEndCompositionPassWithoutBegin() {
+	suite.Run("does not panic when called without BeginCompositionPass", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		suite.NotPanics(func() {
+			r.EndCompositionPass()
+		})
+	})
+}
+
+func (suite *rendererTest) TestCompositionDrawCall() {
+	suite.Run("returns error when pipeline key is not found", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+		err := r.CompositionDrawCall("nonexistent", nil)
+		suite.Error(err)
+		suite.Contains(err.Error(), "nonexistent")
+	})
+}
+
+func (suite *rendererTest) TestBeginHDRFrame() {
+	suite.Run("HDR frame with created composition textures", func() {
+		w, r := newTestRenderer(renderer.WithMSAA(renderer.MSAAOff))
+		defer w.Close()
+
+		hdrView, _, _, _, depthView, _, err := r.CreateCompositionTextures(64, 64, 1)
+		suite.NoError(err)
+
+		err = r.BeginHDRFrame(hdrView, nil, depthView, 1)
+		suite.NoError(err)
+
+		r.EndFrame()
+		r.Present()
+	})
+
+	suite.Run("MSAA HDR frame uses resolve view", func() {
+		w, r := newTestRenderer(renderer.WithMSAA(renderer.MSAA4x))
+		defer w.Close()
+
+		hdrView, _, msaaView, _, depthView, _, err := r.CreateCompositionTextures(64, 64, 4)
+		suite.NoError(err)
+
+		err = r.BeginHDRFrame(msaaView, hdrView, depthView, 4)
+		suite.NoError(err)
+
+		r.EndFrame()
+		r.Present()
+	})
+}
+
+func (suite *rendererTest) TestCompositionFullLifecycle() {
+	suite.Run("full composition lifecycle with registered pipeline and draw call", func() {
+		w, r := newTestRenderer()
+		defer w.Close()
+
+		vs := shader.NewShader("comp-lc-vert", shader.ShaderTypeVertex, shaderPath("test_composition_vert.wgsl"))
+		fs := shader.NewShader("comp-lc-frag", shader.ShaderTypeFragment, shaderPath("test_composition_frag.wgsl"))
+		p := pipeline.NewPipeline("comp-lc-pipe", pipeline.PipelineTypeRender,
+			pipeline.WithVertexShader(vs),
+			pipeline.WithFragmentShader(fs),
+		)
+
+		err := r.RegisterCompositionPipeline(p)
+		suite.NoError(err)
+
+		err = r.BeginCompositionFrame()
+		suite.NoError(err)
+
+		r.BeginCompositionPass()
+
+		err = r.CompositionDrawCall("comp-lc-pipe", nil)
+		suite.NoError(err)
+
+		r.EndCompositionPass()
+		r.EndCompositionFrame()
 	})
 }
 
