@@ -23,7 +23,8 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/gogpu/gputypes"
+	"github.com/gogpu/wgpu"
 )
 
 // physicsSyncGroup tracks one Animator's physics sync dispatch state. Each unique
@@ -46,6 +47,22 @@ type boneParticleUpdateGroup struct {
 	particleCount uint32
 	boneCount     uint32
 	instanceIndex uint32
+}
+
+func isTextureBindingEntry(entry wgpu.BindGroupLayoutEntry) bool {
+	return entry.Texture != nil && entry.Texture.SampleType != gputypes.TextureSampleTypeUndefined
+}
+
+func isSamplerBindingEntry(entry wgpu.BindGroupLayoutEntry) bool {
+	return entry.Sampler != nil && entry.Sampler.Type != gputypes.SamplerBindingTypeUndefined
+}
+
+func bufferBindingType(entry wgpu.BindGroupLayoutEntry) gputypes.BufferBindingType {
+	if entry.Buffer == nil {
+		return gputypes.BufferBindingTypeUndefined
+	}
+
+	return entry.Buffer.Type
 }
 
 type scene struct {
@@ -882,10 +899,10 @@ func (s *scene) initSSAOLitBindGroup(litFragmentShader shader.Shader) {
 		// Bind the real blurred SSAO texture and linear sampler.
 		for _, entry := range desc.Entries {
 			binding := int(entry.Binding)
-			if entry.Texture.SampleType != wgpu.TextureSampleTypeUndefined {
+			if isTextureBindingEntry(entry) {
 				bgp.SetTextureView(binding, s.lightHandler.SSAOHandler().BlurredTextureView())
 			}
-			if entry.Sampler.Type != wgpu.SamplerBindingTypeUndefined {
+			if isSamplerBindingEntry(entry) {
 				bgp.SetSampler(binding, s.lightHandler.SSAOHandler().LinearSampler())
 			}
 		}
@@ -893,7 +910,7 @@ func (s *scene) initSSAOLitBindGroup(litFragmentShader shader.Shader) {
 		// Create a 1×1 white fallback texture (ao=1.0, no darkening).
 		for _, entry := range desc.Entries {
 			binding := int(entry.Binding)
-			if entry.Texture.SampleType != wgpu.TextureSampleTypeUndefined {
+			if isTextureBindingEntry(entry) {
 				fallback := common.TextureStagingData{
 					Pixels: []byte{255, 255, 255, 255},
 					Width:  1,
@@ -904,14 +921,14 @@ func (s *scene) initSSAOLitBindGroup(litFragmentShader shader.Shader) {
 					panic(fmt.Sprintf("scene: failed to init SSAO fallback texture: %v", err))
 				}
 			}
-			if entry.Sampler.Type != wgpu.SamplerBindingTypeUndefined {
+			if isSamplerBindingEntry(entry) {
 				fallbackSampler := common.SamplerStagingData{
-					AddressModeU:  wgpu.AddressModeClampToEdge,
-					AddressModeV:  wgpu.AddressModeClampToEdge,
-					AddressModeW:  wgpu.AddressModeClampToEdge,
-					MagFilter:     wgpu.FilterModeLinear,
-					MinFilter:     wgpu.FilterModeLinear,
-					MipmapFilter:  wgpu.MipmapFilterModeLinear,
+					AddressModeU:  gputypes.AddressModeClampToEdge,
+					AddressModeV:  gputypes.AddressModeClampToEdge,
+					AddressModeW:  gputypes.AddressModeClampToEdge,
+					MagFilter:     gputypes.FilterModeLinear,
+					MinFilter:     gputypes.FilterModeLinear,
+					MipmapFilter:  wgpu.FilterMode(gputypes.MipmapFilterModeLinear),
 					LodMinClamp:   0,
 					LodMaxClamp:   1,
 					MaxAnisotropy: 1,
@@ -1089,9 +1106,9 @@ func (s *scene) initProbesLitBindGroup(litFragmentShader shader.Shader) {
 		// Bind the real probe storage buffer and grid params uniform from the probe grid handler.
 		for _, entry := range desc.Entries {
 			binding := int(entry.Binding)
-			if entry.Buffer.Type == wgpu.BufferBindingTypeReadOnlyStorage || entry.Buffer.Type == wgpu.BufferBindingTypeStorage {
+			if bufferBindingType(entry) == gputypes.BufferBindingTypeReadOnlyStorage || bufferBindingType(entry) == gputypes.BufferBindingTypeStorage {
 				bgp.SetBuffer(binding, s.lightHandler.ProbeGrid().ProbeBuffer())
-			} else if entry.Buffer.Type == wgpu.BufferBindingTypeUniform {
+			} else if bufferBindingType(entry) == gputypes.BufferBindingTypeUniform {
 				bgp.SetBuffer(binding, s.lightHandler.ProbeGrid().GridParamsBuffer())
 			}
 		}
@@ -1101,7 +1118,7 @@ func (s *scene) initProbesLitBindGroup(litFragmentShader shader.Shader) {
 		// shader early-returns vec3(0.0) for indirect illumination.
 		for _, entry := range desc.Entries {
 			binding := int(entry.Binding)
-			if entry.Buffer.Type == wgpu.BufferBindingTypeReadOnlyStorage || entry.Buffer.Type == wgpu.BufferBindingTypeStorage {
+			if bufferBindingType(entry) == gputypes.BufferBindingTypeReadOnlyStorage || bufferBindingType(entry) == gputypes.BufferBindingTypeStorage {
 				fallbackProbe := (&light.GPUIrradianceProbe{}).Marshal()
 				buf, bufErr := s.r.CreateBuffer("Probe Lit Fallback Storage", uint64(len(fallbackProbe)), wgpu.BufferUsageStorage|wgpu.BufferUsageCopyDst)
 				if bufErr != nil {
@@ -1109,7 +1126,7 @@ func (s *scene) initProbesLitBindGroup(litFragmentShader shader.Shader) {
 				}
 				bgp.SetBuffer(binding, buf)
 				s.r.WriteRawBuffer(buf, 0, fallbackProbe)
-			} else if entry.Buffer.Type == wgpu.BufferBindingTypeUniform {
+			} else if bufferBindingType(entry) == gputypes.BufferBindingTypeUniform {
 				fallbackParams := (&light.GPUProbeGridParams{}).Marshal()
 				buf, bufErr := s.r.CreateBuffer("Probe Lit Fallback Uniform", uint64(len(fallbackParams)), wgpu.BufferUsageUniform|wgpu.BufferUsageCopyDst)
 				if bufErr != nil {
@@ -1585,9 +1602,13 @@ func (s *scene) BeginHDRFrame() error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	ch := s.lightHandler.CompositionHandler()
-	if ch == nil || !ch.Enabled() || s.r == nil {
+	if s.r == nil {
 		return fmt.Errorf("scene %q: composition not initialized", s.name)
+	}
+
+	ch := s.lightHandler.CompositionHandler()
+	if ch == nil || !ch.Enabled() {
+		return s.r.BeginFrame()
 	}
 
 	sampleCount := s.r.SampleCount()
@@ -1630,7 +1651,7 @@ func (s *scene) initLightBindGroup(fragmentShader shader.Shader) {
 	sizeOverrides := make(map[int]uint64)
 	for _, entry := range descriptor.Entries {
 		binding := int(entry.Binding)
-		if entry.Buffer.Type == wgpu.BufferBindingTypeReadOnlyStorage || entry.Buffer.Type == wgpu.BufferBindingTypeStorage {
+		if bufferBindingType(entry) == gputypes.BufferBindingTypeReadOnlyStorage || bufferBindingType(entry) == gputypes.BufferBindingTypeStorage {
 			// Storage buffer: size it for max lights (header is in a separate uniform binding).
 			sizeOverrides[binding] = uint64(light.MaxGPULights * (&light.GPULight{}).Size())
 		}
@@ -1686,7 +1707,7 @@ func (s *scene) initVSMShadowMap(vsmVertShader, vsmSkinnedVertShader, vsmFragSha
 	desc := vsmVertShader.BindGroupLayoutDescriptor(shadowGroup)
 	sizeOverrides := make(map[int]uint64)
 	for _, entry := range desc.Entries {
-		if entry.Buffer.Type == wgpu.BufferBindingTypeUniform {
+		if bufferBindingType(entry) == gputypes.BufferBindingTypeUniform {
 			sizeOverrides[int(entry.Binding)] = uint64((&light.GPUShadowData{}).Size())
 		}
 	}
@@ -1702,9 +1723,9 @@ func (s *scene) initVSMShadowMap(vsmVertShader, vsmSkinnedVertShader, vsmFragSha
 		wgpu wgpu.CullMode
 		tag  string
 	}{
-		{model.ShadowCullModeBack, wgpu.CullModeBack, "back"},
-		{model.ShadowCullModeFront, wgpu.CullModeFront, "front"},
-		{model.ShadowCullModeNone, wgpu.CullModeNone, "none"},
+		{model.ShadowCullModeBack, gputypes.CullModeBack, "back"},
+		{model.ShadowCullModeFront, gputypes.CullModeFront, "front"},
+		{model.ShadowCullModeNone, gputypes.CullModeNone, "none"},
 	}
 
 	for _, cm := range cullModes {
@@ -1914,14 +1935,14 @@ func (s *scene) initShadowLitBindGroup(litFragmentShader shader.Shader) {
 
 	for _, entry := range desc.Entries {
 		binding := int(entry.Binding)
-		if entry.Texture.SampleType != wgpu.TextureSampleTypeUndefined {
+		if isTextureBindingEntry(entry) {
 			if pcssMode {
 				bgp.SetTextureView(binding, s.lightHandler.SATTextureAView())
 			} else {
 				bgp.SetTextureView(binding, s.lightHandler.VSMTextureView())
 			}
 		}
-		if entry.Sampler.Type != wgpu.SamplerBindingTypeUndefined {
+		if isSamplerBindingEntry(entry) {
 			bgp.SetSampler(binding, s.lightHandler.VSMLinearSampler())
 		}
 	}
@@ -1929,7 +1950,7 @@ func (s *scene) initShadowLitBindGroup(litFragmentShader shader.Shader) {
 	// Override the uniform buffer size to GPUShadowData's size.
 	sizeOverrides := make(map[int]uint64)
 	for _, entry := range desc.Entries {
-		if entry.Buffer.Type == wgpu.BufferBindingTypeUniform {
+		if bufferBindingType(entry) == gputypes.BufferBindingTypeUniform {
 			sizeOverrides[int(entry.Binding)] = uint64((&light.GPUShadowData{}).Size())
 		}
 	}
@@ -2446,7 +2467,7 @@ func (s *scene) initComposition() {
 	// Override the render pipeline color target format to RGBA16Float so that
 	// all subsequently registered pipelines target the offscreen HDR texture
 	// instead of the swapchain surface format.
-	s.r.SetRenderTargetFormat(wgpu.TextureFormatRGBA16Float)
+	s.r.SetRenderTargetFormat(gputypes.TextureFormatRGBA16Float)
 
 	// 2. Create linear sampler for HDR and SSR texture sampling.
 	linearSamp, err := s.r.CreateLinearSampler()
@@ -3066,6 +3087,9 @@ func (s *scene) initPhysicsGPU() {
 		// GridCell=16) wins over the atomic element size (u32=4).
 		for _, entry := range desc.Entries {
 			if canonIdx, ok := bmap[int(entry.Binding)]; ok {
+				if entry.Buffer == nil {
+					continue
+				}
 				if existing, exists := collected[canonIdx]; !exists || entry.Buffer.MinBindingSize > existing.Buffer.MinBindingSize {
 					e := entry
 					e.Binding = uint32(canonIdx)
@@ -3083,7 +3107,7 @@ func (s *scene) initPhysicsGPU() {
 	// annotated stages.
 	collected[7] = wgpu.BindGroupLayoutEntry{
 		Binding: 7, Visibility: wgpu.ShaderStageCompute,
-		Buffer: wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeStorage, MinBindingSize: 4},
+		Buffer: &gputypes.BufferBindingLayout{Type: gputypes.BufferBindingTypeStorage, MinBindingSize: 4},
 	}
 
 	// Assemble the buffers BGP descriptor from collected entries, sorted by binding.
@@ -3464,7 +3488,7 @@ func (s *scene) createAnimator(mdl model.Model, computeShader, vertexShader, fra
 	outputDesc := vertexShader.BindGroupLayoutDescriptor(outputGroup)
 	perInstanceOutputSize := uint64(64) // fallback: mat4x4<f32>
 	for _, entry := range outputDesc.Entries {
-		if int(entry.Binding) == outputInstanceBinding && entry.Buffer.MinBindingSize > 0 {
+		if int(entry.Binding) == outputInstanceBinding && entry.Buffer != nil && entry.Buffer.MinBindingSize > 0 {
 			perInstanceOutputSize = entry.Buffer.MinBindingSize
 			break
 		}
@@ -3555,19 +3579,19 @@ func (s *scene) createAnimator(mdl model.Model, computeShader, vertexShader, fra
 				computeUsageOverrides[binding] = wgpu.BufferUsageIndirect
 			case shader.AnnotationArgBoneInfo:
 				// Shared bone info buffer: one entry per bone, not per-instance.
-				if entry.Buffer.MinBindingSize > 0 {
+				if entry.Buffer != nil && entry.Buffer.MinBindingSize > 0 {
 					computeSizeOverrides[binding] = boneCount * entry.Buffer.MinBindingSize
 				}
 			case shader.AnnotationArgModelData:
 				// Per-instance model matrices from CPU.
-				if entry.Buffer.MinBindingSize > 0 {
+				if entry.Buffer != nil && entry.Buffer.MinBindingSize > 0 {
 					computeSizeOverrides[binding] = maxInst * entry.Buffer.MinBindingSize
 				}
 			case shader.AnnotationArgAnimationGlobals, shader.AnnotationArgGlobalData:
 				// Uniform buffer — fixed size from the parser, no override needed.
 			default:
 				// Per-instance storage buffers (animation data, skeletal animation data, etc.).
-				if (entry.Buffer.Type == wgpu.BufferBindingTypeStorage || entry.Buffer.Type == wgpu.BufferBindingTypeReadOnlyStorage) &&
+				if (bufferBindingType(entry) == gputypes.BufferBindingTypeStorage || bufferBindingType(entry) == gputypes.BufferBindingTypeReadOnlyStorage) &&
 					entry.Buffer.MinBindingSize > 0 {
 					computeSizeOverrides[binding] = maxInst * entry.Buffer.MinBindingSize
 				}
@@ -3610,7 +3634,7 @@ func (s *scene) createAnimator(mdl model.Model, computeShader, vertexShader, fra
 	outputSizeOverrides := make(map[int]uint64)
 	for _, entry := range outputDesc.Entries {
 		if int(entry.Binding) == outputInstanceBinding &&
-			(entry.Buffer.Type == wgpu.BufferBindingTypeStorage || entry.Buffer.Type == wgpu.BufferBindingTypeReadOnlyStorage) &&
+			(bufferBindingType(entry) == gputypes.BufferBindingTypeStorage || bufferBindingType(entry) == gputypes.BufferBindingTypeReadOnlyStorage) &&
 			entry.Buffer.MinBindingSize > 0 {
 			outputSizeOverrides[int(entry.Binding)] = maxInst * perInstanceOutputSize
 		}

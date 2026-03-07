@@ -20,7 +20,7 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	"github.com/Carmen-Shannon/oxy-go/engine/window"
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/gogpu/gputypes"
 )
 
 func main() {
@@ -194,16 +194,16 @@ func main() {
 
 	_ = sc.Add(quadObj,
 		pipeline.WithBlendEnabled(true),
-		pipeline.WithBlendState(&wgpu.BlendState{
-			Color: wgpu.BlendComponent{
-				Operation: wgpu.BlendOperationAdd,
-				SrcFactor: wgpu.BlendFactorSrcAlpha,
-				DstFactor: wgpu.BlendFactorOneMinusSrcAlpha,
+		pipeline.WithBlendState(&gputypes.BlendState{
+			Color: gputypes.BlendComponent{
+				Operation: gputypes.BlendOperationAdd,
+				SrcFactor: gputypes.BlendFactorSrcAlpha,
+				DstFactor: gputypes.BlendFactorOneMinusSrcAlpha,
 			},
-			Alpha: wgpu.BlendComponent{
-				Operation: wgpu.BlendOperationAdd,
-				SrcFactor: wgpu.BlendFactorOne,
-				DstFactor: wgpu.BlendFactorZero,
+			Alpha: gputypes.BlendComponent{
+				Operation: gputypes.BlendOperationAdd,
+				SrcFactor: gputypes.BlendFactorOne,
+				DstFactor: gputypes.BlendFactorZero,
 			},
 		}),
 	)

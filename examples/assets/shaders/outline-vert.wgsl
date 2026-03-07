@@ -10,7 +10,6 @@
 // mesh are visible, creating a solid outline / silhouette around the model.
 
 const MAX_BONES: u32 = 64u;
-const FLOATS_PER_INSTANCE: u32 = (1u + MAX_BONES) * 4u;
 
 // Outline thickness in clip-space units (scaled by w for perspective).
 // Increase for a thicker outline; decrease for a thinner one.
@@ -68,7 +67,8 @@ fn vs_main(
     vertex: VertexInput,
     @builtin(instance_index) instance_idx: u32,
 ) -> VertexOutput {
-    let base = instance_idx * FLOATS_PER_INSTANCE;
+    let floatsPerInstance = (1u + MAX_BONES) * 4u;
+    let base = instance_idx * floatsPerInstance;
     let model_matrix = read_mat4(base);
     let bone_base = base + 4u;
 

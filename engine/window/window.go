@@ -5,7 +5,6 @@ import (
 	"runtime"
 
 	"github.com/Carmen-Shannon/oxy-go/common"
-	"github.com/cogentcore/webgpu/wgpu"
 )
 
 // engineWindow is the implementation of the Window interface.
@@ -116,13 +115,15 @@ type Window interface {
 	//   - callback: function receiving mouse x, y position
 	SetMouseMoveCallback(callback func(x, y int32))
 
-	// SurfaceDescriptor returns a wgpu.SurfaceDescriptor suitable for creating a WebGPU surface.
+	// SurfaceHandles returns a wgpu.SurfaceHandles suitable for creating a WebGPU surface.
 	// The descriptor is platform-appropriate (Windows HWND, X11 Xlib, Wayland, macOS Metal, etc.)
 	// and is created by the wgpuglfw bridge from the underlying GLFW window.
 	//
 	// Returns:
-	//   - *wgpu.SurfaceDescriptor: the platform-specific surface descriptor, or nil if window is not initialized
-	SurfaceDescriptor() *wgpu.SurfaceDescriptor
+	//   - displayHandle: platform-specific display handle (e.g., HDC on Windows, Display* on X11)
+	//   - windowHandle: platform-specific window handle (e.g., HWND on Windows, Window on X11)
+	//   - error: error if the window is not initialized or handles cannot be retrieved
+	SurfaceHandles() (displayHandle, windowHandle uintptr, err error)
 
 	// IsRunning returns true if the window is still active.
 	//
@@ -215,8 +216,8 @@ func (w *engineWindow) SetMouseMoveCallback(callback func(x, y int32)) {
 	w.onMouseMove = callback
 }
 
-func (w *engineWindow) SurfaceDescriptor() *wgpu.SurfaceDescriptor {
-	return platformGetSurfaceDescriptor(w)
+func (w *engineWindow) SurfaceHandles() (displayHandle, windowHandle uintptr, err error) {
+	return platformGetHandles(w)
 }
 
 func (w *engineWindow) IsRunning() bool {

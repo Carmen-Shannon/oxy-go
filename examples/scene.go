@@ -59,6 +59,7 @@ func main() {
 	// ── Scene ───────────────────────────────────────────────────────────
 	sc := scene.NewScene("Scene Test", cam, r,
 		scene.WithActive(true),
+		scene.WithScreenSize(eng.Window().Width(), eng.Window().Height()),
 	)
 
 	// ── Rainbow Cube ────────────────────────────────────────────────────

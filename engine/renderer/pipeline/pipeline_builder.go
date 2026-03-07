@@ -2,7 +2,8 @@ package pipeline
 
 import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/gogpu/gputypes"
+	"github.com/gogpu/wgpu"
 )
 
 // PipelineBuilderOption is a functional option used to configure a Pipeline during construction.
@@ -163,7 +164,7 @@ func WithFrontFace(frontFace wgpu.FrontFace) PipelineBuilderOption {
 //
 // Returns:
 //   - PipelineBuilderOption: a function that sets the color write mask for this pipeline
-func WithWriteMask(writeMask wgpu.ColorWriteMask) PipelineBuilderOption {
+func WithWriteMask(writeMask gputypes.ColorWriteMask) PipelineBuilderOption {
 	return func(p *pipeline) {
 		p.writeMask = writeMask
 	}
@@ -176,7 +177,7 @@ func WithWriteMask(writeMask wgpu.ColorWriteMask) PipelineBuilderOption {
 //
 // Returns:
 //   - PipelineBuilderOption: a function that sets the blend state for this pipeline
-func WithBlendState(blendState *wgpu.BlendState) PipelineBuilderOption {
+func WithBlendState(blendState *gputypes.BlendState) PipelineBuilderOption {
 	return func(p *pipeline) {
 		p.blendState = blendState
 	}

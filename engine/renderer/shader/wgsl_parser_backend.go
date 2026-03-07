@@ -4,7 +4,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/gogpu/gputypes"
+	"github.com/gogpu/wgpu"
 )
 
 // wgslPrimitiveLayoutMap maps WGSL primitive, vector, matrix, and atomic type names
@@ -238,21 +239,22 @@ func computeStructSizes(structs []parsedStruct) map[string]wgslTypeLayout {
 //
 // Returns:
 //   - wgpu.BindGroupLayoutEntry: a fully populated layout entry for the resource
-func classifyResource(binding uint32, visibility wgpu.ShaderStage, addressSpace, typeName string) wgpu.BindGroupLayoutEntry {
+func classifyResource(binding uint32, visibility gputypes.ShaderStage, addressSpace, typeName string) wgpu.BindGroupLayoutEntry {
 	entry := wgpu.BindGroupLayoutEntry{
 		Binding:    binding,
 		Visibility: visibility,
 	}
 
 	if addressSpace != "" {
+		entry.Buffer = &gputypes.BufferBindingLayout{}
 		switch {
 		case addressSpace == "uniform":
-			entry.Buffer.Type = wgpu.BufferBindingTypeUniform
+			entry.Buffer.Type = gputypes.BufferBindingTypeUniform
 		case strings.HasPrefix(addressSpace, "storage"):
 			if strings.Contains(addressSpace, "read_write") {
-				entry.Buffer.Type = wgpu.BufferBindingTypeStorage
+				entry.Buffer.Type = gputypes.BufferBindingTypeStorage
 			} else {
-				entry.Buffer.Type = wgpu.BufferBindingTypeReadOnlyStorage
+				entry.Buffer.Type = gputypes.BufferBindingTypeReadOnlyStorage
 			}
 		}
 		return entry
@@ -260,14 +262,19 @@ func classifyResource(binding uint32, visibility wgpu.ShaderStage, addressSpace,
 
 	switch {
 	case typeName == "sampler":
-		entry.Sampler.Type = wgpu.SamplerBindingTypeFiltering
+		entry.Sampler = &gputypes.SamplerBindingLayout{}
+		entry.Sampler.Type = gputypes.SamplerBindingTypeFiltering
 	case typeName == "sampler_comparison":
-		entry.Sampler.Type = wgpu.SamplerBindingTypeComparison
+		entry.Sampler = &gputypes.SamplerBindingLayout{}
+		entry.Sampler.Type = gputypes.SamplerBindingTypeComparison
 	case strings.HasPrefix(typeName, "texture_storage_"):
+		entry.StorageTexture = &gputypes.StorageTextureBindingLayout{}
 		classifyStorageTexture(typeName, &entry)
 	case strings.HasPrefix(typeName, "texture_depth_"):
+		entry.Texture = &gputypes.TextureBindingLayout{}
 		classifyDepthTexture(typeName, &entry)
 	case strings.HasPrefix(typeName, "texture_"):
+		entry.Texture = &gputypes.TextureBindingLayout{}
 		classifySampledTexture(typeName, &entry)
 	}
 
@@ -299,7 +306,7 @@ func classifySampledTexture(typeName string, entry *wgpu.BindGroupLayoutEntry) {
 //   - typeName: the full WGSL depth texture type string
 //   - entry: the bind group layout entry to populate
 func classifyDepthTexture(typeName string, entry *wgpu.BindGroupLayoutEntry) {
-	entry.Texture.SampleType = wgpu.TextureSampleTypeDepth
+	entry.Texture.SampleType = gputypes.TextureSampleTypeDepth
 	if info, ok := wgslSampledTextureMap[typeName]; ok {
 		entry.Texture.ViewDimension = info.viewDimension
 		entry.Texture.Multisampled = info.multisampled
@@ -458,7 +465,7 @@ func isVertexInputStruct(ps parsedStruct) bool {
 //   - wgpu.VertexBufferLayout: the constructed vertex buffer layout
 //   - bool: false if a field type could not be mapped to a vertex format
 func buildVertexBufferLayout(ps parsedStruct) (wgpu.VertexBufferLayout, bool) {
-	attrs := make([]wgpu.VertexAttribute, 0, len(ps.fields))
+	attrs := make([]gputypes.VertexAttribute, 0, len(ps.fields))
 	var offset uint64
 
 	for _, f := range ps.fields {
@@ -467,7 +474,7 @@ func buildVertexBufferLayout(ps parsedStruct) (wgpu.VertexBufferLayout, bool) {
 			return wgpu.VertexBufferLayout{}, false
 		}
 
-		attrs = append(attrs, wgpu.VertexAttribute{
+		attrs = append(attrs, gputypes.VertexAttribute{
 			Format:         info.format,
 			Offset:         offset,
 			ShaderLocation: uint32(f.location),
@@ -477,7 +484,7 @@ func buildVertexBufferLayout(ps parsedStruct) (wgpu.VertexBufferLayout, bool) {
 
 	return wgpu.VertexBufferLayout{
 		ArrayStride: offset,
-		StepMode:    wgpu.VertexStepModeVertex,
+		StepMode:    gputypes.VertexStepModeVertex,
 		Attributes:  attrs,
 	}, true
 }

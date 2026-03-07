@@ -11,7 +11,7 @@ import (
 	_ "image/png"
 	"os"
 
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/gogpu/wgpu"
 )
 
 // TextureStagingData holds RGBA pixel data for a texture binding pending GPU upload.
@@ -38,7 +38,7 @@ type SamplerStagingData struct {
 	// MagFilter and MinFilter specify the filtering mode for magnification and minification.
 	MagFilter, MinFilter wgpu.FilterMode
 	// MipmapFilter specifies the filtering mode for mipmap level selection.
-	MipmapFilter wgpu.MipmapFilterMode
+	MipmapFilter wgpu.FilterMode
 	// LodMinClamp and LodMaxClamp specify the minimum and maximum level of detail (LOD) for mipmapping.
 	LodMinClamp, LodMaxClamp float32
 	// Compare specifies the comparison function for comparison samplers, used in shadow mapping and similar techniques.

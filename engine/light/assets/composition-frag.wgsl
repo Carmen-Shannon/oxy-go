@@ -18,7 +18,7 @@ fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
     let c = 2.43;
     let d = 0.59;
     let e = 0.14;
-    return saturate((x * (a * x + b)) / (x * (c * x + d) + e));
+    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
 @fragment

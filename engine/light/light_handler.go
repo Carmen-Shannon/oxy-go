@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/gogpu/wgpu"
 )
 
 // lightingHandlerImpl is the implementation of the LightingHandler interface.

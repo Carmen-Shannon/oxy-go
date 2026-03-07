@@ -27,8 +27,6 @@ struct VertexOutput {
     @location(4) world_tangent:  vec4<f32>,
 };
 
-const FLOATS_PER_INSTANCE: u32 = (1u + MAX_BONES) * 4u;
-
 //@oxy:group 0 0 storage_uniform bake_camera probe_bake_camera
 //@oxy:provider 1 0 animator
 @group(1) @binding(0) var<storage, read> instance_buffer: array<vec4<f32>>;
@@ -47,7 +45,8 @@ fn vs_main(
     vertex: VertexInput,
     @builtin(instance_index) instance_idx: u32,
 ) -> VertexOutput {
-    let base = instance_idx * FLOATS_PER_INSTANCE;
+    let floatsPerInstance = (1u + MAX_BONES) * 4u;
+    let base = instance_idx * floatsPerInstance;
 
     let model_matrix = read_mat4(base);
 

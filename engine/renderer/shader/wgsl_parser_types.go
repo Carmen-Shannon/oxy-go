@@ -1,10 +1,13 @@
 package shader
 
-import "github.com/cogentcore/webgpu/wgpu"
+import (
+	"github.com/gogpu/gputypes"
+	"github.com/gogpu/wgpu"
+)
 
 // vertexFormatInfo holds the wgpu vertex format and its byte size for offset calculation
 type vertexFormatInfo struct {
-	format wgpu.VertexFormat
+	format gputypes.VertexFormat
 	size   uint64
 }
 

@@ -21,15 +21,6 @@ struct VertexOutput {
     @location(3) world_position: vec3<f32>,
 };
 
-// ── Per-instance data layout in flat vec4 storage ──────────────────
-// The compute shader writes each instance as a flat sequence of vec4<f32>:
-//   [model_matrix: 4 vec4] [bone_0: 4 vec4] [bone_1: 4 vec4] ... [bone_(MAX_BONES-1): 4 vec4]
-// Total per instance: (1 + MAX_BONES) × 4 vec4 = 260 vec4 = 4160 bytes.
-// We use a flat runtime-sized array of vec4 instead of a struct with a
-// fixed-size array because naga forbids dynamic indexing into fixed-size
-// arrays inside structs.
-const FLOATS_PER_INSTANCE: u32 = (1u + MAX_BONES) * 4u; // 260 vec4 per instance
-
 //@oxy:group 0 0 storage_uniform camera camera
 //@oxy:provider 1 0 animator
 @group(1) @binding(0) var<storage, read> instance_buffer: array<vec4<f32>>;
@@ -49,7 +40,8 @@ fn vs_main(
     vertex: VertexInput,
     @builtin(instance_index) instance_idx: u32,
 ) -> VertexOutput {
-    let base = instance_idx * FLOATS_PER_INSTANCE;
+    let floatsPerInstance = (1u + MAX_BONES) * 4u;
+    let base = instance_idx * floatsPerInstance;
 
     // Model matrix is the first 4 vec4 entries.
     let model_matrix = read_mat4(base);

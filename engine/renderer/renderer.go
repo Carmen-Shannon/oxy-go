@@ -12,7 +12,8 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 	"github.com/Carmen-Shannon/oxy-go/engine/window"
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/gogpu/gputypes"
+	"github.com/gogpu/wgpu"
 )
 
 // renderer is the implementation of the Renderer interface.
@@ -31,6 +32,26 @@ type renderer struct {
 	forceFallbackAdapter bool
 	pendingPresentMode   *PresentMode
 	pendingMSAA          *MSAASampleCount
+}
+
+func isTextureBindingEntry(entry wgpu.BindGroupLayoutEntry) bool {
+	return entry.Texture != nil && entry.Texture.SampleType != gputypes.TextureSampleTypeUndefined
+}
+
+func isStorageTextureBindingEntry(entry wgpu.BindGroupLayoutEntry) bool {
+	return entry.StorageTexture != nil && entry.StorageTexture.Access != 0
+}
+
+func isSamplerBindingEntry(entry wgpu.BindGroupLayoutEntry) bool {
+	return entry.Sampler != nil && entry.Sampler.Type != gputypes.SamplerBindingTypeUndefined
+}
+
+func bufferBindingType(entry wgpu.BindGroupLayoutEntry) gputypes.BufferBindingType {
+	if entry.Buffer == nil {
+		return gputypes.BufferBindingTypeUndefined
+	}
+
+	return entry.Buffer.Type
 }
 
 // Renderer defines the interface for the rendering system.
@@ -753,7 +774,11 @@ func NewRenderer(backendType RendererBackendType, window window.Window, options 
 	case BackendTypeWGPU:
 		fallthrough
 	default:
-		r.backend = newWGPURendererBackend(window.SurfaceDescriptor(), r.forceFallbackAdapter, msaa)
+		displayHandle, windowHandle, err := window.SurfaceHandles()
+		if err != nil {
+			panic(fmt.Sprintf("failed to get surface descriptor from window: %v", err))
+		}
+		r.backend = newWGPURendererBackend(displayHandle, windowHandle, r.forceFallbackAdapter, msaa)
 	}
 
 	if r.pendingPresentMode != nil {
@@ -1001,12 +1026,12 @@ func (r *renderer) initMaterialGPU(mat material.Material, fragmentShader shader.
 			}
 			if hasSamplerBinding {
 				samplerData := common.SamplerStagingData{
-					AddressModeU:  wgpu.AddressModeRepeat,
-					AddressModeV:  wgpu.AddressModeRepeat,
-					AddressModeW:  wgpu.AddressModeRepeat,
-					MagFilter:     wgpu.FilterModeLinear,
-					MinFilter:     wgpu.FilterModeLinear,
-					MipmapFilter:  wgpu.MipmapFilterModeLinear,
+					AddressModeU:  gputypes.AddressModeRepeat,
+					AddressModeV:  gputypes.AddressModeRepeat,
+					AddressModeW:  gputypes.AddressModeRepeat,
+					MagFilter:     gputypes.FilterModeLinear,
+					MinFilter:     gputypes.FilterModeLinear,
+					MipmapFilter:  wgpu.FilterMode(gputypes.MipmapFilterModeLinear),
 					LodMinClamp:   0,
 					LodMaxClamp:   32,
 					MaxAnisotropy: 1,
@@ -1024,8 +1049,8 @@ func (r *renderer) initMaterialGPU(mat material.Material, fragmentShader shader.
 		descriptor := fragmentShader.BindGroupLayoutDescriptor(groupIdx)
 		for _, entry := range descriptor.Entries {
 			binding := int(entry.Binding)
-			isTexture := entry.Texture.SampleType != wgpu.TextureSampleTypeUndefined
-			isSampler := entry.Sampler.Type != wgpu.SamplerBindingTypeUndefined
+			isTexture := isTextureBindingEntry(entry)
+			isSampler := isSamplerBindingEntry(entry)
 
 			if isTexture && provider.TextureView(binding) == nil {
 				role := gi.bindingRoles[binding]
@@ -1057,12 +1082,12 @@ func (r *renderer) initMaterialGPU(mat material.Material, fragmentShader shader.
 
 			if isSampler && provider.Sampler(binding) == nil {
 				fallbackSampler := common.SamplerStagingData{
-					AddressModeU:  wgpu.AddressModeRepeat,
-					AddressModeV:  wgpu.AddressModeRepeat,
-					AddressModeW:  wgpu.AddressModeRepeat,
-					MagFilter:     wgpu.FilterModeLinear,
-					MinFilter:     wgpu.FilterModeLinear,
-					MipmapFilter:  wgpu.MipmapFilterModeLinear,
+					AddressModeU:  gputypes.AddressModeRepeat,
+					AddressModeV:  gputypes.AddressModeRepeat,
+					AddressModeW:  gputypes.AddressModeRepeat,
+					MagFilter:     gputypes.FilterModeLinear,
+					MinFilter:     gputypes.FilterModeLinear,
+					MipmapFilter:  wgpu.FilterMode(gputypes.MipmapFilterModeLinear),
 					LodMinClamp:   0,
 					LodMaxClamp:   32,
 					MaxAnisotropy: 1,

@@ -6,96 +6,97 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/gogpu/gputypes"
+	"github.com/gogpu/wgpu"
 )
 
 // wgslVertexFormatMap maps WGSL type names to their corresponding wgpu vertex format and byte size
 var wgslVertexFormatMap = map[string]vertexFormatInfo{
-	"f32":       {wgpu.VertexFormatFloat32, 4},
-	"vec2f":     {wgpu.VertexFormatFloat32x2, 8},
-	"vec2<f32>": {wgpu.VertexFormatFloat32x2, 8},
-	"vec3f":     {wgpu.VertexFormatFloat32x3, 12},
-	"vec3<f32>": {wgpu.VertexFormatFloat32x3, 12},
-	"vec4f":     {wgpu.VertexFormatFloat32x4, 16},
-	"vec4<f32>": {wgpu.VertexFormatFloat32x4, 16},
-	"i32":       {wgpu.VertexFormatSint32, 4},
-	"vec2i":     {wgpu.VertexFormatSint32x2, 8},
-	"vec2<i32>": {wgpu.VertexFormatSint32x2, 8},
-	"vec3i":     {wgpu.VertexFormatSint32x3, 12},
-	"vec3<i32>": {wgpu.VertexFormatSint32x3, 12},
-	"vec4i":     {wgpu.VertexFormatSint32x4, 16},
-	"vec4<i32>": {wgpu.VertexFormatSint32x4, 16},
-	"u32":       {wgpu.VertexFormatUint32, 4},
-	"vec2u":     {wgpu.VertexFormatUint32x2, 8},
-	"vec2<u32>": {wgpu.VertexFormatUint32x2, 8},
-	"vec3u":     {wgpu.VertexFormatUint32x3, 12},
-	"vec3<u32>": {wgpu.VertexFormatUint32x3, 12},
-	"vec4u":     {wgpu.VertexFormatUint32x4, 16},
-	"vec4<u32>": {wgpu.VertexFormatUint32x4, 16},
-	"vec2<f16>": {wgpu.VertexFormatFloat16x2, 4},
-	"vec2h":     {wgpu.VertexFormatFloat16x2, 4},
-	"vec4<f16>": {wgpu.VertexFormatFloat16x4, 8},
-	"vec4h":     {wgpu.VertexFormatFloat16x4, 8},
+	"f32":       {gputypes.VertexFormatFloat32, 4},
+	"vec2f":     {gputypes.VertexFormatFloat32x2, 8},
+	"vec2<f32>": {gputypes.VertexFormatFloat32x2, 8},
+	"vec3f":     {gputypes.VertexFormatFloat32x3, 12},
+	"vec3<f32>": {gputypes.VertexFormatFloat32x3, 12},
+	"vec4f":     {gputypes.VertexFormatFloat32x4, 16},
+	"vec4<f32>": {gputypes.VertexFormatFloat32x4, 16},
+	"i32":       {gputypes.VertexFormatSint32, 4},
+	"vec2i":     {gputypes.VertexFormatSint32x2, 8},
+	"vec2<i32>": {gputypes.VertexFormatSint32x2, 8},
+	"vec3i":     {gputypes.VertexFormatSint32x3, 12},
+	"vec3<i32>": {gputypes.VertexFormatSint32x3, 12},
+	"vec4i":     {gputypes.VertexFormatSint32x4, 16},
+	"vec4<i32>": {gputypes.VertexFormatSint32x4, 16},
+	"u32":       {gputypes.VertexFormatUint32, 4},
+	"vec2u":     {gputypes.VertexFormatUint32x2, 8},
+	"vec2<u32>": {gputypes.VertexFormatUint32x2, 8},
+	"vec3u":     {gputypes.VertexFormatUint32x3, 12},
+	"vec3<u32>": {gputypes.VertexFormatUint32x3, 12},
+	"vec4u":     {gputypes.VertexFormatUint32x4, 16},
+	"vec4<u32>": {gputypes.VertexFormatUint32x4, 16},
+	"vec2<f16>": {gputypes.VertexFormatFloat16x2, 4},
+	"vec2h":     {gputypes.VertexFormatFloat16x2, 4},
+	"vec4<f16>": {gputypes.VertexFormatFloat16x4, 8},
+	"vec4h":     {gputypes.VertexFormatFloat16x4, 8},
 }
 
 // wgslSampledTextureMap maps WGSL sampled texture base names to their view dimension and multisampled flag
 var wgslSampledTextureMap = map[string]sampledTextureInfo{
-	"texture_1d":                    {wgpu.TextureViewDimension1D, false},
-	"texture_2d":                    {wgpu.TextureViewDimension2D, false},
-	"texture_2d_array":              {wgpu.TextureViewDimension2DArray, false},
-	"texture_3d":                    {wgpu.TextureViewDimension3D, false},
-	"texture_cube":                  {wgpu.TextureViewDimensionCube, false},
-	"texture_cube_array":            {wgpu.TextureViewDimensionCubeArray, false},
-	"texture_multisampled_2d":       {wgpu.TextureViewDimension2D, true},
-	"texture_depth_2d":              {wgpu.TextureViewDimension2D, false},
-	"texture_depth_2d_array":        {wgpu.TextureViewDimension2DArray, false},
-	"texture_depth_cube":            {wgpu.TextureViewDimensionCube, false},
-	"texture_depth_cube_array":      {wgpu.TextureViewDimensionCubeArray, false},
-	"texture_depth_multisampled_2d": {wgpu.TextureViewDimension2D, true},
+	"texture_1d":                    {gputypes.TextureViewDimension1D, false},
+	"texture_2d":                    {gputypes.TextureViewDimension2D, false},
+	"texture_2d_array":              {gputypes.TextureViewDimension2DArray, false},
+	"texture_3d":                    {gputypes.TextureViewDimension3D, false},
+	"texture_cube":                  {gputypes.TextureViewDimensionCube, false},
+	"texture_cube_array":            {gputypes.TextureViewDimensionCubeArray, false},
+	"texture_multisampled_2d":       {gputypes.TextureViewDimension2D, true},
+	"texture_depth_2d":              {gputypes.TextureViewDimension2D, false},
+	"texture_depth_2d_array":        {gputypes.TextureViewDimension2DArray, false},
+	"texture_depth_cube":            {gputypes.TextureViewDimensionCube, false},
+	"texture_depth_cube_array":      {gputypes.TextureViewDimensionCubeArray, false},
+	"texture_depth_multisampled_2d": {gputypes.TextureViewDimension2D, true},
 }
 
 // wgslStorageTextureDimMap maps WGSL storage texture base names to their view dimension
 var wgslStorageTextureDimMap = map[string]wgpu.TextureViewDimension{
-	"texture_storage_1d":       wgpu.TextureViewDimension1D,
-	"texture_storage_2d":       wgpu.TextureViewDimension2D,
-	"texture_storage_2d_array": wgpu.TextureViewDimension2DArray,
-	"texture_storage_3d":       wgpu.TextureViewDimension3D,
+	"texture_storage_1d":       gputypes.TextureViewDimension1D,
+	"texture_storage_2d":       gputypes.TextureViewDimension2D,
+	"texture_storage_2d_array": gputypes.TextureViewDimension2DArray,
+	"texture_storage_3d":       gputypes.TextureViewDimension3D,
 }
 
 // wgslSampleTypeMap maps WGSL scalar type parameters to their wgpu texture sample type
-var wgslSampleTypeMap = map[string]wgpu.TextureSampleType{
-	"f32": wgpu.TextureSampleTypeFloat,
-	"i32": wgpu.TextureSampleTypeSint,
-	"u32": wgpu.TextureSampleTypeUint,
+var wgslSampleTypeMap = map[string]gputypes.TextureSampleType{
+	"f32": gputypes.TextureSampleTypeFloat,
+	"i32": gputypes.TextureSampleTypeSint,
+	"u32": gputypes.TextureSampleTypeUint,
 }
 
 // wgslStorageAccessMap maps WGSL access mode keywords to their wgpu storage texture access
-var wgslStorageAccessMap = map[string]wgpu.StorageTextureAccess{
-	"write":      wgpu.StorageTextureAccessWriteOnly,
-	"read":       wgpu.StorageTextureAccessReadOnly,
-	"read_write": wgpu.StorageTextureAccessReadWrite,
+var wgslStorageAccessMap = map[string]gputypes.StorageTextureAccess{
+	"write":      gputypes.StorageTextureAccessWriteOnly,
+	"read":       gputypes.StorageTextureAccessReadOnly,
+	"read_write": gputypes.StorageTextureAccessReadWrite,
 }
 
 // wgslTexelFormatMap maps WGSL texel format strings to their corresponding wgpu texture formats.
 // These are the formats valid for storage textures per the WGSL specification.
 var wgslTexelFormatMap = map[string]wgpu.TextureFormat{
-	"rgba8unorm":  wgpu.TextureFormatRGBA8Unorm,
-	"rgba8snorm":  wgpu.TextureFormatRGBA8Snorm,
-	"rgba8uint":   wgpu.TextureFormatRGBA8Uint,
-	"rgba8sint":   wgpu.TextureFormatRGBA8Sint,
-	"rgba16uint":  wgpu.TextureFormatRGBA16Uint,
-	"rgba16sint":  wgpu.TextureFormatRGBA16Sint,
-	"rgba16float": wgpu.TextureFormatRGBA16Float,
-	"r32uint":     wgpu.TextureFormatR32Uint,
-	"r32sint":     wgpu.TextureFormatR32Sint,
-	"r32float":    wgpu.TextureFormatR32Float,
-	"rg32uint":    wgpu.TextureFormatRG32Uint,
-	"rg32sint":    wgpu.TextureFormatRG32Sint,
-	"rg32float":   wgpu.TextureFormatRG32Float,
-	"rgba32uint":  wgpu.TextureFormatRGBA32Uint,
-	"rgba32sint":  wgpu.TextureFormatRGBA32Sint,
-	"rgba32float": wgpu.TextureFormatRGBA32Float,
-	"bgra8unorm":  wgpu.TextureFormatBGRA8Unorm,
+	"rgba8unorm":  gputypes.TextureFormatRGBA8Unorm,
+	"rgba8snorm":  gputypes.TextureFormatRGBA8Snorm,
+	"rgba8uint":   gputypes.TextureFormatRGBA8Uint,
+	"rgba8sint":   gputypes.TextureFormatRGBA8Sint,
+	"rgba16uint":  gputypes.TextureFormatRGBA16Uint,
+	"rgba16sint":  gputypes.TextureFormatRGBA16Sint,
+	"rgba16float": gputypes.TextureFormatRGBA16Float,
+	"r32uint":     gputypes.TextureFormatR32Uint,
+	"r32sint":     gputypes.TextureFormatR32Sint,
+	"r32float":    gputypes.TextureFormatR32Float,
+	"rg32uint":    gputypes.TextureFormatRG32Uint,
+	"rg32sint":    gputypes.TextureFormatRG32Sint,
+	"rg32float":   gputypes.TextureFormatRG32Float,
+	"rgba32uint":  gputypes.TextureFormatRGBA32Uint,
+	"rgba32sint":  gputypes.TextureFormatRGBA32Sint,
+	"rgba32float": gputypes.TextureFormatRGBA32Float,
+	"bgra8unorm":  gputypes.TextureFormatBGRA8Unorm,
 }
 
 var (
@@ -173,7 +174,7 @@ func parseVertexLayouts(source string) map[int][]wgpu.VertexBufferLayout {
 // Returns:
 //   - map[int]wgpu.BindGroupLayoutDescriptor: layout descriptors keyed by group index
 //   - map[int]map[int]string: variable names keyed by group and binding index for resource tracking
-func parseBindGroupLayouts(source string, visibility wgpu.ShaderStage) (map[int]wgpu.BindGroupLayoutDescriptor, map[int]map[int]string) {
+func parseBindGroupLayouts(source string, visibility gputypes.ShaderStage) (map[int]wgpu.BindGroupLayoutDescriptor, map[int]map[int]string) {
 	groups := make(map[int][]wgpu.BindGroupLayoutEntry)
 	varNames := make(map[int]map[int]string)
 	cleaned := stripComments(source)
@@ -194,7 +195,7 @@ func parseBindGroupLayouts(source string, visibility wgpu.ShaderStage) (map[int]
 		entry := classifyResource(uint32(binding), visibility, addressSpace, typeName)
 
 		// Set MinBindingSize for buffer bindings by resolving the bound type's size.
-		if entry.Buffer.Type != wgpu.BufferBindingTypeUndefined {
+		if entry.Buffer != nil && entry.Buffer.Type != gputypes.BufferBindingTypeUndefined {
 			if layout, ok := resolveTypeLayout(typeName, structSizes); ok && layout.size > 0 {
 				entry.Buffer.MinBindingSize = layout.size
 			}

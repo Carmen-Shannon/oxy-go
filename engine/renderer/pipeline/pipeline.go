@@ -3,7 +3,8 @@ package pipeline
 import (
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/gogpu/gputypes"
+	"github.com/gogpu/wgpu"
 )
 
 // PipelineType identifies whether a pipeline is a compute pipeline or a render pipeline.
@@ -48,8 +49,8 @@ type pipeline struct {
 	cullMode            wgpu.CullMode
 	topology            wgpu.PrimitiveTopology
 	frontFace           wgpu.FrontFace
-	writeMask           wgpu.ColorWriteMask
-	blendState          *wgpu.BlendState
+	writeMask           gputypes.ColorWriteMask
+	blendState          *gputypes.BlendState
 }
 
 // Pipeline defines the interface for a GPU pipeline, encapsulating either a render pipeline
@@ -146,13 +147,13 @@ type Pipeline interface {
 	//
 	// Returns:
 	//   - wgpu.ColorWriteMask: the color write mask for this pipeline (e.g., wgpu.ColorWriteMaskAll)
-	WriteMask() wgpu.ColorWriteMask
+	WriteMask() gputypes.ColorWriteMask
 
 	// BlendState returns the blend state configured for this pipeline.
 	//
 	// Returns:
 	//   - *wgpu.BlendState: the blend state for this pipeline, or nil if blending is not enabled
-	BlendState() *wgpu.BlendState
+	BlendState() *gputypes.BlendState
 
 	// SetRenderPipeline sets the render pipeline
 	//
@@ -185,20 +186,20 @@ func NewPipeline(pipelineKey string, pipelineType PipelineType, opts ...Pipeline
 		depthTestEnabled:  true,
 		depthWriteEnabled: true,
 		blendEnabled:      false,
-		cullMode:          wgpu.CullModeNone,
-		topology:          wgpu.PrimitiveTopologyTriangleList,
-		frontFace:         wgpu.FrontFaceCCW,
-		writeMask:         wgpu.ColorWriteMaskAll,
-		blendState: &wgpu.BlendState{
-			Color: wgpu.BlendComponent{
-				SrcFactor: wgpu.BlendFactorSrcAlpha,
-				DstFactor: wgpu.BlendFactorOneMinusSrcAlpha,
-				Operation: wgpu.BlendOperationAdd,
+		cullMode:          gputypes.CullModeNone,
+		topology:          gputypes.PrimitiveTopologyTriangleList,
+		frontFace:         gputypes.FrontFaceCCW,
+		writeMask:         gputypes.ColorWriteMaskAll,
+		blendState: &gputypes.BlendState{
+			Color: gputypes.BlendComponent{
+				SrcFactor: gputypes.BlendFactorSrcAlpha,
+				DstFactor: gputypes.BlendFactorOneMinusSrcAlpha,
+				Operation: gputypes.BlendOperationAdd,
 			},
-			Alpha: wgpu.BlendComponent{
-				SrcFactor: wgpu.BlendFactorOne,
-				DstFactor: wgpu.BlendFactorOneMinusSrcAlpha,
-				Operation: wgpu.BlendOperationAdd,
+			Alpha: gputypes.BlendComponent{
+				SrcFactor: gputypes.BlendFactorOne,
+				DstFactor: gputypes.BlendFactorOneMinusSrcAlpha,
+				Operation: gputypes.BlendOperationAdd,
 			},
 		},
 	}
@@ -264,11 +265,11 @@ func (p *pipeline) FrontFace() wgpu.FrontFace {
 	return p.frontFace
 }
 
-func (p *pipeline) WriteMask() wgpu.ColorWriteMask {
+func (p *pipeline) WriteMask() gputypes.ColorWriteMask {
 	return p.writeMask
 }
 
-func (p *pipeline) BlendState() *wgpu.BlendState {
+func (p *pipeline) BlendState() *gputypes.BlendState {
 	return p.blendState
 }
 

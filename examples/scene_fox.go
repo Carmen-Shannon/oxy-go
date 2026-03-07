@@ -19,7 +19,7 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	"github.com/Carmen-Shannon/oxy-go/engine/window"
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/gogpu/gputypes"
 )
 
 func main() {
@@ -91,19 +91,19 @@ func main() {
 		),
 		"tint",
 		pipeline.WithBlendEnabled(true),
-		pipeline.WithBlendState(&wgpu.BlendState{
-			Color: wgpu.BlendComponent{
-				SrcFactor: wgpu.BlendFactorSrcAlpha,
-				DstFactor: wgpu.BlendFactorOneMinusSrcAlpha,
-				Operation: wgpu.BlendOperationAdd,
+		pipeline.WithBlendState(&gputypes.BlendState{
+			Color: gputypes.BlendComponent{
+				SrcFactor: gputypes.BlendFactorSrcAlpha,
+				DstFactor: gputypes.BlendFactorOneMinusSrcAlpha,
+				Operation: gputypes.BlendOperationAdd,
 			},
-			Alpha: wgpu.BlendComponent{
-				SrcFactor: wgpu.BlendFactorOne,
-				DstFactor: wgpu.BlendFactorOneMinusSrcAlpha,
-				Operation: wgpu.BlendOperationAdd,
+			Alpha: gputypes.BlendComponent{
+				SrcFactor: gputypes.BlendFactorOne,
+				DstFactor: gputypes.BlendFactorOneMinusSrcAlpha,
+				Operation: gputypes.BlendOperationAdd,
 			},
 		}),
-		pipeline.WithDepthCompare(wgpu.CompareFunctionLessEqual), // same geometry as base pass
+		pipeline.WithDepthCompare(gputypes.CompareFunctionLessEqual), // same geometry as base pass
 		pipeline.WithDepthWriteEnabled(false),
 	); err != nil {
 		log.Fatalf("Failed to register tint material: %v", err)
@@ -137,9 +137,9 @@ func main() {
 		"fox_overlay_material",
 		pipeline.WithVertexShader(shader.NewShader("outline_vert", shader.ShaderTypeVertex, "examples/assets/shaders/outline-vert.wgsl")),
 		pipeline.WithFragmentShader(shader.NewShader("overlay_frag", shader.ShaderTypeFragment, "examples/assets/shaders/overlay-frag.wgsl")),
-		pipeline.WithCullMode(wgpu.CullModeFront),                // render only back faces
-		pipeline.WithDepthCompare(wgpu.CompareFunctionLessEqual), // clip-space extrusion lands at ~same depth
-		pipeline.WithDepthWriteEnabled(false),                    // don't occlude the normal pass
+		pipeline.WithCullMode(gputypes.CullModeFront),                // render only back faces
+		pipeline.WithDepthCompare(gputypes.CompareFunctionLessEqual), // clip-space extrusion lands at ~same depth
+		pipeline.WithDepthWriteEnabled(false),                        // don't occlude the normal pass
 	); err != nil {
 		log.Fatalf("Failed to register overlay material: %v", err)
 	}
