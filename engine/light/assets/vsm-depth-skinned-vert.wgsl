@@ -21,12 +21,6 @@ struct VertexOutput {
     @location(0) light_depth: f32,
 };
 
-// ── Per-instance data layout in flat vec4 storage ──────────────────
-// The compute shader writes each instance as a flat sequence of vec4<f32>:
-//   [model_matrix: 4 vec4] [bone_0: 4 vec4] ... [bone_(MAX_BONES-1): 4 vec4]
-// Total per instance: (1 + MAX_BONES) × 4 vec4.
-const FLOATS_PER_INSTANCE: u32 = (1u + MAX_BONES) * 4u;
-
 //@oxy:group 0 0 storage_uniform shadow_uniform shadow_uniform
 //@oxy:provider 1 0 animator
 @group(1) @binding(0) var<storage, read> instance_buffer: array<vec4<f32>>;
@@ -46,7 +40,8 @@ fn vs_main(
     vertex: VertexInput,
     @builtin(instance_index) instance_idx: u32,
 ) -> VertexOutput {
-    let base = instance_idx * FLOATS_PER_INSTANCE;
+    let floatsPerInstance = (1u + MAX_BONES) * 4u;
+    let base = instance_idx * floatsPerInstance;
 
     // Model matrix is the first 4 vec4 entries.
     let model_matrix = read_mat4(base);
@@ -55,13 +50,20 @@ fn vs_main(
     let bone_base = base + 4u;
 
     // Blend skinning: accumulate weighted bone transforms.
+    // Columns are read as raw vec4 from the buffer to avoid a naga SPIR-V codegen
+    // bug where mat4x4[i] column extraction in arithmetic produces incorrect SPIR-V.
     var skinned_pos = vec4<f32>(0.0);
+    let v = vec4<f32>(vertex.position, 1.0);
     for (var i = 0u; i < 4u; i = i + 1u) {
         let bone_idx = vertex.bone_indices[i];
         let weight = vertex.bone_weights[i];
         if weight > 0.0 {
-            let bone_matrix = read_mat4(bone_base + bone_idx * 4u);
-            skinned_pos += weight * (bone_matrix * vec4<f32>(vertex.position, 1.0));
+            let b = bone_base + bone_idx * 4u;
+            let transformed = instance_buffer[b] * v.x
+                            + instance_buffer[b + 1u] * v.y
+                            + instance_buffer[b + 2u] * v.z
+                            + instance_buffer[b + 3u] * v.w;
+            skinned_pos += weight * transformed;
         }
     }
 

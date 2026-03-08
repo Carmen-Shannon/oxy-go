@@ -42,8 +42,8 @@ func main() {
 	cam := camera.NewCamera(
 		camera.WithFov(float32(45.0*math.Pi/180.0)),
 		camera.WithAspect(float32(eng.Window().Width())/float32(eng.Window().Height())),
-		camera.WithNear(0.01),
-		camera.WithFar(10000),
+		camera.WithNear(0.1),
+		camera.WithFar(500),
 		camera.WithController(camera.NewCameraController(
 			camera.WithRadius(100),
 			camera.WithTarget(0, 0, 0),
@@ -59,6 +59,7 @@ func main() {
 	// ── Scene ───────────────────────────────────────────────────────────
 	sc := scene.NewScene("Scene Test", cam, r,
 		scene.WithActive(true),
+		scene.WithScreenSize(eng.Window().Width(), eng.Window().Height()),
 	)
 
 	// ── Rainbow Cube ────────────────────────────────────────────────────
@@ -169,36 +170,67 @@ func setupInput(eng engine.Engine, cam camera.Camera) {
 	})
 }
 
-// buildCube returns 8 vertices with distinct rainbow colors and 36 indices
-// forming 12 triangles (2 per face). All outward faces wind counter-clockwise.
+// buildCube returns a cube mesh with per-face duplicated vertices so the lit
+// vertex path receives valid normals, UVs, and tangents on every face.
 //
 // Returns:
 //   - []model.GPUVertex: the cube vertices with rainbow colors
 //   - []uint32: the triangle indices
 func buildCube() ([]model.GPUVertex, []uint32) {
-	pos := [8][3]float32{
-		{-0.5, -0.5, -0.5}, {0.5, -0.5, -0.5},
-		{0.5, 0.5, -0.5}, {-0.5, 0.5, -0.5},
-		{-0.5, -0.5, 0.5}, {0.5, -0.5, 0.5},
-		{0.5, 0.5, 0.5}, {-0.5, 0.5, 0.5},
-	}
-	col := [8][4]float32{
+	colors := [8][4]float32{
 		{1, 0, 0, 1}, {0, 1, 0, 1}, {0, 0, 1, 1}, {1, 1, 0, 1},
 		{0, 1, 1, 1}, {1, 0, 1, 1}, {1, 1, 1, 1}, {1, 0.5, 0, 1},
 	}
 
-	vertices := make([]model.GPUVertex, 8)
-	for i := 0; i < 8; i++ {
-		vertices[i] = model.GPUVertex{Position: pos[i], Color: col[i]}
+	makeVertex := func(px, py, pz float32, normal [3]float32, uv [2]float32, color [4]float32, tangent [4]float32) model.GPUVertex {
+		return model.GPUVertex{
+			Position: [3]float32{px, py, pz},
+			Normal:   normal,
+			TexCoord: uv,
+			Color:    color,
+			Tangent:  tangent,
+		}
+	}
+
+	vertices := []model.GPUVertex{
+		makeVertex(-0.5, -0.5, 0.5, [3]float32{0, 0, 1}, [2]float32{0, 1}, colors[4], [4]float32{1, 0, 0, 1}),
+		makeVertex(0.5, -0.5, 0.5, [3]float32{0, 0, 1}, [2]float32{1, 1}, colors[5], [4]float32{1, 0, 0, 1}),
+		makeVertex(0.5, 0.5, 0.5, [3]float32{0, 0, 1}, [2]float32{1, 0}, colors[6], [4]float32{1, 0, 0, 1}),
+		makeVertex(-0.5, 0.5, 0.5, [3]float32{0, 0, 1}, [2]float32{0, 0}, colors[7], [4]float32{1, 0, 0, 1}),
+
+		makeVertex(0.5, -0.5, -0.5, [3]float32{0, 0, -1}, [2]float32{0, 1}, colors[1], [4]float32{-1, 0, 0, 1}),
+		makeVertex(-0.5, -0.5, -0.5, [3]float32{0, 0, -1}, [2]float32{1, 1}, colors[0], [4]float32{-1, 0, 0, 1}),
+		makeVertex(-0.5, 0.5, -0.5, [3]float32{0, 0, -1}, [2]float32{1, 0}, colors[3], [4]float32{-1, 0, 0, 1}),
+		makeVertex(0.5, 0.5, -0.5, [3]float32{0, 0, -1}, [2]float32{0, 0}, colors[2], [4]float32{-1, 0, 0, 1}),
+
+		makeVertex(0.5, -0.5, 0.5, [3]float32{1, 0, 0}, [2]float32{0, 1}, colors[5], [4]float32{0, 0, -1, 1}),
+		makeVertex(0.5, -0.5, -0.5, [3]float32{1, 0, 0}, [2]float32{1, 1}, colors[1], [4]float32{0, 0, -1, 1}),
+		makeVertex(0.5, 0.5, -0.5, [3]float32{1, 0, 0}, [2]float32{1, 0}, colors[2], [4]float32{0, 0, -1, 1}),
+		makeVertex(0.5, 0.5, 0.5, [3]float32{1, 0, 0}, [2]float32{0, 0}, colors[6], [4]float32{0, 0, -1, 1}),
+
+		makeVertex(-0.5, -0.5, -0.5, [3]float32{-1, 0, 0}, [2]float32{0, 1}, colors[0], [4]float32{0, 0, 1, 1}),
+		makeVertex(-0.5, -0.5, 0.5, [3]float32{-1, 0, 0}, [2]float32{1, 1}, colors[4], [4]float32{0, 0, 1, 1}),
+		makeVertex(-0.5, 0.5, 0.5, [3]float32{-1, 0, 0}, [2]float32{1, 0}, colors[7], [4]float32{0, 0, 1, 1}),
+		makeVertex(-0.5, 0.5, -0.5, [3]float32{-1, 0, 0}, [2]float32{0, 0}, colors[3], [4]float32{0, 0, 1, 1}),
+
+		makeVertex(-0.5, 0.5, 0.5, [3]float32{0, 1, 0}, [2]float32{0, 1}, colors[7], [4]float32{1, 0, 0, 1}),
+		makeVertex(0.5, 0.5, 0.5, [3]float32{0, 1, 0}, [2]float32{1, 1}, colors[6], [4]float32{1, 0, 0, 1}),
+		makeVertex(0.5, 0.5, -0.5, [3]float32{0, 1, 0}, [2]float32{1, 0}, colors[2], [4]float32{1, 0, 0, 1}),
+		makeVertex(-0.5, 0.5, -0.5, [3]float32{0, 1, 0}, [2]float32{0, 0}, colors[3], [4]float32{1, 0, 0, 1}),
+
+		makeVertex(-0.5, -0.5, -0.5, [3]float32{0, -1, 0}, [2]float32{0, 1}, colors[0], [4]float32{1, 0, 0, 1}),
+		makeVertex(0.5, -0.5, -0.5, [3]float32{0, -1, 0}, [2]float32{1, 1}, colors[1], [4]float32{1, 0, 0, 1}),
+		makeVertex(0.5, -0.5, 0.5, [3]float32{0, -1, 0}, [2]float32{1, 0}, colors[5], [4]float32{1, 0, 0, 1}),
+		makeVertex(-0.5, -0.5, 0.5, [3]float32{0, -1, 0}, [2]float32{0, 0}, colors[4], [4]float32{1, 0, 0, 1}),
 	}
 
 	indices := []uint32{
-		4, 5, 6, 4, 6, 7, // Front  (+Z)
-		1, 0, 3, 1, 3, 2, // Back   (-Z)
-		5, 1, 2, 5, 2, 6, // Right  (+X)
-		0, 4, 7, 0, 7, 3, // Left   (-X)
-		3, 7, 6, 3, 6, 2, // Top    (+Y)
-		0, 1, 5, 0, 5, 4, // Bottom (-Y)
+		0, 1, 2, 0, 2, 3,
+		4, 5, 6, 4, 6, 7,
+		8, 9, 10, 8, 10, 11,
+		12, 13, 14, 12, 14, 15,
+		16, 17, 18, 16, 18, 19,
+		20, 21, 22, 20, 22, 23,
 	}
 
 	return vertices, indices

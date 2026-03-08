@@ -90,20 +90,20 @@ fn attenuation(distance: f32, light_range: f32) -> f32 {
     if light_range <= 0.0 {
         return 0.0;
     }
-    let ratio = saturate(distance / light_range);
+    let ratio = clamp(distance / light_range, 0.0, 1.0);
     let window = 1.0 - ratio * ratio;
     return window * window;
 }
 
 // ── Spot cone falloff ──────────────────────────────────────────────
 fn spot_falloff(cos_angle: f32, inner_cone: f32, outer_cone: f32) -> f32 {
-    return saturate((cos_angle - outer_cone) / max(inner_cone - outer_cone, 0.0001));
+    return clamp((cos_angle - outer_cone) / max(inner_cone - outer_cone, 0.0001), 0.0, 1.0);
 }
 
 // ── VSM helpers ────────────────────────────────────────────────────
 
 fn linstep(lo: f32, hi: f32, v: f32) -> f32 {
-    return saturate((v - lo) / (hi - lo));
+    return clamp((v - lo) / (hi - lo), 0.0, 1.0);
 }
 
 fn reduce_light_bleeding(p_max: f32, amount: f32) -> f32 {

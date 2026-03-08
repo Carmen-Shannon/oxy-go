@@ -4,8 +4,7 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/cogentcore/webgpu/wgpu"
-	"github.com/cogentcore/webgpu/wgpuglfw"
+	"github.com/Carmen-Shannon/oxy-go/engine/window/internal"
 	"github.com/go-gl/glfw/v3.3/glfw"
 )
 
@@ -115,16 +114,14 @@ func newPlatformWindow(w *engineWindow) error {
 	return nil
 }
 
-// platformGetSurfaceDescriptor creates a platform-appropriate wgpu.SurfaceDescriptor from the GLFW window.
+// platformGetHandles creates a platform-appropriate wgpu.SurfaceDescriptor from the GLFW window.
 // Uses the wgpuglfw bridge package which has per-platform implementations (Windows, X11, Wayland, macOS).
-//
-// Reference: https://pkg.go.dev/github.com/cogentcore/webgpu/wgpuglfw#GetSurfaceDescriptor
-func platformGetSurfaceDescriptor(w *engineWindow) *wgpu.SurfaceDescriptor {
+func platformGetHandles(w *engineWindow) (displayHandle, windowHandle uintptr, err error) {
 	if w.internalWindow == nil {
-		return nil
+		return 0, 0, fmt.Errorf("window is not initialized")
 	}
 	gw := w.internalWindow.(*glfwWindow)
-	return wgpuglfw.GetSurfaceDescriptor(gw.window)
+	return internal.PlatformGetHandles(gw.window)
 }
 
 // platformIsRunningCheck returns whether the GLFW window is still active.

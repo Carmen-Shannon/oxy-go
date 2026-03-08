@@ -5,7 +5,8 @@ import (
 	"os"
 
 	"github.com/Carmen-Shannon/oxy-go/common"
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/gogpu/gputypes"
+	"github.com/gogpu/wgpu"
 )
 
 // ShaderType identifies whether a shader is a render shader or a compute shader.
@@ -273,9 +274,7 @@ func (s *shader) parseSourceFromPath(path string) {
 	}
 	s.module = &wgpu.ShaderModuleDescriptor{
 		Label: s.key,
-		WGSLDescriptor: &wgpu.ShaderModuleWGSLDescriptor{
-			Code: s.source,
-		},
+		WGSL:  s.source,
 	}
 	s.entryPoint = parseEntryPoint(s.source, s.shaderType)
 	if s.shaderType == ShaderTypeVertex {
@@ -284,16 +283,16 @@ func (s *shader) parseSourceFromPath(path string) {
 	if s.shaderType == ShaderTypeCompute {
 		s.workGroupSize = parseWorkgroupSize(s.source)
 	}
-	var visibility wgpu.ShaderStage
+	var visibility gputypes.ShaderStage
 	switch s.shaderType {
 	case ShaderTypeVertex:
-		visibility = wgpu.ShaderStageVertex
+		visibility = gputypes.ShaderStageVertex
 	case ShaderTypeFragment:
-		visibility = wgpu.ShaderStageFragment
+		visibility = gputypes.ShaderStageFragment
 	case ShaderTypeCompute:
-		visibility = wgpu.ShaderStageCompute
+		visibility = gputypes.ShaderStageCompute
 	default:
-		visibility = wgpu.ShaderStageNone
+		visibility = gputypes.ShaderStageNone
 	}
 	s.bindGroupLayoutDescriptors, s.bindingVarNames = parseBindGroupLayouts(s.source, visibility)
 }

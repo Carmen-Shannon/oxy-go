@@ -1,7 +1,7 @@
 package light
 
 import (
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/gogpu/wgpu"
 )
 
 // gBufferHandlerImpl is the implementation of the GBufferHandler interface.

@@ -21,15 +21,6 @@ struct VertexOutput {
     @location(3) world_position: vec3<f32>,
 };
 
-// ── Per-instance data layout in flat vec4 storage ──────────────────
-// The compute shader writes each instance as a flat sequence of vec4<f32>:
-//   [model_matrix: 4 vec4] [bone_0: 4 vec4] [bone_1: 4 vec4] ... [bone_(MAX_BONES-1): 4 vec4]
-// Total per instance: (1 + MAX_BONES) × 4 vec4 = 260 vec4 = 4160 bytes.
-// We use a flat runtime-sized array of vec4 instead of a struct with a
-// fixed-size array because naga forbids dynamic indexing into fixed-size
-// arrays inside structs.
-const FLOATS_PER_INSTANCE: u32 = (1u + MAX_BONES) * 4u; // 260 vec4 per instance
-
 //@oxy:group 0 0 storage_uniform camera camera
 //@oxy:provider 1 0 animator
 @group(1) @binding(0) var<storage, read> instance_buffer: array<vec4<f32>>;
@@ -49,7 +40,8 @@ fn vs_main(
     vertex: VertexInput,
     @builtin(instance_index) instance_idx: u32,
 ) -> VertexOutput {
-    let base = instance_idx * FLOATS_PER_INSTANCE;
+    let floatsPerInstance = (1u + MAX_BONES) * 4u;
+    let base = instance_idx * floatsPerInstance;
 
     // Model matrix is the first 4 vec4 entries.
     let model_matrix = read_mat4(base);
@@ -60,17 +52,21 @@ fn vs_main(
 
     // Blend up to 4 bone influences into a single skinning matrix.
     // Bone weights are normalised by the importer so they sum to 1.0.
+    // Columns are read as raw vec4 from the buffer to avoid a naga SPIR-V codegen
+    // bug where mat4x4[i] column extraction in arithmetic produces incorrect SPIR-V.
     let indices = vertex.bone_indices;
     let weights = vertex.bone_weights;
 
-    var skin_matrix = mat4x4<f32>(
-        vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0)
-    );
+    let b0 = bone_base + indices.x * 4u;
+    let b1 = bone_base + indices.y * 4u;
+    let b2 = bone_base + indices.z * 4u;
+    let b3 = bone_base + indices.w * 4u;
 
-    skin_matrix += weights.x * read_mat4(bone_base + indices.x * 4u);
-    skin_matrix += weights.y * read_mat4(bone_base + indices.y * 4u);
-    skin_matrix += weights.z * read_mat4(bone_base + indices.z * 4u);
-    skin_matrix += weights.w * read_mat4(bone_base + indices.w * 4u);
+    let c0 = weights.x * instance_buffer[b0]      + weights.y * instance_buffer[b1]      + weights.z * instance_buffer[b2]      + weights.w * instance_buffer[b3];
+    let c1 = weights.x * instance_buffer[b0 + 1u] + weights.y * instance_buffer[b1 + 1u] + weights.z * instance_buffer[b2 + 1u] + weights.w * instance_buffer[b3 + 1u];
+    let c2 = weights.x * instance_buffer[b0 + 2u] + weights.y * instance_buffer[b1 + 2u] + weights.z * instance_buffer[b2 + 2u] + weights.w * instance_buffer[b3 + 2u];
+    let c3 = weights.x * instance_buffer[b0 + 3u] + weights.y * instance_buffer[b1 + 3u] + weights.z * instance_buffer[b2 + 3u] + weights.w * instance_buffer[b3 + 3u];
+    let skin_matrix = mat4x4<f32>(c0, c1, c2, c3);
 
     // Apply skinning then model transform
     let skinned_pos = skin_matrix * vec4<f32>(vertex.position, 1.0);

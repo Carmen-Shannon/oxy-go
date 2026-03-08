@@ -5,7 +5,7 @@ import (
 
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/gogpu/wgpu"
 )
 
 // simpleAnimatorBackendImpl is a concrete implementation of the simple animator backend.

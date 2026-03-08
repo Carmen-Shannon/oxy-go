@@ -1,6 +1,6 @@
 package bind_group_provider
 
-import "github.com/cogentcore/webgpu/wgpu"
+import "github.com/gogpu/wgpu"
 
 // BindGroupProviderOption is a functional option used to configure a BindGroupProvider during construction.
 type BindGroupProviderOption func(*bindGroupProvider)

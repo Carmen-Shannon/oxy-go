@@ -9,7 +9,8 @@ import (
 
 	"github.com/Carmen-Shannon/oxy-go/common"
 
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/gogpu/gputypes"
+	"github.com/gogpu/wgpu"
 )
 
 // gltfMaterialExtractorImpl is the implementation of the gltfMaterialExtractor interface.
@@ -292,12 +293,12 @@ func gltfDecodeDataURI(uri string) ([]byte, string, error) {
 //   - *common.SamplerStagingData: the converted sampler staging data
 func gltfSamplerToStagingData(s *gltfSampler) *common.SamplerStagingData {
 	result := &common.SamplerStagingData{
-		AddressModeU:  wgpu.AddressModeRepeat,
-		AddressModeV:  wgpu.AddressModeRepeat,
-		AddressModeW:  wgpu.AddressModeRepeat,
-		MagFilter:     wgpu.FilterModeLinear,
-		MinFilter:     wgpu.FilterModeLinear,
-		MipmapFilter:  wgpu.MipmapFilterModeLinear,
+		AddressModeU:  gputypes.AddressModeRepeat,
+		AddressModeV:  gputypes.AddressModeRepeat,
+		AddressModeW:  gputypes.AddressModeRepeat,
+		MagFilter:     gputypes.FilterModeLinear,
+		MinFilter:     gputypes.FilterModeLinear,
+		MipmapFilter:  wgpu.FilterMode(gputypes.MipmapFilterModeLinear),
 		LodMinClamp:   0,
 		LodMaxClamp:   32,
 		MaxAnisotropy: 1,
@@ -306,28 +307,27 @@ func gltfSamplerToStagingData(s *gltfSampler) *common.SamplerStagingData {
 	if s.MagFilter != nil {
 		switch *s.MagFilter {
 		case gltfFilterNearest:
-			result.MagFilter = wgpu.FilterModeNearest
+			result.MagFilter = gputypes.FilterModeNearest
 		case gltfFilterLinear:
-			result.MagFilter = wgpu.FilterModeLinear
+			result.MagFilter = gputypes.FilterModeLinear
 		}
 	}
 
 	if s.MinFilter != nil {
 		switch *s.MinFilter {
 		case gltfFilterNearest, gltfFilterNearestMipmapNearest, gltfFilterNearestMipmapLinear:
-			result.MinFilter = wgpu.FilterModeNearest
+			result.MinFilter = gputypes.FilterModeNearest
 		case gltfFilterLinear, gltfFilterLinearMipmapNearest, gltfFilterLinearMipmapLinear:
-			result.MinFilter = wgpu.FilterModeLinear
+			result.MinFilter = gputypes.FilterModeLinear
 		}
 		// Also set the mipmap filter based on the minification filter variant
 		switch *s.MinFilter {
 		case gltfFilterNearestMipmapNearest, gltfFilterLinearMipmapNearest:
-			result.MipmapFilter = wgpu.MipmapFilterModeNearest
+			result.MipmapFilter = wgpu.FilterMode(gputypes.MipmapFilterModeNearest)
 		case gltfFilterNearestMipmapLinear, gltfFilterLinearMipmapLinear:
-			result.MipmapFilter = wgpu.MipmapFilterModeLinear
+			result.MipmapFilter = wgpu.FilterMode(gputypes.MipmapFilterModeLinear)
 		case gltfFilterNearest, gltfFilterLinear:
-			// Non-mipmapped filters: set mipmap to nearest as a conservative default
-			result.MipmapFilter = wgpu.MipmapFilterModeNearest
+			result.MipmapFilter = wgpu.FilterMode(gputypes.MipmapFilterModeNearest)
 		}
 	}
 
@@ -351,12 +351,12 @@ func gltfSamplerToStagingData(s *gltfSampler) *common.SamplerStagingData {
 func gltfWrapToAddressMode(wrap int) wgpu.AddressMode {
 	switch wrap {
 	case gltfWrapClampToEdge:
-		return wgpu.AddressModeClampToEdge
+		return gputypes.AddressModeClampToEdge
 	case gltfWrapMirroredRepeat:
-		return wgpu.AddressModeMirrorRepeat
+		return gputypes.AddressModeMirrorRepeat
 	case gltfWrapRepeat:
-		return wgpu.AddressModeRepeat
+		return gputypes.AddressModeRepeat
 	default:
-		return wgpu.AddressModeRepeat
+		return gputypes.AddressModeRepeat
 	}
 }
