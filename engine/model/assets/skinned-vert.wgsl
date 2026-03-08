@@ -52,17 +52,21 @@ fn vs_main(
 
     // Blend up to 4 bone influences into a single skinning matrix.
     // Bone weights are normalised by the importer so they sum to 1.0.
+    // Columns are read as raw vec4 from the buffer to avoid a naga SPIR-V codegen
+    // bug where mat4x4[i] column extraction in arithmetic produces incorrect SPIR-V.
     let indices = vertex.bone_indices;
     let weights = vertex.bone_weights;
 
-    var skin_matrix = mat4x4<f32>(
-        vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0)
-    );
+    let b0 = bone_base + indices.x * 4u;
+    let b1 = bone_base + indices.y * 4u;
+    let b2 = bone_base + indices.z * 4u;
+    let b3 = bone_base + indices.w * 4u;
 
-    skin_matrix += weights.x * read_mat4(bone_base + indices.x * 4u);
-    skin_matrix += weights.y * read_mat4(bone_base + indices.y * 4u);
-    skin_matrix += weights.z * read_mat4(bone_base + indices.z * 4u);
-    skin_matrix += weights.w * read_mat4(bone_base + indices.w * 4u);
+    let c0 = weights.x * instance_buffer[b0]      + weights.y * instance_buffer[b1]      + weights.z * instance_buffer[b2]      + weights.w * instance_buffer[b3];
+    let c1 = weights.x * instance_buffer[b0 + 1u] + weights.y * instance_buffer[b1 + 1u] + weights.z * instance_buffer[b2 + 1u] + weights.w * instance_buffer[b3 + 1u];
+    let c2 = weights.x * instance_buffer[b0 + 2u] + weights.y * instance_buffer[b1 + 2u] + weights.z * instance_buffer[b2 + 2u] + weights.w * instance_buffer[b3 + 2u];
+    let c3 = weights.x * instance_buffer[b0 + 3u] + weights.y * instance_buffer[b1 + 3u] + weights.z * instance_buffer[b2 + 3u] + weights.w * instance_buffer[b3 + 3u];
+    let skin_matrix = mat4x4<f32>(c0, c1, c2, c3);
 
     // Apply skinning then model transform
     let skinned_pos = skin_matrix * vec4<f32>(vertex.position, 1.0);

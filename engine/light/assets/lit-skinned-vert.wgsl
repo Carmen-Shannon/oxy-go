@@ -44,27 +44,24 @@ fn vs_main(
 ) -> VertexOutput {
     let floatsPerInstance = (1u + MAX_BONES) * 4u;
     let base = instance_idx * floatsPerInstance;
-
-    // Model matrix is the first 4 vec4 entries.
     let model_matrix = read_mat4(base);
-
-    // Bone matrices start right after the model matrix.
-    // Each bone occupies 4 consecutive vec4 entries.
     let bone_base = base + 4u;
 
-    // Blend up to 4 bone influences into a single skinning matrix.
-    // Bone weights are normalised by the importer so they sum to 1.0.
     let indices = vertex.bone_indices;
     let weights = vertex.bone_weights;
 
-    var skin_matrix = mat4x4<f32>(
-        vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0)
-    );
+    // Compute vec4-offset for each bone: bone index * 4 vec4s per matrix.
+    let b0 = bone_base + indices.x * 4u;
+    let b1 = bone_base + indices.y * 4u;
+    let b2 = bone_base + indices.z * 4u;
+    let b3 = bone_base + indices.w * 4u;
 
-    skin_matrix += weights.x * read_mat4(bone_base + indices.x * 4u);
-    skin_matrix += weights.y * read_mat4(bone_base + indices.y * 4u);
-    skin_matrix += weights.z * read_mat4(bone_base + indices.z * 4u);
-    skin_matrix += weights.w * read_mat4(bone_base + indices.w * 4u);
+    // Accumulate skin_matrix column-by-column from raw vec4 buffer reads.
+    let c0 = weights.x * instance_buffer[b0]     + weights.y * instance_buffer[b1]     + weights.z * instance_buffer[b2]     + weights.w * instance_buffer[b3];
+    let c1 = weights.x * instance_buffer[b0 + 1u] + weights.y * instance_buffer[b1 + 1u] + weights.z * instance_buffer[b2 + 1u] + weights.w * instance_buffer[b3 + 1u];
+    let c2 = weights.x * instance_buffer[b0 + 2u] + weights.y * instance_buffer[b1 + 2u] + weights.z * instance_buffer[b2 + 2u] + weights.w * instance_buffer[b3 + 2u];
+    let c3 = weights.x * instance_buffer[b0 + 3u] + weights.y * instance_buffer[b1 + 3u] + weights.z * instance_buffer[b2 + 3u] + weights.w * instance_buffer[b3 + 3u];
+    var skin_matrix = mat4x4<f32>(c0, c1, c2, c3);
 
     // Apply skinning then model transform
     let skinned_pos = skin_matrix * vec4<f32>(vertex.position, 1.0);

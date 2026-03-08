@@ -294,23 +294,30 @@ fn compute_bone_world_matrices(clip_idx: u32, time: f32, instance_idx: u32, slot
 }
 
 fn blend_matrices(mat_a: mat4x4<f32>, mat_b: mat4x4<f32>, weight: f32) -> mat4x4<f32> {
-    let trans_a = mat_a[3].xyz;
-    let trans_b = mat_b[3].xyz;
-    let blended_trans = mix(trans_a, trans_b, weight);
-    let rot_a = mat3x3<f32>(normalize(mat_a[0].xyz), normalize(mat_a[1].xyz), normalize(mat_a[2].xyz));
-    let rot_b = mat3x3<f32>(normalize(mat_b[0].xyz), normalize(mat_b[1].xyz), normalize(mat_b[2].xyz));
-    let blended_rot = mat3x3<f32>(
-        normalize(mix(rot_a[0], rot_b[0], weight)),
-        normalize(mix(rot_a[1], rot_b[1], weight)),
-        normalize(mix(rot_a[2], rot_b[2], weight))
-    );
-    let scale_a = vec3<f32>(length(mat_a[0].xyz), length(mat_a[1].xyz), length(mat_a[2].xyz));
-    let scale_b = vec3<f32>(length(mat_b[0].xyz), length(mat_b[1].xyz), length(mat_b[2].xyz));
+    // Extract columns via mat*basis-vector to avoid naga SPIR-V codegen bug
+    // where mat4x4[i] column extraction in arithmetic produces incorrect SPIR-V.
+    let ax = (mat_a * vec4<f32>(1.0, 0.0, 0.0, 0.0)).xyz;
+    let ay = (mat_a * vec4<f32>(0.0, 1.0, 0.0, 0.0)).xyz;
+    let az = (mat_a * vec4<f32>(0.0, 0.0, 1.0, 0.0)).xyz;
+    let at = (mat_a * vec4<f32>(0.0, 0.0, 0.0, 1.0)).xyz;
+    let bx = (mat_b * vec4<f32>(1.0, 0.0, 0.0, 0.0)).xyz;
+    let by = (mat_b * vec4<f32>(0.0, 1.0, 0.0, 0.0)).xyz;
+    let bz = (mat_b * vec4<f32>(0.0, 0.0, 1.0, 0.0)).xyz;
+    let bt = (mat_b * vec4<f32>(0.0, 0.0, 0.0, 1.0)).xyz;
+
+    let blended_trans = mix(at, bt, weight);
+    let scale_a = vec3<f32>(length(ax), length(ay), length(az));
+    let scale_b = vec3<f32>(length(bx), length(by), length(bz));
     let blended_scale = mix(scale_a, scale_b, weight);
+
+    let r0 = normalize(mix(normalize(ax), normalize(bx), weight));
+    let r1 = normalize(mix(normalize(ay), normalize(by), weight));
+    let r2 = normalize(mix(normalize(az), normalize(bz), weight));
+
     return mat4x4<f32>(
-        vec4<f32>(blended_rot[0] * blended_scale.x, 0.0),
-        vec4<f32>(blended_rot[1] * blended_scale.y, 0.0),
-        vec4<f32>(blended_rot[2] * blended_scale.z, 0.0),
+        vec4<f32>(r0 * blended_scale.x, 0.0),
+        vec4<f32>(r1 * blended_scale.y, 0.0),
+        vec4<f32>(r2 * blended_scale.z, 0.0),
         vec4<f32>(blended_trans, 1.0)
     );
 }
@@ -327,15 +334,21 @@ fn is_visible(pos: vec3<f32>, radius: f32) -> bool {
 }
 
 // Writes a mat4x4 column-major into the flat output buffer at the given float offset.
+// Columns are extracted via mat*basis-vector to avoid a naga SPIR-V codegen bug
+// where mat4x4[i] column extraction on storage-loaded matrices produces incorrect SPIR-V.
 fn write_mat4(base: u32, m: mat4x4<f32>) {
-    output_transforms[base +  0u] = m[0].x; output_transforms[base +  1u] = m[0].y;
-    output_transforms[base +  2u] = m[0].z; output_transforms[base +  3u] = m[0].w;
-    output_transforms[base +  4u] = m[1].x; output_transforms[base +  5u] = m[1].y;
-    output_transforms[base +  6u] = m[1].z; output_transforms[base +  7u] = m[1].w;
-    output_transforms[base +  8u] = m[2].x; output_transforms[base +  9u] = m[2].y;
-    output_transforms[base + 10u] = m[2].z; output_transforms[base + 11u] = m[2].w;
-    output_transforms[base + 12u] = m[3].x; output_transforms[base + 13u] = m[3].y;
-    output_transforms[base + 14u] = m[3].z; output_transforms[base + 15u] = m[3].w;
+    let c0 = m * vec4<f32>(1.0, 0.0, 0.0, 0.0);
+    let c1 = m * vec4<f32>(0.0, 1.0, 0.0, 0.0);
+    let c2 = m * vec4<f32>(0.0, 0.0, 1.0, 0.0);
+    let c3 = m * vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    output_transforms[base +  0u] = c0.x; output_transforms[base +  1u] = c0.y;
+    output_transforms[base +  2u] = c0.z; output_transforms[base +  3u] = c0.w;
+    output_transforms[base +  4u] = c1.x; output_transforms[base +  5u] = c1.y;
+    output_transforms[base +  6u] = c1.z; output_transforms[base +  7u] = c1.w;
+    output_transforms[base +  8u] = c2.x; output_transforms[base +  9u] = c2.y;
+    output_transforms[base + 10u] = c2.z; output_transforms[base + 11u] = c2.w;
+    output_transforms[base + 12u] = c3.x; output_transforms[base + 13u] = c3.y;
+    output_transforms[base + 14u] = c3.z; output_transforms[base + 15u] = c3.w;
 }
 
 @compute @workgroup_size(64)
@@ -345,67 +358,43 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
-    let anim = instance_data[instance_idx];
+    let inst = instance_data[instance_idx];
 
-    // Compute primary animation bone matrices into scratch slot 0
-    compute_bone_world_matrices(anim.animation_index, anim.animation_time, instance_idx, 0u);
+    // Compute primary animation bone world matrices into scratch slot 0.
+    compute_bone_world_matrices(inst.animation_index, inst.animation_time, instance_idx, 0u);
 
-    // Check if we need to blend with secondary animation
-    let is_blending = anim.blend_weight > 0.0 && anim.blend_weight < 1.0;
-    if is_blending {
-        compute_bone_world_matrices(anim.secondary_anim_index, anim.secondary_anim_time, instance_idx, 1u);
+    // Compute secondary animation bone world matrices into scratch slot 1 if blending.
+    let blend = inst.blend_weight;
+    if blend > 0.0 {
+        compute_bone_world_matrices(inst.secondary_anim_index, inst.secondary_anim_time, instance_idx, 1u);
     }
 
-    // Read world position from the model matrix (column 3 = translation)
-    let model_matrix = model_data[instance_idx].model;
-    let world_pos = model_matrix[3].xyz;
-
-    // Frustum cull — derive per-instance scale from model matrix column
-    // lengths so that scaled instances are not incorrectly culled.
-    let sx = length(model_matrix[0].xyz);
-    let sy = length(model_matrix[1].xyz);
-    let sz = length(model_matrix[2].xyz);
-    let max_scale = max(sx, max(sy, sz));
-    if (!is_visible(world_pos, globals.bounding_radius * max_scale)) {
+    // Frustum cull against the instance's world position.
+    // Use mat*vec instead of model[3] column extraction to avoid naga SPIR-V codegen bug.
+    let model_pos = (model_data[instance_idx].model * vec4<f32>(0.0, 0.0, 0.0, 1.0)).xyz;
+    if !is_visible(model_pos, globals.bounding_radius) {
         return;
     }
 
-    // Visible — atomically claim an output slot
+    // Claim a compacted output slot for this visible instance.
     let out_slot = atomicAdd(&indirect_args.instance_count, 1u);
 
-    // Per-instance output stride in floats: (1 model matrix + MAX_BONES bone matrices) × 16 floats
     let stride = (1u + MAX_BONES) * 16u;
     let out_base = out_slot * stride;
 
-    // Write compacted model matrix first
-    write_mat4(out_base, model_matrix);
+    // Write the model matrix.
+    write_mat4(out_base, model_data[instance_idx].model);
 
-    // Write compacted bone skinning matrices (world × inverse_bind)
-    for (var bone_idx = 0u; bone_idx < globals.bone_count; bone_idx = bone_idx + 1u) {
-        var world_matrix: mat4x4<f32>;
-        if is_blending {
-            world_matrix = blend_matrices(
-                scratch_matrices[scratch_index(instance_idx, 0u, bone_idx)],
-                scratch_matrices[scratch_index(instance_idx, 1u, bone_idx)],
-                anim.blend_weight
-            );
+    // Write per-bone final skinning matrices: world_matrix * inverse_bind_matrix.
+    for (var b = 0u; b < globals.bone_count; b = b + 1u) {
+        let world0 = scratch_matrices[scratch_index(instance_idx, 0u, b)];
+        var final_mat: mat4x4<f32>;
+        if blend > 0.0 {
+            let world1 = scratch_matrices[scratch_index(instance_idx, 1u, b)];
+            final_mat = blend_matrices(world0, world1, blend) * bone_data[b].inverse_bind_matrix;
         } else {
-            world_matrix = scratch_matrices[scratch_index(instance_idx, 0u, bone_idx)];
+            final_mat = world0 * bone_data[b].inverse_bind_matrix;
         }
-        let final_matrix = world_matrix * bone_data[bone_idx].inverse_bind_matrix;
-        write_mat4(out_base + (1u + bone_idx) * 16u, final_matrix);
-    }
-
-    // Pad remaining bone slots with identity so the vertex shader stride is consistent
-    for (var b = globals.bone_count; b < MAX_BONES; b = b + 1u) {
-        let off = out_base + (1u + b) * 16u;
-        output_transforms[off +  0u] = 1.0; output_transforms[off +  1u] = 0.0;
-        output_transforms[off +  2u] = 0.0; output_transforms[off +  3u] = 0.0;
-        output_transforms[off +  4u] = 0.0; output_transforms[off +  5u] = 1.0;
-        output_transforms[off +  6u] = 0.0; output_transforms[off +  7u] = 0.0;
-        output_transforms[off +  8u] = 0.0; output_transforms[off +  9u] = 0.0;
-        output_transforms[off + 10u] = 1.0; output_transforms[off + 11u] = 0.0;
-        output_transforms[off + 12u] = 0.0; output_transforms[off + 13u] = 0.0;
-        output_transforms[off + 14u] = 0.0; output_transforms[off + 15u] = 1.0;
+        write_mat4(out_base + (1u + b) * 16u, final_mat);
     }
 }

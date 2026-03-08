@@ -50,13 +50,20 @@ fn vs_main(
     let bone_base = base + 4u;
 
     // Blend skinning: accumulate weighted bone transforms.
+    // Columns are read as raw vec4 from the buffer to avoid a naga SPIR-V codegen
+    // bug where mat4x4[i] column extraction in arithmetic produces incorrect SPIR-V.
     var skinned_pos = vec4<f32>(0.0);
+    let v = vec4<f32>(vertex.position, 1.0);
     for (var i = 0u; i < 4u; i = i + 1u) {
         let bone_idx = vertex.bone_indices[i];
         let weight = vertex.bone_weights[i];
         if weight > 0.0 {
-            let bone_matrix = read_mat4(bone_base + bone_idx * 4u);
-            skinned_pos += weight * (bone_matrix * vec4<f32>(vertex.position, 1.0));
+            let b = bone_base + bone_idx * 4u;
+            let transformed = instance_buffer[b] * v.x
+                            + instance_buffer[b + 1u] * v.y
+                            + instance_buffer[b + 2u] * v.z
+                            + instance_buffer[b + 3u] * v.w;
+            skinned_pos += weight * transformed;
         }
     }
 

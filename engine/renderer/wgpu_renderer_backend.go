@@ -774,7 +774,7 @@ func (b *wgpuRendererBackendImpl) ConfigureSurface(width, height int) {
 	defer b.mu.Unlock()
 
 	if b.surfaceFormat == nil {
-		format := wgpu.TextureFormatBGRA8Unorm
+		format := wgpu.TextureFormatBGRA8UnormSrgb
 		b.surfaceFormat = &format
 	}
 	if b.renderTargetFormat == nil {
@@ -835,7 +835,7 @@ func (b *wgpuRendererBackendImpl) ConfigureSurface(width, height int) {
 		MipLevelCount: 1,
 		SampleCount:   count,
 		Dimension:     gputypes.TextureDimension2D,
-		Format:        wgpu.TextureFormatDepth24Plus,
+		Format:        wgpu.TextureFormatDepth32Float,
 		Usage:         wgpu.TextureUsageRenderAttachment,
 	})
 	if err != nil {
@@ -1098,7 +1098,7 @@ func (b *wgpuRendererBackendImpl) RegisterRenderPipeline(p pipeline.Pipeline) er
 				}
 			}
 			return &wgpu.DepthStencilState{
-				Format:              wgpu.TextureFormatDepth24Plus,
+				Format:              wgpu.TextureFormatDepth32Float,
 				DepthWriteEnabled:   p.DepthWriteEnabled(),
 				DepthCompare:        depthCompare,
 				DepthBias:           p.DepthBias(),
@@ -2979,7 +2979,7 @@ func (b *wgpuRendererBackendImpl) CreateCompositionTextures(width, height int, s
 		MipLevelCount: 1,
 		SampleCount:   sampleCount,
 		Dimension:     gputypes.TextureDimension2D,
-		Format:        wgpu.TextureFormatDepth24Plus,
+		Format:        wgpu.TextureFormatDepth32Float,
 		Usage:         wgpu.TextureUsageRenderAttachment,
 	})
 	if err != nil {
