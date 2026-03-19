@@ -215,6 +215,5 @@ func NewModel(options ...ModelBuilderOption) Model {
 	for _, opt := range options {
 		opt(m)
 	}
-	m.Delegate = m
 	return m
 }

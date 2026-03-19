@@ -11,7 +11,6 @@ package loader
 import (
 	"fmt"
 
-	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
 )
 
@@ -27,8 +26,6 @@ const (
 // It abstracts the file format (glTF, GLB, etc.) behind a generic backend and
 // manages a cache of previously loaded models.
 type Loader interface {
-	common.Delegate[Loader]
-
 	// Load imports a model file and caches the result.
 	// If the model is already cached (by file path), the cached version is returned.
 	// The backend is selected based on the file extension (.gltf/.glb → glTF backend).

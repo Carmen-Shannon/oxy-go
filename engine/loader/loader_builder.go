@@ -45,6 +45,5 @@ func NewLoader(backendType LoaderBackendType, options ...LoaderBuilderOption) Lo
 	for _, option := range options {
 		option(l)
 	}
-	l.Delegate = l
 	return l
 }

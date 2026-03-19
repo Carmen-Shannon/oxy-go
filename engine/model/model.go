@@ -20,8 +20,6 @@ import (
 // skeleton hierarchy, animation clips, and material properties.
 // It is produced by the Loader after importing and processing a model file.
 type Model interface {
-	common.Delegate[Model]
-
 	// Name retrieves the model identifier.
 	//
 	// Returns:

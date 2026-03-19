@@ -8,8 +8,6 @@ import (
 
 // model is the implementation of the Model interface.
 type model struct {
-	common.DelegateImpl[Model]
-
 	name                  string
 	skinned               bool
 	skeleton              *Skeleton

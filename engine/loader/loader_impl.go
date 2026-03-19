@@ -14,8 +14,6 @@ import (
 
 // loader is the implementation of the Loader interface.
 type loader struct {
-	common.DelegateImpl[Loader]
-
 	mu sync.RWMutex
 
 	modelCache map[string]model.Model

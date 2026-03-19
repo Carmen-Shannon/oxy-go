@@ -37,7 +37,7 @@ func (g *GPUVertex) Size() int {
 // Returns:
 //   - []byte: 64-byte buffer ready for GPU upload.
 func (g *GPUVertex) Marshal() []byte {
-	buf := make([]byte, 64)
+	buf := make([]byte, g.Size())
 	binary.LittleEndian.PutUint32(buf[0:4], math.Float32bits(g.Position[0]))
 	binary.LittleEndian.PutUint32(buf[4:8], math.Float32bits(g.Position[1]))
 	binary.LittleEndian.PutUint32(buf[8:12], math.Float32bits(g.Position[2]))
@@ -86,7 +86,7 @@ func (g *GPUSkinnedVertex) Size() int {
 // Returns:
 //   - []byte: 96-byte buffer ready for GPU upload.
 func (g *GPUSkinnedVertex) Marshal() []byte {
-	buf := make([]byte, 96)
+	buf := make([]byte, g.Size())
 	// Base vertex fields (64 bytes)
 	binary.LittleEndian.PutUint32(buf[0:4], math.Float32bits(g.Position[0]))
 	binary.LittleEndian.PutUint32(buf[4:8], math.Float32bits(g.Position[1]))
@@ -163,7 +163,7 @@ func (g *GPUModelData) Size() int {
 // Returns:
 //   - []byte: 64-byte buffer ready for GPU upload.
 func (g *GPUModelData) Marshal() []byte {
-	buf := make([]byte, 64)
+	buf := make([]byte, g.Size())
 	for i := range 16 {
 		binary.LittleEndian.PutUint32(buf[i*4:(i+1)*4], math.Float32bits(g.Model[i]))
 	}
