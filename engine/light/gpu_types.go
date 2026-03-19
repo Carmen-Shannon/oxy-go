@@ -44,7 +44,7 @@ func (g *GPULight) Size() int {
 // Returns:
 //   - []byte: 64-byte buffer ready for GPU upload
 func (g *GPULight) Marshal() []byte {
-	buf := make([]byte, 64)
+	buf := make([]byte, g.Size())
 	binary.LittleEndian.PutUint32(buf[0:4], math.Float32bits(g.Position[0]))
 	binary.LittleEndian.PutUint32(buf[4:8], math.Float32bits(g.Position[1]))
 	binary.LittleEndian.PutUint32(buf[8:12], math.Float32bits(g.Position[2]))
@@ -93,7 +93,7 @@ func (h *GPULightHeader) Size() int {
 // Returns:
 //   - []byte: 16-byte buffer ready for GPU upload
 func (h *GPULightHeader) Marshal() []byte {
-	buf := make([]byte, 16)
+	buf := make([]byte, h.Size())
 	binary.LittleEndian.PutUint32(buf[0:4], math.Float32bits(h.AmbientColor[0]))
 	binary.LittleEndian.PutUint32(buf[4:8], math.Float32bits(h.AmbientColor[1]))
 	binary.LittleEndian.PutUint32(buf[8:12], math.Float32bits(h.AmbientColor[2]))
@@ -133,7 +133,7 @@ func (u *GPUShadowUniform) Size() int {
 // Returns:
 //   - []byte: 64-byte buffer ready for GPU upload
 func (u *GPUShadowUniform) Marshal() []byte {
-	buf := make([]byte, 64)
+	buf := make([]byte, u.Size())
 	for i := 0; i < 16; i++ {
 		binary.LittleEndian.PutUint32(buf[i*4:(i+1)*4], math.Float32bits(u.LightVP[i]))
 	}
@@ -169,7 +169,7 @@ func (c *GPUCSMCascade) Size() int {
 
 // Marshal serialises GPUCSMCascade into an 80-byte little-endian buffer.
 func (c *GPUCSMCascade) Marshal() []byte {
-	buf := make([]byte, 80)
+	buf := make([]byte, c.Size())
 	off := 0
 	for i := 0; i < 16; i++ {
 		binary.LittleEndian.PutUint32(buf[off:off+4], math.Float32bits(c.LightVP[i]))
@@ -476,7 +476,7 @@ func (g *GPULightShadowEntry) Size() int {
 // Returns:
 //   - []byte: 96-byte buffer ready for GPU upload
 func (g *GPULightShadowEntry) Marshal() []byte {
-	buf := make([]byte, 96)
+	buf := make([]byte, g.Size())
 	for i := 0; i < 16; i++ {
 		binary.LittleEndian.PutUint32(buf[i*4:(i+1)*4], math.Float32bits(g.LightVP[i]))
 	}
@@ -533,7 +533,7 @@ func (p *GPUBlurParams) Size() int {
 // Returns:
 //   - []byte: 24-byte buffer ready for GPU upload
 func (p *GPUBlurParams) Marshal() []byte {
-	buf := make([]byte, 24)
+	buf := make([]byte, p.Size())
 	binary.LittleEndian.PutUint32(buf[0:4], uint32(p.Direction[0]))
 	binary.LittleEndian.PutUint32(buf[4:8], uint32(p.Direction[1]))
 	binary.LittleEndian.PutUint32(buf[8:12], uint32(p.Radius))
@@ -595,7 +595,7 @@ func (u *GPULightCullUniforms) Size() int {
 // Returns:
 //   - []byte: 160-byte buffer ready for GPU upload
 func (u *GPULightCullUniforms) Marshal() []byte {
-	buf := make([]byte, 160)
+	buf := make([]byte, u.Size())
 	off := 0
 
 	// inv_proj (64 bytes)
@@ -671,7 +671,7 @@ func (u *GPUTileUniforms) Size() int {
 // Returns:
 //   - []byte: 16-byte buffer ready for GPU upload
 func (u *GPUTileUniforms) Marshal() []byte {
-	buf := make([]byte, 16)
+	buf := make([]byte, u.Size())
 	binary.LittleEndian.PutUint32(buf[0:4], u.TileCountX)
 	binary.LittleEndian.PutUint32(buf[4:8], u.MaxLightsPerTile)
 	binary.LittleEndian.PutUint32(buf[8:12], u.ScreenWidth)
@@ -710,7 +710,7 @@ func (g *GPUGBufferOutput) Size() int {
 // Returns:
 //   - []byte: 48-byte buffer matching the GPU layout
 func (g *GPUGBufferOutput) Marshal() []byte {
-	buf := make([]byte, 48)
+	buf := make([]byte, g.Size())
 	binary.LittleEndian.PutUint32(buf[0:4], math.Float32bits(g.Position[0]))
 	binary.LittleEndian.PutUint32(buf[4:8], math.Float32bits(g.Position[1]))
 	binary.LittleEndian.PutUint32(buf[8:12], math.Float32bits(g.Position[2]))
@@ -782,7 +782,7 @@ func (p *GPUSSAOParams) Size() int {
 // Returns:
 //   - []byte: 176-byte buffer ready for GPU upload
 func (p *GPUSSAOParams) Marshal() []byte {
-	buf := make([]byte, 176)
+	buf := make([]byte, p.Size())
 	off := 0
 	for i := 0; i < 16; i++ {
 		binary.LittleEndian.PutUint32(buf[off:off+4], math.Float32bits(p.Projection[i]))
@@ -979,7 +979,7 @@ func (p *GPUSSRParams) Size() int {
 // Returns:
 //   - []byte: 224-byte buffer ready for GPU upload
 func (p *GPUSSRParams) Marshal() []byte {
-	buf := make([]byte, 224)
+	buf := make([]byte, p.Size())
 	off := 0
 	for i := 0; i < 16; i++ {
 		binary.LittleEndian.PutUint32(buf[off:off+4], math.Float32bits(p.Projection[i]))
@@ -1063,7 +1063,7 @@ func (p *GPUContactShadowParams) Size() int {
 // Returns:
 //   - []byte: 176-byte buffer ready for GPU upload
 func (p *GPUContactShadowParams) Marshal() []byte {
-	buf := make([]byte, 176)
+	buf := make([]byte, p.Size())
 	off := 0
 	for i := 0; i < 16; i++ {
 		binary.LittleEndian.PutUint32(buf[off:off+4], math.Float32bits(p.ViewProj[i]))

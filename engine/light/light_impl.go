@@ -2,14 +2,10 @@ package light
 
 import (
 	"math"
-
-	"github.com/Carmen-Shannon/oxy-go/common"
 )
 
-// lightImpl is the implementation of the Light interface.
-type lightImpl struct {
-	common.DelegateImpl[Light]
-
+// light is the implementation of the Light interface.
+type light struct {
 	lightType    LightType
 	position     [3]float32
 	direction    [3]float32

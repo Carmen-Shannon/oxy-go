@@ -167,6 +167,5 @@ func NewGameObject(options ...GameObjectBuilderOption) GameObject {
 	for _, option := range options {
 		option(obj)
 	}
-	obj.Delegate = obj
 	return obj
 }

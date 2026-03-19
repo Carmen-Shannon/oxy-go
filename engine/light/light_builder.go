@@ -1,7 +1,7 @@
 package light
 
 // LightBuilderOption is a function that configures a Light instance during construction.
-type LightBuilderOption func(*lightImpl)
+type LightBuilderOption func(*light)
 
 // WithPosition is an option builder that sets the world-space position of the light.
 //
@@ -13,7 +13,7 @@ type LightBuilderOption func(*lightImpl)
 // Returns:
 //   - LightBuilderOption: a function that applies the position option to a lightImpl
 func WithPosition(x, y, z float32) LightBuilderOption {
-	return func(l *lightImpl) {
+	return func(l *light) {
 		l.position = [3]float32{x, y, z}
 	}
 }
@@ -29,7 +29,7 @@ func WithPosition(x, y, z float32) LightBuilderOption {
 // Returns:
 //   - LightBuilderOption: a function that applies the direction option to a lightImpl
 func WithDirection(x, y, z float32) LightBuilderOption {
-	return func(l *lightImpl) {
+	return func(l *light) {
 		l.direction = normalize3(x, y, z)
 	}
 }
@@ -44,7 +44,7 @@ func WithDirection(x, y, z float32) LightBuilderOption {
 // Returns:
 //   - LightBuilderOption: a function that applies the color option to a lightImpl
 func WithColor(r, g, b float32) LightBuilderOption {
-	return func(l *lightImpl) {
+	return func(l *light) {
 		l.color = [3]float32{r, g, b}
 	}
 }
@@ -57,7 +57,7 @@ func WithColor(r, g, b float32) LightBuilderOption {
 // Returns:
 //   - LightBuilderOption: a function that applies the intensity option to a lightImpl
 func WithIntensity(intensity float32) LightBuilderOption {
-	return func(l *lightImpl) {
+	return func(l *light) {
 		l.intensity = intensity
 	}
 }
@@ -71,7 +71,7 @@ func WithIntensity(intensity float32) LightBuilderOption {
 // Returns:
 //   - LightBuilderOption: a function that applies the range option to a lightImpl
 func WithRange(lightRange float32) LightBuilderOption {
-	return func(l *lightImpl) {
+	return func(l *light) {
 		l.lightRange = lightRange
 	}
 }
@@ -87,7 +87,7 @@ func WithRange(lightRange float32) LightBuilderOption {
 // Returns:
 //   - LightBuilderOption: a function that applies the spot cone option to a lightImpl
 func WithSpotCone(innerDeg, outerDeg float32) LightBuilderOption {
-	return func(l *lightImpl) {
+	return func(l *light) {
 		l.innerCone = cosDeg(innerDeg)
 		l.outerCone = cosDeg(outerDeg)
 	}
@@ -101,7 +101,7 @@ func WithSpotCone(innerDeg, outerDeg float32) LightBuilderOption {
 // Returns:
 //   - LightBuilderOption: a function that applies the enabled option to a lightImpl
 func WithEnabled(enabled bool) LightBuilderOption {
-	return func(l *lightImpl) {
+	return func(l *light) {
 		l.enabled = enabled
 	}
 }
@@ -115,7 +115,7 @@ func WithEnabled(enabled bool) LightBuilderOption {
 // Returns:
 //   - LightBuilderOption: a function that applies the ephemeral option to a lightImpl
 func WithEphemeral(ephemeral bool) LightBuilderOption {
-	return func(l *lightImpl) {
+	return func(l *light) {
 		l.ephemeral = ephemeral
 	}
 }
@@ -129,7 +129,7 @@ func WithEphemeral(ephemeral bool) LightBuilderOption {
 // Returns:
 //   - LightBuilderOption: a function that applies the shadow casting option to a lightImpl
 func WithCastsShadows(castsShadows bool) LightBuilderOption {
-	return func(l *lightImpl) {
+	return func(l *light) {
 		l.castsShadows = castsShadows
 	}
 }
@@ -143,7 +143,7 @@ func WithCastsShadows(castsShadows bool) LightBuilderOption {
 // Returns:
 //   - LightBuilderOption: a function that applies the shadow bias option to a lightImpl
 func WithShadowBias(bias float32) LightBuilderOption {
-	return func(l *lightImpl) {
+	return func(l *light) {
 		l.shadowBias = bias
 	}
 }
@@ -158,7 +158,7 @@ func WithShadowBias(bias float32) LightBuilderOption {
 // Returns:
 //   - Light: a new Light instance
 func NewLight(lightType LightType, opts ...LightBuilderOption) Light {
-	l := &lightImpl{
+	l := &light{
 		lightType:    lightType,
 		position:     [3]float32{0, 0, 0},
 		direction:    [3]float32{0, -1, 0},
@@ -174,6 +174,5 @@ func NewLight(lightType LightType, opts ...LightBuilderOption) Light {
 	for _, opt := range opts {
 		opt(l)
 	}
-	l.Delegate = l
 	return l
 }

@@ -8,8 +8,6 @@
 // alongside these interfaces.
 package light
 
-import "github.com/Carmen-Shannon/oxy-go/common"
-
 // LightType identifies the kind of light source.
 type LightType int
 
@@ -40,8 +38,6 @@ const (
 // Lights are managed by the scene and marshaled into a GPU storage buffer
 // each frame via the gpu_types helpers.
 type Light interface {
-	common.Delegate[Light]
-
 	// Type returns the kind of light source.
 	//
 	// Returns:
@@ -191,31 +187,31 @@ type Light interface {
 	SetShadowBias(bias float32)
 }
 
-var _ Light = &lightImpl{}
+var _ Light = &light{}
 
-func (l *lightImpl) Type() LightType                   { return l.lightType }
-func (l *lightImpl) Position() [3]float32              { return l.position }
-func (l *lightImpl) Direction() [3]float32             { return l.direction }
-func (l *lightImpl) Color() [3]float32                 { return l.color }
-func (l *lightImpl) Intensity() float32                { return l.intensity }
-func (l *lightImpl) Range() float32                    { return l.lightRange }
-func (l *lightImpl) InnerCone() float32                { return l.innerCone }
-func (l *lightImpl) OuterCone() float32                { return l.outerCone }
-func (l *lightImpl) Enabled() bool                     { return l.enabled }
-func (l *lightImpl) Ephemeral() bool                   { return l.ephemeral }
-func (l *lightImpl) CastsShadows() bool                { return l.castsShadows }
-func (l *lightImpl) SetPosition(x, y, z float32)       { l.position = [3]float32{x, y, z} }
-func (l *lightImpl) SetDirection(x, y, z float32)      { l.direction = normalize3(x, y, z) }
-func (l *lightImpl) SetColor(r, g, b float32)          { l.color = [3]float32{r, g, b} }
-func (l *lightImpl) SetIntensity(intensity float32)    { l.intensity = intensity }
-func (l *lightImpl) SetRange(lightRange float32)       { l.lightRange = lightRange }
-func (l *lightImpl) SetEnabled(enabled bool)           { l.enabled = enabled }
-func (l *lightImpl) SetEphemeral(ephemeral bool)       { l.ephemeral = ephemeral }
-func (l *lightImpl) SetCastsShadows(castsShadows bool) { l.castsShadows = castsShadows }
-func (l *lightImpl) ShadowBias() float32               { return l.shadowBias }
-func (l *lightImpl) SetShadowBias(bias float32)        { l.shadowBias = bias }
+func (l *light) Type() LightType                   { return l.lightType }
+func (l *light) Position() [3]float32              { return l.position }
+func (l *light) Direction() [3]float32             { return l.direction }
+func (l *light) Color() [3]float32                 { return l.color }
+func (l *light) Intensity() float32                { return l.intensity }
+func (l *light) Range() float32                    { return l.lightRange }
+func (l *light) InnerCone() float32                { return l.innerCone }
+func (l *light) OuterCone() float32                { return l.outerCone }
+func (l *light) Enabled() bool                     { return l.enabled }
+func (l *light) Ephemeral() bool                   { return l.ephemeral }
+func (l *light) CastsShadows() bool                { return l.castsShadows }
+func (l *light) SetPosition(x, y, z float32)       { l.position = [3]float32{x, y, z} }
+func (l *light) SetDirection(x, y, z float32)      { l.direction = normalize3(x, y, z) }
+func (l *light) SetColor(r, g, b float32)          { l.color = [3]float32{r, g, b} }
+func (l *light) SetIntensity(intensity float32)    { l.intensity = intensity }
+func (l *light) SetRange(lightRange float32)       { l.lightRange = lightRange }
+func (l *light) SetEnabled(enabled bool)           { l.enabled = enabled }
+func (l *light) SetEphemeral(ephemeral bool)       { l.ephemeral = ephemeral }
+func (l *light) SetCastsShadows(castsShadows bool) { l.castsShadows = castsShadows }
+func (l *light) ShadowBias() float32               { return l.shadowBias }
+func (l *light) SetShadowBias(bias float32)        { l.shadowBias = bias }
 
-func (l *lightImpl) SetSpotCone(innerDeg, outerDeg float32) {
+func (l *light) SetSpotCone(innerDeg, outerDeg float32) {
 	l.innerCone = cosDeg(innerDeg)
 	l.outerCone = cosDeg(outerDeg)
 }

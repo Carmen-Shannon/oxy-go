@@ -3,7 +3,6 @@ package game_object
 import (
 	"sync/atomic"
 
-	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/light"
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
 	"github.com/Carmen-Shannon/oxy-go/engine/physics"
@@ -11,8 +10,6 @@ import (
 )
 
 type gameObject struct {
-	common.DelegateImpl[GameObject]
-
 	id                 uint64
 	enabled            atomic.Bool
 	ephemeral          bool

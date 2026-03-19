@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/Carmen-Shannon/oxy-go/engine/game_object"
-	game_object_mocks "github.com/Carmen-Shannon/oxy-go/engine/game_object/mocks"
 	light_mocks "github.com/Carmen-Shannon/oxy-go/engine/light/mocks"
 	model_mocks "github.com/Carmen-Shannon/oxy-go/engine/model/mocks"
 	physics_mocks "github.com/Carmen-Shannon/oxy-go/engine/physics/mocks"
@@ -145,13 +144,6 @@ func (suite *gameObjectTest) TestSetRigidBody() {
 	suite.Run("should update the attached rigid body", func() {
 		suite.obj.SetRigidBody(suite.rigidBodyMock)
 		suite.Equal(suite.rigidBodyMock, suite.obj.RigidBody())
-	})
-}
-
-func (suite *gameObjectTest) TestSetDelegate() {
-	suite.Run("should update the delegate", func() {
-		mockObj := game_object_mocks.NewMockGameObject(suite.T())
-		suite.obj.SetDelegate(mockObj)
 	})
 }
 

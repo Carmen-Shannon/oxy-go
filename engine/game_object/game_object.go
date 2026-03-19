@@ -8,7 +8,6 @@
 package game_object
 
 import (
-	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/light"
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
 	"github.com/Carmen-Shannon/oxy-go/engine/physics"
@@ -19,8 +18,6 @@ import (
 // Position, rotation, and scale are derived from the Animator's internal arrays
 // via the animatorInstanceID, eliminating per-object data duplication.
 type GameObject interface {
-	common.Delegate[GameObject]
-
 	// ID returns the object's unique identifier.
 	//
 	// Returns:
