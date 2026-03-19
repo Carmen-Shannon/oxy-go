@@ -1,7 +1,9 @@
 # Coverage Badge Workflow
 #
 # Runs all tests with coverage for the common and engine packages (and all
-# sub-packages), then uploads the report to Codecov for badge and PR comments.
+# sub-packages) on Linux, macOS, and Windows to confirm the library compiles
+# and tests pass on all three major operating systems. Coverage is uploaded to
+# Codecov from the Linux runner only.
 
 name: Coverage
 
@@ -16,7 +18,11 @@ permissions:
 
 jobs:
   coverage:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,6 +35,14 @@ jobs:
       - name: Install Go dependencies
         run: go mod download
 
+      - name: Install system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            xorg-dev \
+            libgl1-mesa-dev
+
       - name: Install mockery
         run: go install github.com/vektra/mockery/v2@v2.53.5
 
@@ -36,12 +50,14 @@ jobs:
         run: mockery
 
       - name: Run tests with coverage
+        shell: bash
         run: |
           PKGS=$(go list ./common/... ./engine/... | grep -v '/mocks$' | paste -sd,)
           TESTS=$(go list ./common/... ./engine/... | grep -v '/mocks$')
           go test -count=1 -coverprofile=coverage.out -coverpkg="${PKGS}" ${TESTS}
 
       - name: Upload coverage reports to Codecov
+        if: runner.os == 'Linux'
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
