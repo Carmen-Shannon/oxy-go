@@ -1,38 +1,18 @@
+// Package camera provides the [Camera] and [CameraController] interfaces for
+// managing perspective projection and input-driven camera movement.
+//
+// A [Camera] holds perspective settings (field of view, aspect ratio, near/far
+// planes) and recomputes view and projection matrices each frame by reading
+// position and target from its attached [CameraController]. The controller
+// manages spatial state and supports multiple input modes such as orbit and
+// planar movement. Instances are created via [NewCamera] and
+// [NewCameraController] using functional options.
 package camera
 
 import (
-	"math"
-	"strconv"
-	"sync"
-	"sync/atomic"
-
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 )
-
-// cameraCount is an atomic counter used to generate unique bind group provider names for each camera instance.
-var cameraCount atomic.Uint64
-
-type cameraImpl struct {
-	common.DelegateImpl[Camera]
-
-	mu *sync.Mutex
-
-	up [3]float32
-
-	fov    float32
-	aspect float32
-	near   float32
-	far    float32
-
-	viewMatrix              [16]float32
-	projectionMatrix        [16]float32
-	viewProjectionMatrix    [16]float32
-	inverseProjectionMatrix [16]float32
-
-	controller        CameraController
-	bindGroupProvider bind_group_provider.BindGroupProvider
-}
 
 // Camera defines the interface for the camera system.
 // The camera holds perspective settings and computes view/projection matrices
@@ -158,139 +138,104 @@ type Camera interface {
 	SetBindGroupProvider(provider bind_group_provider.BindGroupProvider)
 }
 
-var _ Camera = &cameraImpl{}
+var _ Camera = &camera{}
 
-// NewCamera creates a new Camera with default perspective settings.
-// A controller must be attached via SetController or WithController option
-// before position/target data is available.
-//
-// Parameters:
-//   - options: functional options to configure the camera
-//
-// Returns:
-//   - Camera: the newly created camera
-func NewCamera(options ...CameraBuilderOption) Camera {
-	c := &cameraImpl{
-		mu:                   &sync.Mutex{},
-		up:                   [3]float32{0, 1, 0},
-		fov:                  45.0 * (math.Pi / 180.0), // radians
-		aspect:               1.0,
-		near:                 0.1,
-		far:                  100.0,
-		viewMatrix:           [16]float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1},
-		projectionMatrix:     [16]float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1},
-		viewProjectionMatrix: [16]float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1},
-		bindGroupProvider: bind_group_provider.NewBindGroupProvider(
-			"camera_" + strconv.FormatUint(cameraCount.Load(), 10),
-		),
-	}
-	for _, option := range options {
-		option(c)
-	}
-	if c.controller != nil {
-		c.updateMatrices()
-	}
-	cameraCount.Add(1)
-	c.Delegate = c
-	return c
-}
-
-func (c *cameraImpl) Up() (x, y, z float32) {
+func (c *camera) Up() (x, y, z float32) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.up[0], c.up[1], c.up[2]
 }
 
-func (c *cameraImpl) Fov() float32 {
+func (c *camera) Fov() float32 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.fov
 }
 
-func (c *cameraImpl) Aspect() float32 {
+func (c *camera) Aspect() float32 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.aspect
 }
 
-func (c *cameraImpl) Near() float32 {
+func (c *camera) Near() float32 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.near
 }
 
-func (c *cameraImpl) Far() float32 {
+func (c *camera) Far() float32 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.far
 }
 
-func (c *cameraImpl) ViewMatrix() [16]float32 {
+func (c *camera) ViewMatrix() [16]float32 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.viewMatrix
 }
 
-func (c *cameraImpl) ProjectionMatrix() [16]float32 {
+func (c *camera) ProjectionMatrix() [16]float32 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.projectionMatrix
 }
 
-func (c *cameraImpl) ViewProjectionMatrix() [16]float32 {
+func (c *camera) ViewProjectionMatrix() [16]float32 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.viewProjectionMatrix
 }
 
-func (c *cameraImpl) InverseProjectionMatrix() [16]float32 {
+func (c *camera) InverseProjectionMatrix() [16]float32 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.inverseProjectionMatrix
 }
 
-func (c *cameraImpl) SetUp(x, y, z float32) {
+func (c *camera) SetUp(x, y, z float32) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.up = [3]float32{x, y, z}
 	c.updateMatrices()
 }
 
-func (c *cameraImpl) SetFov(fov float32) {
+func (c *camera) SetFov(fov float32) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.fov = fov
 	c.updateMatrices()
 }
 
-func (c *cameraImpl) SetAspect(aspect float32) {
+func (c *camera) SetAspect(aspect float32) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.aspect = aspect
 	c.updateMatrices()
 }
 
-func (c *cameraImpl) SetNear(near float32) {
+func (c *camera) SetNear(near float32) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.near = near
 	c.updateMatrices()
 }
 
-func (c *cameraImpl) SetFar(far float32) {
+func (c *camera) SetFar(far float32) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.far = far
 	c.updateMatrices()
 }
 
-func (c *cameraImpl) Controller() CameraController {
+func (c *camera) Controller() CameraController {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.controller
 }
 
-func (c *cameraImpl) Update() {
+func (c *camera) Update() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.controller == nil {
@@ -299,45 +244,20 @@ func (c *cameraImpl) Update() {
 	c.updateMatrices()
 }
 
-func (c *cameraImpl) SetController(ctrl CameraController) {
+func (c *camera) SetController(ctrl CameraController) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.controller = ctrl
 }
 
-func (c *cameraImpl) BindGroupProvider() bind_group_provider.BindGroupProvider {
+func (c *camera) BindGroupProvider() bind_group_provider.BindGroupProvider {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.bindGroupProvider
 }
 
-func (c *cameraImpl) SetBindGroupProvider(provider bind_group_provider.BindGroupProvider) {
+func (c *camera) SetBindGroupProvider(provider bind_group_provider.BindGroupProvider) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.bindGroupProvider = provider
-}
-
-// updateMatrices recalculates the view, projection, view-projection, and inverse projection matrices.
-// It reads position and target from the attached controller. This is a no-op when the controller is nil.
-// Caller must hold the mutex.
-func (c *cameraImpl) updateMatrices() {
-	if c.controller == nil {
-		return
-	}
-
-	px, py, pz := c.controller.Position()
-	tx, ty, tz := c.controller.Target()
-
-	common.LookAt(c.viewMatrix[:],
-		px, py, pz,
-		tx, ty, tz,
-		c.up[0], c.up[1], c.up[2],
-	)
-
-	common.Perspective(c.projectionMatrix[:],
-		c.fov, c.aspect, c.near, c.far,
-	)
-
-	common.Mul4(c.viewProjectionMatrix[:], c.projectionMatrix[:], c.viewMatrix[:])
-	common.Invert4(c.inverseProjectionMatrix[:], c.projectionMatrix[:])
 }

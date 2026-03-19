@@ -146,3 +146,40 @@ func WithParticleRadius(radius float32) RigidBodyOption {
 		r.particleRadius = radius
 	}
 }
+
+// NewRigidBody creates a new RigidBody with default physical properties. Defaults are:
+// mass=1, bounce=0.5, friction=0.5, surfaceOnly=true. If mass is zero and the body
+// is not kinematic it is automatically marked static. The inverse inertia tensor is
+// computed from the particle layout when particles are provided.
+//
+// Parameters:
+//   - options: variadic list of RigidBodyOption functions to configure the rigid body
+//
+// Returns:
+//   - RigidBody: a new RigidBody instance
+func NewRigidBody(options ...RigidBodyOption) RigidBody {
+	r := &rigidBody{
+		surfaceOnly: true,
+		mass:        1.0,
+		bounce:      0.5,
+		friction:    0.5,
+	}
+	for _, option := range options {
+		option(r)
+	}
+
+	if r.inverseMass == 0 && r.mass > 0 {
+		r.inverseMass = 1.0 / r.mass
+	}
+
+	if r.mass == 0 && !r.kinematic {
+		r.static = true
+	}
+
+	if len(r.particles) > 0 {
+		r.computeInverseInertiaTensor()
+	}
+
+	r.Delegate = r
+	return r
+}

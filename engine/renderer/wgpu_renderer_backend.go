@@ -66,13 +66,6 @@ type wgpuRendererBackendImpl struct {
 	gbufferFrameEncoder *wgpu.CommandEncoder
 	gbufferPass         *wgpu.RenderPassEncoder
 
-	// Probe bake pass state for rendering cubemap faces from each irradiance
-	// probe position. Each face produces an RGBA8Unorm color attachment at the
-	// bake resolution, which is later projected into SH coefficients by a
-	// compute shader.
-	probeBakeFrameEncoder *wgpu.CommandEncoder
-	probeBakePass         *wgpu.RenderPassEncoder
-
 	// Composition pass state for the fullscreen tone mapping / compositing pass
 	// that reads the HDR lit texture and optional SSR texture, then renders the
 	// final LDR result to the swapchain.
@@ -80,6 +73,10 @@ type wgpuRendererBackendImpl struct {
 	compositionPass         *wgpu.RenderPassEncoder
 	compositionSurface      *wgpu.Texture
 	compositionView         *wgpu.TextureView
+
+	pendingCommandBuffers []*wgpu.CommandBuffer
+
+	maxTextureDimension2D uint32
 }
 
 type wgpuRendererBackend interface {
@@ -340,70 +337,58 @@ type wgpuRendererBackend interface {
 	// When a geometry frame is active, this is a no-op (the geometry frame handles submission).
 	EndShadowFrame()
 
-	// CreateVSMTextures creates the GPU textures required for variance shadow mapping:
-	// an RG32Float color texture for depth moments, a Depth32Float auxiliary depth texture
-	// for hardware z-testing, and an RG32Float scratch texture for the intermediate blur result.
+	// CreateShadowDepthTexture creates a Depth32Float shadow atlas texture and its
+	// texture view for depth-only shadow rendering. No color attachment or scratch
+	// texture is needed — PCF samples directly from the depth map.
 	//
 	// Parameters:
-	//   - width: shadow map width in texels
-	//   - height: shadow map height in texels
+	//   - width: atlas width in texels (cascadeCount × resolution)
+	//   - height: atlas height in texels (resolution)
 	//
 	// Returns:
-	//   - vsmView: texture view for the VSM moments texture
-	//   - vsmTex: the underlying VSM moments texture
-	//   - scratchView: texture view for the scratch blur texture
-	//   - scratchTex: the underlying scratch blur texture
-	//   - depthView: texture view for the auxiliary depth texture
-	//   - depthTex: the underlying auxiliary depth texture
-	//   - err: an error if texture creation fails
-	CreateVSMTextures(width, height int) (vsmView *wgpu.TextureView, vsmTex *wgpu.Texture, scratchView *wgpu.TextureView, scratchTex *wgpu.Texture, depthView *wgpu.TextureView, depthTex *wgpu.Texture, err error)
+	//   - depthView: texture view for the shadow depth atlas
+	//   - depthTex: the underlying depth atlas texture
+	//   - err: an error if creation fails
+	CreateShadowDepthTexture(width, height int) (depthView *wgpu.TextureView, depthTex *wgpu.Texture, err error)
 
-	// CreateLinearSampler creates a linear filtering sampler suitable for VSM texture lookups.
-	// Unlike the comparison sampler used for PCF, this sampler performs standard bilinear
-	// filtering on the RG32Float moments texture.
+	// CreateComparisonSampler creates a sampler_comparison for PCF shadow lookups.
+	// Uses LessEqual compare function with ClampToEdge addressing.
+	//
+	// Returns:
+	//   - *wgpu.Sampler: the comparison sampler
+	//   - error: an error if creation fails
+	CreateComparisonSampler() (*wgpu.Sampler, error)
+
+	// CreateLinearSampler creates a standard linear filtering sampler for
+	// post-processing passes (SSAO, SSR, composition).
 	//
 	// Returns:
 	//   - *wgpu.Sampler: the linear sampler
-	//   - error: an error if sampler creation fails
+	//   - error: an error if creation fails
 	CreateLinearSampler() (*wgpu.Sampler, error)
 
-	// RegisterVSMShadowPipeline creates a render pipeline for VSM shadow map generation.
-	// Unlike the depth-only PCF pipeline, this pipeline includes a fragment shader that
-	// outputs depth moments to an RG32Float color target, uses a Depth32Float depth-stencil
-	// for hardware z-testing, and applies no hardware depth bias (the partial-derivative
-	// moment computation replaces it).
+	// RegisterShadowDepthPipeline creates a depth-only render pipeline for shadow map
+	// generation. There is no fragment shader and no color target.
+	// The hardware rasterizer writes depth directly to the Depth32Float attachment.
+	// Includes hardware depth bias to reduce shadow acne.
 	//
 	// Parameters:
-	//   - p: the pipeline object containing the VSM vertex and fragment shaders
+	//   - p: the pipeline object containing only the shadow vertex shader
 	//
 	// Returns:
 	//   - error: an error if pipeline creation fails
-	RegisterVSMShadowPipeline(p pipeline.Pipeline) error
+	RegisterShadowDepthPipeline(p pipeline.Pipeline) error
 
-	// BeginVSMShadowPass starts a render pass targeting both the VSM color texture (RG32Float)
-	// and the auxiliary depth texture (Depth32Float). Must be called between BeginShadowFrame
-	// and EndShadowFrame.
+	// BeginShadowDepthPass starts a depth-only render pass targeting the shadow atlas at the
+	// specified viewport. Used for per-cascade shadow rendering. Must be called between
+	// BeginShadowFrame and EndShadowFrame.
 	//
 	// Parameters:
-	//   - vsmView: the VSM moments texture view (color attachment)
-	//   - depthView: the auxiliary depth texture view (depth-stencil attachment)
-	BeginVSMShadowPass(vsmView *wgpu.TextureView, depthView *wgpu.TextureView)
-
-	// CreateSATTextures creates two RGBA32Float textures for the Summed-Area Table
-	// ping-pong passes used by PCSS. Each texture has TextureBinding + StorageBinding
-	// usage. Returns the texture views and textures for both ping-pong targets.
-	//
-	// Parameters:
-	//   - width: the SAT texture width in texels
-	//   - height: the SAT texture height in texels
-	//
-	// Returns:
-	//   - satAView: texture view for SAT texture A
-	//   - satATex: SAT texture A
-	//   - satBView: texture view for SAT texture B
-	//   - satBTex: SAT texture B
-	//   - err: error if texture creation fails
-	CreateSATTextures(width, height int) (satAView *wgpu.TextureView, satATex *wgpu.Texture, satBView *wgpu.TextureView, satBTex *wgpu.Texture, err error)
+	//   - depthView: the shadow depth atlas texture view
+	//   - x, y: viewport offset in texels
+	//   - width, height: viewport size in texels
+	//   - clear: if true, clears the depth to 1.0; if false, loads existing content
+	BeginShadowDepthPass(depthView *wgpu.TextureView, x, y, width, height uint32, clear bool)
 
 	// BeginGBufferFrame creates a command encoder for batching G-Buffer geometry
 	// pre-pass draw calls into a single GPU submission. Must be paired with
@@ -508,80 +493,6 @@ type wgpuRendererBackend interface {
 	//   - err: an error if texture creation fails
 	CreateSSAOTextures(width, height int) (rawView *wgpu.TextureView, rawTex *wgpu.Texture, blurredView *wgpu.TextureView, blurredTex *wgpu.Texture, scratchView *wgpu.TextureView, scratchTex *wgpu.Texture, noiseView *wgpu.TextureView, noiseTex *wgpu.Texture, err error)
 
-	// CreateProbeBakeTextures creates the GPU textures required for rendering
-	// cubemap faces during irradiance probe baking: an RGBA8Unorm color
-	// texture for capturing radiance, and a Depth24Plus depth texture for
-	// hardware z-testing. Both are square with the specified resolution.
-	// The color texture also has TextureBinding and CopySrc for downstream
-	// SH projection compute reads.
-	//
-	// Parameters:
-	//   - resolution: the cubemap face edge size in pixels
-	//
-	// Returns:
-	//   - colorView: texture view for the bake color texture
-	//   - colorTex: the underlying bake color texture
-	//   - depthView: texture view for the bake depth texture
-	//   - depthTex: the underlying bake depth texture
-	//   - err: an error if texture creation fails
-	CreateProbeBakeTextures(resolution int) (colorView *wgpu.TextureView, colorTex *wgpu.Texture, depthView *wgpu.TextureView, depthTex *wgpu.Texture, err error)
-
-	// RegisterProbeBakePipeline creates a render pipeline for irradiance probe
-	// cubemap baking. The pipeline writes to a single RGBA8Unorm color target
-	// and a Depth24Plus depth-stencil with sample count 1.
-	//
-	// Parameters:
-	//   - p: the pipeline containing vertex and fragment shaders for probe baking
-	//
-	// Returns:
-	//   - error: an error if pipeline creation fails
-	RegisterProbeBakePipeline(p pipeline.Pipeline) error
-
-	// BeginProbeBakeFrame creates a command encoder for batching probe bake
-	// draw calls into a single GPU submission. Must be paired with
-	// EndProbeBakeFrame.
-	//
-	// Returns:
-	//   - error: an error if the command encoder could not be created
-	BeginProbeBakeFrame() error
-
-	// BeginProbeBakePass starts a render pass targeting the probe bake
-	// textures. Must be called between BeginProbeBakeFrame and
-	// EndProbeBakeFrame.
-	//
-	// Parameters:
-	//   - colorView: texture view for the RGBA8Unorm bake color attachment
-	//   - depthView: texture view for the Depth24Plus bake depth attachment
-	BeginProbeBakePass(colorView, depthView *wgpu.TextureView)
-
-	// ProbeBakeDrawCall encodes a single instanced draw command within the
-	// current probe bake render pass.
-	//
-	// Parameters:
-	//   - p: the cached probe bake Pipeline
-	//   - meshProvider: the BindGroupProvider holding vertex and index buffers
-	//   - instanceCount: the number of instances to draw
-	//   - bindGroups: bind group providers for the probe bake pass
-	ProbeBakeDrawCall(p pipeline.Pipeline, meshProvider bind_group_provider.BindGroupProvider, instanceCount uint32, bindGroups []bind_group_provider.BindGroupProvider)
-
-	// ProbeBakeDrawCallIndirect encodes a single indirect instanced draw
-	// command within the current probe bake render pass. The instance count
-	// is read from the indirectBuffer on the GPU.
-	//
-	// Parameters:
-	//   - p: the cached probe bake Pipeline
-	//   - meshProvider: the BindGroupProvider holding vertex and index buffers
-	//   - indirectBuffer: the GPU buffer containing DrawIndexedIndirect arguments
-	//   - bindGroups: bind group providers for the probe bake pass
-	ProbeBakeDrawCallIndirect(p pipeline.Pipeline, meshProvider bind_group_provider.BindGroupProvider, indirectBuffer *wgpu.Buffer, bindGroups []bind_group_provider.BindGroupProvider)
-
-	// EndProbeBakePass ends the current probe bake render pass.
-	EndProbeBakePass()
-
-	// EndProbeBakeFrame finishes the probe bake command encoder and submits
-	// to the GPU queue.
-	EndProbeBakeFrame()
-
 	// BeginHDRFrame creates a command encoder and begins a render pass targeting an
 	// offscreen RGBA16Float HDR texture instead of the swapchain. When MSAA is active,
 	// colorView is the multi-sampled texture and resolveView is the single-sample HDR
@@ -633,6 +544,19 @@ type wgpuRendererBackend interface {
 	//   - ssrTex: the underlying SSR output texture
 	//   - err: an error if texture creation fails
 	CreateSSRTextures(width, height int) (ssrView *wgpu.TextureView, ssrTex *wgpu.Texture, err error)
+
+	// CreateContactShadowTextures creates the GPU texture required for contact
+	// shadow output.
+	//
+	// Parameters:
+	//   - width: texture width in pixels
+	//   - height: texture height in pixels
+	//
+	// Returns:
+	//   - csView: texture view for the contact shadow output texture
+	//   - csTex: the underlying contact shadow output texture
+	//   - err: an error if texture creation fails
+	CreateContactShadowTextures(width, height int) (csView *wgpu.TextureView, csTex *wgpu.Texture, err error)
 
 	// CreateHiZTextures creates the R32Float Hi-Z depth pyramid texture with a
 	// full mip chain, plus per-mip read and storage texture views. The full-chain
@@ -697,6 +621,14 @@ type wgpuRendererBackend interface {
 	//   - uint32: the MSAA sample count (1 when disabled)
 	SampleCount() uint32
 
+	// MaxTextureDimension2D returns the maximum 2D texture dimension the device was
+	// created with. This is queried from the adapter at device-creation time and
+	// raised to the adapter's reported limit when higher than the WebGPU default.
+	//
+	// Returns:
+	//   - uint32: the maximum texture width or height in texels
+	MaxTextureDimension2D() uint32
+
 	// SetRenderTargetFormat overrides the color target format used when creating
 	// render pipelines. Defaults to the swapchain surface format. Set to
 	// RGBA16Float when composition (HDR tone mapping) is active so that the
@@ -705,12 +637,20 @@ type wgpuRendererBackend interface {
 	// Parameters:
 	//   - format: the wgpu.TextureFormat to use for render pipeline color targets
 	SetRenderTargetFormat(format wgpu.TextureFormat)
+
+	// FlushFrame submits all accumulated per-frame command buffers to the GPU in a
+	// single queue submission and clears the pending slice.
+	FlushFrame()
 }
 
 var _ RendererBackend = &wgpuRendererBackendImpl{}
 
 func (b *wgpuRendererBackendImpl) SampleCount() uint32 {
 	return uint32(b.sampleCount)
+}
+
+func (b *wgpuRendererBackendImpl) MaxTextureDimension2D() uint32 {
+	return b.maxTextureDimension2D
 }
 
 func (b *wgpuRendererBackendImpl) SetRenderTargetFormat(format wgpu.TextureFormat) {
@@ -739,10 +679,17 @@ func newWGPURendererBackend(surfaceDescriptor *wgpu.SurfaceDescriptor, forceFall
 	}
 	w.adapter = a
 
+	adapterLimits := a.GetLimits()
+
 	// Start from the WebGPU spec default limits and raise MaxBindGroups to 8
 	// so the lit fragment shader's 6 bind groups (0–5) are allowed.
+	// Also raise MaxTextureDimension2D to the adapter's reported maximum so
+	// large CSM shadow atlases are permitted on capable hardware.
 	limits := wgpu.DefaultLimits()
 	limits.MaxBindGroups = 8
+	if adapterLimits.Limits.MaxTextureDimension2D > limits.MaxTextureDimension2D {
+		limits.MaxTextureDimension2D = adapterLimits.Limits.MaxTextureDimension2D
+	}
 
 	d, err := a.RequestDevice(&wgpu.DeviceDescriptor{
 		Label: "Main Device",
@@ -758,6 +705,7 @@ func newWGPURendererBackend(surfaceDescriptor *wgpu.SurfaceDescriptor, forceFall
 	}
 	w.device = d
 	w.queue = d.GetQueue()
+	w.maxTextureDimension2D = limits.MaxTextureDimension2D
 
 	return w
 }
@@ -967,8 +915,7 @@ func (b *wgpuRendererBackendImpl) EndComputeFrame() {
 		return
 	}
 
-	b.queue.Submit(commandBuffer)
-	commandBuffer.Release()
+	b.pendingCommandBuffers = append(b.pendingCommandBuffers, commandBuffer)
 	b.computeFrameEncoder.Release()
 	b.computeFrameEncoder = nil
 }
@@ -1547,9 +1494,7 @@ func (b *wgpuRendererBackendImpl) EndFrame() {
 		return
 	}
 
-	b.queue.Submit(commandBuffer)
-
-	commandBuffer.Release()
+	b.pendingCommandBuffers = append(b.pendingCommandBuffers, commandBuffer)
 	b.frameEncoder.Release()
 	b.frameEncoder = nil
 	b.framePass = nil
@@ -1632,8 +1577,7 @@ func (b *wgpuRendererBackendImpl) EndGeometryFrame() {
 		return
 	}
 
-	b.queue.Submit(commandBuffer)
-	commandBuffer.Release()
+	b.pendingCommandBuffers = append(b.pendingCommandBuffers, commandBuffer)
 	b.geometryFrameEncoder.Release()
 	b.geometryFrameEncoder = nil
 }
@@ -1745,11 +1689,8 @@ func (b *wgpuRendererBackendImpl) EndShadowFrame() {
 	b.shadowFrameEncoder = nil
 }
 
-func (b *wgpuRendererBackendImpl) CreateVSMTextures(width, height int) (
-	vsmView *wgpu.TextureView, vsmTex *wgpu.Texture,
-	scratchView *wgpu.TextureView, scratchTex *wgpu.Texture,
-	depthView *wgpu.TextureView, depthTex *wgpu.Texture,
-	err error,
+func (b *wgpuRendererBackendImpl) CreateShadowDepthTexture(width, height int) (
+	depthView *wgpu.TextureView, depthTex *wgpu.Texture, err error,
 ) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -1757,62 +1698,8 @@ func (b *wgpuRendererBackendImpl) CreateVSMTextures(width, height int) (
 	w := uint32(width)
 	h := uint32(height)
 
-	// VSM moments texture: RG32Float for (depth, depth²).
-	// StorageBinding is required for the blur compute pass.
-	vsmTex, err = b.device.CreateTexture(&wgpu.TextureDescriptor{
-		Label: "VSM Moments Texture",
-		Size: wgpu.Extent3D{
-			Width:              w,
-			Height:             h,
-			DepthOrArrayLayers: 1,
-		},
-		MipLevelCount: 1,
-		SampleCount:   1,
-		Dimension:     wgpu.TextureDimension2D,
-		Format:        wgpu.TextureFormatRG32Float,
-		Usage:         wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageTextureBinding | wgpu.TextureUsageStorageBinding,
-	})
-	if err != nil {
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to create VSM moments texture: %w", err)
-	}
-
-	vsmView, err = vsmTex.CreateView(nil)
-	if err != nil {
-		vsmTex.Release()
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to create VSM moments texture view: %w", err)
-	}
-
-	// Scratch texture for the intermediate separable blur result.
-	scratchTex, err = b.device.CreateTexture(&wgpu.TextureDescriptor{
-		Label: "VSM Scratch Texture",
-		Size: wgpu.Extent3D{
-			Width:              w,
-			Height:             h,
-			DepthOrArrayLayers: 1,
-		},
-		MipLevelCount: 1,
-		SampleCount:   1,
-		Dimension:     wgpu.TextureDimension2D,
-		Format:        wgpu.TextureFormatRG32Float,
-		Usage:         wgpu.TextureUsageTextureBinding | wgpu.TextureUsageStorageBinding,
-	})
-	if err != nil {
-		vsmView.Release()
-		vsmTex.Release()
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to create VSM scratch texture: %w", err)
-	}
-
-	scratchView, err = scratchTex.CreateView(nil)
-	if err != nil {
-		scratchTex.Release()
-		vsmView.Release()
-		vsmTex.Release()
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to create VSM scratch texture view: %w", err)
-	}
-
-	// Auxiliary depth texture for hardware z-testing during the VSM render pass.
 	depthTex, err = b.device.CreateTexture(&wgpu.TextureDescriptor{
-		Label: "VSM Auxiliary Depth Texture",
+		Label: "Shadow Depth Atlas",
 		Size: wgpu.Extent3D{
 			Width:              w,
 			Height:             h,
@@ -1822,27 +1709,41 @@ func (b *wgpuRendererBackendImpl) CreateVSMTextures(width, height int) (
 		SampleCount:   1,
 		Dimension:     wgpu.TextureDimension2D,
 		Format:        wgpu.TextureFormatDepth32Float,
-		Usage:         wgpu.TextureUsageRenderAttachment,
+		Usage:         wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageTextureBinding,
 	})
 	if err != nil {
-		scratchView.Release()
-		scratchTex.Release()
-		vsmView.Release()
-		vsmTex.Release()
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to create VSM auxiliary depth texture: %w", err)
+		return nil, nil, fmt.Errorf("failed to create shadow depth atlas: %w", err)
 	}
 
 	depthView, err = depthTex.CreateView(nil)
 	if err != nil {
 		depthTex.Release()
-		scratchView.Release()
-		scratchTex.Release()
-		vsmView.Release()
-		vsmTex.Release()
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to create VSM auxiliary depth texture view: %w", err)
+		return nil, nil, fmt.Errorf("failed to create shadow depth atlas view: %w", err)
 	}
 
-	return vsmView, vsmTex, scratchView, scratchTex, depthView, depthTex, nil
+	return depthView, depthTex, nil
+}
+
+func (b *wgpuRendererBackendImpl) CreateComparisonSampler() (*wgpu.Sampler, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	samp, err := b.device.CreateSampler(&wgpu.SamplerDescriptor{
+		Label:         "Shadow Comparison Sampler",
+		AddressModeU:  wgpu.AddressModeClampToEdge,
+		AddressModeV:  wgpu.AddressModeClampToEdge,
+		AddressModeW:  wgpu.AddressModeClampToEdge,
+		MagFilter:     wgpu.FilterModeLinear,
+		MinFilter:     wgpu.FilterModeLinear,
+		MipmapFilter:  wgpu.MipmapFilterModeNearest,
+		MaxAnisotropy: 1,
+		Compare:       wgpu.CompareFunctionLessEqual,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create comparison sampler: %w", err)
+	}
+
+	return samp, nil
 }
 
 func (b *wgpuRendererBackendImpl) CreateLinearSampler() (*wgpu.Sampler, error) {
@@ -1850,7 +1751,7 @@ func (b *wgpuRendererBackendImpl) CreateLinearSampler() (*wgpu.Sampler, error) {
 	defer b.mu.Unlock()
 
 	samp, err := b.device.CreateSampler(&wgpu.SamplerDescriptor{
-		Label:         "VSM Linear Sampler",
+		Label:         "Linear Sampler",
 		AddressModeU:  wgpu.AddressModeClampToEdge,
 		AddressModeV:  wgpu.AddressModeClampToEdge,
 		AddressModeW:  wgpu.AddressModeClampToEdge,
@@ -1866,15 +1767,10 @@ func (b *wgpuRendererBackendImpl) CreateLinearSampler() (*wgpu.Sampler, error) {
 	return samp, nil
 }
 
-func (b *wgpuRendererBackendImpl) RegisterVSMShadowPipeline(p pipeline.Pipeline) error {
+func (b *wgpuRendererBackendImpl) RegisterShadowDepthPipeline(p pipeline.Pipeline) error {
 	vertexShader := p.Shader(shader.ShaderTypeVertex)
 	if vertexShader == nil {
-		return errors.New("vertex shader must be set to create a VSM shadow pipeline")
-	}
-
-	fragmentShader := p.Shader(shader.ShaderTypeFragment)
-	if fragmentShader == nil {
-		return errors.New("fragment shader must be set to create a VSM shadow pipeline")
+		return errors.New("vertex shader must be set to create a shadow depth pipeline")
 	}
 
 	vs, err := b.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
@@ -1884,23 +1780,12 @@ func (b *wgpuRendererBackendImpl) RegisterVSMShadowPipeline(p pipeline.Pipeline)
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("vsm shadow: failed to create vertex shader module: %w", err)
+		return fmt.Errorf("shadow depth: failed to create vertex shader module: %w", err)
 	}
 
-	fs, err := b.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
-		Label: fragmentShader.Key(),
-		WGSLDescriptor: &wgpu.ShaderModuleWGSLDescriptor{
-			Code: fragmentShader.Source(),
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("vsm shadow: failed to create fragment shader module: %w", err)
-	}
-
-	// Merge bind group layouts from both vertex and fragment shaders.
 	mergedDescriptors := mergeBindGroupLayouts(
 		vertexShader.BindGroupLayoutDescriptors(),
-		fragmentShader.BindGroupLayoutDescriptors(),
+		nil,
 	)
 
 	maxGroup := -1
@@ -1913,7 +1798,7 @@ func (b *wgpuRendererBackendImpl) RegisterVSMShadowPipeline(p pipeline.Pipeline)
 	for g, desc := range mergedDescriptors {
 		layout, layoutErr := b.device.CreateBindGroupLayout(&desc)
 		if layoutErr != nil {
-			return fmt.Errorf("vsm shadow: failed to create bind group layout for group %d: %w", g, layoutErr)
+			return fmt.Errorf("shadow depth: failed to create bind group layout for group %d: %w", g, layoutErr)
 		}
 		bindGroupLayouts[g] = layout
 	}
@@ -1923,7 +1808,7 @@ func (b *wgpuRendererBackendImpl) RegisterVSMShadowPipeline(p pipeline.Pipeline)
 		BindGroupLayouts: bindGroupLayouts,
 	})
 	if err != nil {
-		return fmt.Errorf("vsm shadow: failed to create pipeline layout: %w", err)
+		return fmt.Errorf("shadow depth: failed to create pipeline layout: %w", err)
 	}
 
 	vertexLayouts := make([]wgpu.VertexBufferLayout, 0, len(vertexShader.VertexLayouts()))
@@ -1932,22 +1817,12 @@ func (b *wgpuRendererBackendImpl) RegisterVSMShadowPipeline(p pipeline.Pipeline)
 	}
 
 	created, err := b.device.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
-		Label:  p.PipelineKey() + " VSM Shadow Pipeline",
+		Label:  p.PipelineKey() + " Shadow Depth Pipeline",
 		Layout: pipelineLayout,
 		Vertex: wgpu.VertexState{
 			Module:     vs,
 			EntryPoint: vertexShader.EntryPoint(),
 			Buffers:    vertexLayouts,
-		},
-		Fragment: &wgpu.FragmentState{
-			Module:     fs,
-			EntryPoint: fragmentShader.EntryPoint(),
-			Targets: []wgpu.ColorTargetState{
-				{
-					Format:    wgpu.TextureFormatRG32Float,
-					WriteMask: wgpu.ColorWriteMaskAll,
-				},
-			},
 		},
 		Primitive: wgpu.PrimitiveState{
 			Topology:  wgpu.PrimitiveTopologyTriangleList,
@@ -1959,12 +1834,11 @@ func (b *wgpuRendererBackendImpl) RegisterVSMShadowPipeline(p pipeline.Pipeline)
 			Mask:  0xFFFFFFFF,
 		},
 		DepthStencil: &wgpu.DepthStencilState{
-			Format:            wgpu.TextureFormatDepth32Float,
-			DepthWriteEnabled: true,
-			DepthCompare:      wgpu.CompareFunctionLess,
-			// No depth bias — the partial-derivative moment computation replaces it.
-			DepthBias:           0,
-			DepthBiasSlopeScale: 0,
+			Format:              wgpu.TextureFormatDepth32Float,
+			DepthWriteEnabled:   true,
+			DepthCompare:        wgpu.CompareFunctionLess,
+			DepthBias:           2,
+			DepthBiasSlopeScale: 2.0,
 			StencilFront: wgpu.StencilFaceState{
 				Compare: wgpu.CompareFunctionAlways,
 			},
@@ -1974,80 +1848,14 @@ func (b *wgpuRendererBackendImpl) RegisterVSMShadowPipeline(p pipeline.Pipeline)
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("vsm shadow: failed to create render pipeline: %w", err)
+		return fmt.Errorf("shadow depth: failed to create render pipeline: %w", err)
 	}
 
 	p.SetRenderPipeline(created)
 	return nil
 }
 
-func (b *wgpuRendererBackendImpl) CreateSATTextures(width, height int) (
-	satAView *wgpu.TextureView, satATex *wgpu.Texture,
-	satBView *wgpu.TextureView, satBTex *wgpu.Texture,
-	err error,
-) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	w := uint32(width)
-	h := uint32(height)
-
-	// SAT texture A: RGBA32Float for precision-distributed moments.
-	satATex, err = b.device.CreateTexture(&wgpu.TextureDescriptor{
-		Label: "SAT Texture A",
-		Size: wgpu.Extent3D{
-			Width:              w,
-			Height:             h,
-			DepthOrArrayLayers: 1,
-		},
-		MipLevelCount: 1,
-		SampleCount:   1,
-		Dimension:     wgpu.TextureDimension2D,
-		Format:        wgpu.TextureFormatRGBA32Float,
-		Usage:         wgpu.TextureUsageTextureBinding | wgpu.TextureUsageStorageBinding,
-	})
-	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to create SAT texture A: %w", err)
-	}
-
-	satAView, err = satATex.CreateView(nil)
-	if err != nil {
-		satATex.Release()
-		return nil, nil, nil, nil, fmt.Errorf("failed to create SAT texture A view: %w", err)
-	}
-
-	// SAT texture B: RGBA32Float ping-pong target.
-	satBTex, err = b.device.CreateTexture(&wgpu.TextureDescriptor{
-		Label: "SAT Texture B",
-		Size: wgpu.Extent3D{
-			Width:              w,
-			Height:             h,
-			DepthOrArrayLayers: 1,
-		},
-		MipLevelCount: 1,
-		SampleCount:   1,
-		Dimension:     wgpu.TextureDimension2D,
-		Format:        wgpu.TextureFormatRGBA32Float,
-		Usage:         wgpu.TextureUsageTextureBinding | wgpu.TextureUsageStorageBinding,
-	})
-	if err != nil {
-		satAView.Release()
-		satATex.Release()
-		return nil, nil, nil, nil, fmt.Errorf("failed to create SAT texture B: %w", err)
-	}
-
-	satBView, err = satBTex.CreateView(nil)
-	if err != nil {
-		satBTex.Release()
-		satAView.Release()
-		satATex.Release()
-		return nil, nil, nil, nil, fmt.Errorf("failed to create SAT texture B view: %w", err)
-	}
-
-	return satAView, satATex, satBView, satBTex, nil
-}
-
-func (b *wgpuRendererBackendImpl) BeginVSMShadowPass(vsmView *wgpu.TextureView, depthView *wgpu.TextureView) {
+func (b *wgpuRendererBackendImpl) BeginShadowDepthPass(depthView *wgpu.TextureView, x, y, width, height uint32, clear bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -2055,22 +1863,21 @@ func (b *wgpuRendererBackendImpl) BeginVSMShadowPass(vsmView *wgpu.TextureView, 
 		return
 	}
 
+	depthLoadOp := wgpu.LoadOpLoad
+	if clear {
+		depthLoadOp = wgpu.LoadOpClear
+	}
+
 	pass := b.shadowFrameEncoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
-		ColorAttachments: []wgpu.RenderPassColorAttachment{
-			{
-				View:       vsmView,
-				LoadOp:     wgpu.LoadOpClear,
-				StoreOp:    wgpu.StoreOpStore,
-				ClearValue: wgpu.Color{R: 1.0, G: 1.0, B: 0.0, A: 0.0},
-			},
-		},
 		DepthStencilAttachment: &wgpu.RenderPassDepthStencilAttachment{
 			View:            depthView,
-			DepthLoadOp:     wgpu.LoadOpClear,
+			DepthLoadOp:     depthLoadOp,
 			DepthStoreOp:    wgpu.StoreOpStore,
 			DepthClearValue: 1.0,
 		},
 	})
+	pass.SetViewport(float32(x), float32(y), float32(width), float32(height), 0.0, 1.0)
+	pass.SetScissorRect(x, y, width, height)
 	b.shadowPass = pass
 }
 
@@ -2570,305 +2377,6 @@ func (b *wgpuRendererBackendImpl) CreateSSAOTextures(width, height int) (
 	return rawView, rawTex, blurredView, blurredTex, scratchView, scratchTex, noiseView, noiseTex, nil
 }
 
-func (b *wgpuRendererBackendImpl) CreateProbeBakeTextures(resolution int) (
-	colorView *wgpu.TextureView, colorTex *wgpu.Texture,
-	depthView *wgpu.TextureView, depthTex *wgpu.Texture,
-	err error,
-) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	size := uint32(resolution)
-
-	// RGBA8Unorm color texture for capturing lit radiance from each cubemap face.
-	// TextureBinding for SH projection compute reads, CopySrc for potential readback.
-	colorTex, err = b.device.CreateTexture(&wgpu.TextureDescriptor{
-		Label: "Probe Bake Color Texture",
-		Size: wgpu.Extent3D{
-			Width:              size,
-			Height:             size,
-			DepthOrArrayLayers: 1,
-		},
-		MipLevelCount: 1,
-		SampleCount:   1,
-		Dimension:     wgpu.TextureDimension2D,
-		Format:        wgpu.TextureFormatRGBA8Unorm,
-		Usage:         wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageTextureBinding | wgpu.TextureUsageCopySrc,
-	})
-	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to create probe bake color texture: %w", err)
-	}
-
-	colorView, err = colorTex.CreateView(nil)
-	if err != nil {
-		colorTex.Release()
-		return nil, nil, nil, nil, fmt.Errorf("failed to create probe bake color texture view: %w", err)
-	}
-
-	// Depth24Plus for hardware z-testing during the bake pass.
-	depthTex, err = b.device.CreateTexture(&wgpu.TextureDescriptor{
-		Label: "Probe Bake Depth Texture",
-		Size: wgpu.Extent3D{
-			Width:              size,
-			Height:             size,
-			DepthOrArrayLayers: 1,
-		},
-		MipLevelCount: 1,
-		SampleCount:   1,
-		Dimension:     wgpu.TextureDimension2D,
-		Format:        wgpu.TextureFormatDepth24Plus,
-		Usage:         wgpu.TextureUsageRenderAttachment,
-	})
-	if err != nil {
-		colorView.Release()
-		colorTex.Release()
-		return nil, nil, nil, nil, fmt.Errorf("failed to create probe bake depth texture: %w", err)
-	}
-
-	depthView, err = depthTex.CreateView(nil)
-	if err != nil {
-		depthTex.Release()
-		colorView.Release()
-		colorTex.Release()
-		return nil, nil, nil, nil, fmt.Errorf("failed to create probe bake depth texture view: %w", err)
-	}
-
-	return colorView, colorTex, depthView, depthTex, nil
-}
-
-func (b *wgpuRendererBackendImpl) RegisterProbeBakePipeline(p pipeline.Pipeline) error {
-	vertexShader := p.Shader(shader.ShaderTypeVertex)
-	if vertexShader == nil {
-		return errors.New("vertex shader must be set to create a probe bake pipeline")
-	}
-
-	fragmentShader := p.Shader(shader.ShaderTypeFragment)
-	if fragmentShader == nil {
-		return errors.New("fragment shader must be set to create a probe bake pipeline")
-	}
-
-	vs, err := b.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
-		Label: vertexShader.Key(),
-		WGSLDescriptor: &wgpu.ShaderModuleWGSLDescriptor{
-			Code: vertexShader.Source(),
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("probe bake: failed to create vertex shader module: %w", err)
-	}
-
-	fs, err := b.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
-		Label: fragmentShader.Key(),
-		WGSLDescriptor: &wgpu.ShaderModuleWGSLDescriptor{
-			Code: fragmentShader.Source(),
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("probe bake: failed to create fragment shader module: %w", err)
-	}
-
-	mergedDescriptors := mergeBindGroupLayouts(
-		vertexShader.BindGroupLayoutDescriptors(),
-		fragmentShader.BindGroupLayoutDescriptors(),
-	)
-
-	maxGroup := -1
-	for g := range mergedDescriptors {
-		if g > maxGroup {
-			maxGroup = g
-		}
-	}
-	bindGroupLayouts := make([]*wgpu.BindGroupLayout, maxGroup+1)
-	for g, desc := range mergedDescriptors {
-		layout, layoutErr := b.device.CreateBindGroupLayout(&desc)
-		if layoutErr != nil {
-			return fmt.Errorf("probe bake: failed to create bind group layout for group %d: %w", g, layoutErr)
-		}
-		bindGroupLayouts[g] = layout
-	}
-
-	pipelineLayout, err := b.device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
-		Label:            p.PipelineKey(),
-		BindGroupLayouts: bindGroupLayouts,
-	})
-	if err != nil {
-		return fmt.Errorf("probe bake: failed to create pipeline layout: %w", err)
-	}
-
-	vertexLayouts := make([]wgpu.VertexBufferLayout, 0, len(vertexShader.VertexLayouts()))
-	for i := range vertexShader.VertexLayouts() {
-		vertexLayouts = append(vertexLayouts, vertexShader.VertexLayout(i)...)
-	}
-
-	created, err := b.device.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
-		Label:  p.PipelineKey() + " Probe Bake Pipeline",
-		Layout: pipelineLayout,
-		Vertex: wgpu.VertexState{
-			Module:     vs,
-			EntryPoint: vertexShader.EntryPoint(),
-			Buffers:    vertexLayouts,
-		},
-		Fragment: &wgpu.FragmentState{
-			Module:     fs,
-			EntryPoint: fragmentShader.EntryPoint(),
-			Targets: []wgpu.ColorTargetState{
-				{
-					Format:    wgpu.TextureFormatRGBA8Unorm,
-					WriteMask: wgpu.ColorWriteMaskAll,
-				},
-			},
-		},
-		Primitive: wgpu.PrimitiveState{
-			Topology:  wgpu.PrimitiveTopologyTriangleList,
-			FrontFace: wgpu.FrontFaceCCW,
-			CullMode:  p.CullMode(),
-		},
-		Multisample: wgpu.MultisampleState{
-			Count: 1,
-			Mask:  0xFFFFFFFF,
-		},
-		DepthStencil: &wgpu.DepthStencilState{
-			Format:            wgpu.TextureFormatDepth24Plus,
-			DepthWriteEnabled: true,
-			DepthCompare:      wgpu.CompareFunctionLess,
-			StencilFront: wgpu.StencilFaceState{
-				Compare: wgpu.CompareFunctionAlways,
-			},
-			StencilBack: wgpu.StencilFaceState{
-				Compare: wgpu.CompareFunctionAlways,
-			},
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("probe bake: failed to create render pipeline: %w", err)
-	}
-
-	p.SetRenderPipeline(created)
-	return nil
-}
-
-func (b *wgpuRendererBackendImpl) BeginProbeBakeFrame() error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	encoder, err := b.device.CreateCommandEncoder(nil)
-	if err != nil {
-		return err
-	}
-	b.probeBakeFrameEncoder = encoder
-	return nil
-}
-
-func (b *wgpuRendererBackendImpl) BeginProbeBakePass(colorView, depthView *wgpu.TextureView) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if b.probeBakeFrameEncoder == nil {
-		return
-	}
-
-	pass := b.probeBakeFrameEncoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
-		ColorAttachments: []wgpu.RenderPassColorAttachment{
-			{
-				View:       colorView,
-				LoadOp:     wgpu.LoadOpClear,
-				StoreOp:    wgpu.StoreOpStore,
-				ClearValue: wgpu.Color{R: 0.0, G: 0.0, B: 0.0, A: 1.0},
-			},
-		},
-		DepthStencilAttachment: &wgpu.RenderPassDepthStencilAttachment{
-			View:            depthView,
-			DepthLoadOp:     wgpu.LoadOpClear,
-			DepthStoreOp:    wgpu.StoreOpStore,
-			DepthClearValue: 1.0,
-		},
-	})
-	b.probeBakePass = pass
-}
-
-func (b *wgpuRendererBackendImpl) ProbeBakeDrawCall(
-	p pipeline.Pipeline,
-	meshProvider bind_group_provider.BindGroupProvider,
-	instanceCount uint32,
-	bindGroups []bind_group_provider.BindGroupProvider,
-) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if b.probeBakePass == nil {
-		return
-	}
-
-	renderPipeline := p.Pipeline().(*wgpu.RenderPipeline)
-	b.probeBakePass.SetPipeline(renderPipeline)
-
-	for i, bg := range bindGroups {
-		b.probeBakePass.SetBindGroup(uint32(i), bg.BindGroup(), nil)
-	}
-
-	b.probeBakePass.SetVertexBuffer(0, meshProvider.VertexBuffer(), 0, wgpu.WholeSize)
-	b.probeBakePass.SetIndexBuffer(meshProvider.IndexBuffer(), wgpu.IndexFormatUint32, 0, wgpu.WholeSize)
-	b.probeBakePass.DrawIndexed(uint32(meshProvider.IndexCount()), instanceCount, 0, 0, 0)
-}
-
-func (b *wgpuRendererBackendImpl) ProbeBakeDrawCallIndirect(
-	p pipeline.Pipeline,
-	meshProvider bind_group_provider.BindGroupProvider,
-	indirectBuffer *wgpu.Buffer,
-	bindGroups []bind_group_provider.BindGroupProvider,
-) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if b.probeBakePass == nil {
-		return
-	}
-
-	renderPipeline := p.Pipeline().(*wgpu.RenderPipeline)
-	b.probeBakePass.SetPipeline(renderPipeline)
-
-	for i, bg := range bindGroups {
-		b.probeBakePass.SetBindGroup(uint32(i), bg.BindGroup(), nil)
-	}
-
-	b.probeBakePass.SetVertexBuffer(0, meshProvider.VertexBuffer(), 0, wgpu.WholeSize)
-	b.probeBakePass.SetIndexBuffer(meshProvider.IndexBuffer(), wgpu.IndexFormatUint32, 0, wgpu.WholeSize)
-	b.probeBakePass.DrawIndexedIndirect(indirectBuffer, 0)
-}
-
-func (b *wgpuRendererBackendImpl) EndProbeBakePass() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if b.probeBakePass == nil {
-		return
-	}
-
-	b.probeBakePass.End()
-	b.probeBakePass = nil
-}
-
-func (b *wgpuRendererBackendImpl) EndProbeBakeFrame() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if b.probeBakeFrameEncoder == nil {
-		return
-	}
-
-	commandBuffer, err := b.probeBakeFrameEncoder.Finish(nil)
-	if err != nil {
-		b.probeBakeFrameEncoder.Release()
-		b.probeBakeFrameEncoder = nil
-		return
-	}
-
-	b.queue.Submit(commandBuffer)
-	commandBuffer.Release()
-	b.probeBakeFrameEncoder.Release()
-	b.probeBakeFrameEncoder = nil
-}
-
 func (b *wgpuRendererBackendImpl) BeginHDRFrame(colorView, resolveView, depthView *wgpu.TextureView, sampleCount uint32) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -3053,6 +2561,54 @@ func (b *wgpuRendererBackendImpl) CreateSSRTextures(width, height int) (
 	}
 
 	return ssrView, ssrTex, nil
+}
+
+// CreateContactShadowTextures creates the R32Float texture used as the output
+// of the contact shadow compute shader. The texture is bound as a storage
+// texture (write) by the compute shader and as a regular texture (read) by the
+// lit fragment shader.
+//
+// Parameters:
+//   - width: texture width in pixels
+//   - height: texture height in pixels
+//
+// Returns:
+//   - csView: texture view for the contact shadow output texture
+//   - csTex: the underlying contact shadow output texture
+//   - err: an error if texture creation fails
+func (b *wgpuRendererBackendImpl) CreateContactShadowTextures(width, height int) (
+	csView *wgpu.TextureView, csTex *wgpu.Texture, err error,
+) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	w := uint32(width)
+	h := uint32(height)
+
+	csTex, err = b.device.CreateTexture(&wgpu.TextureDescriptor{
+		Label: "Contact Shadow Output Texture",
+		Size: wgpu.Extent3D{
+			Width:              w,
+			Height:             h,
+			DepthOrArrayLayers: 1,
+		},
+		MipLevelCount: 1,
+		SampleCount:   1,
+		Dimension:     wgpu.TextureDimension2D,
+		Format:        wgpu.TextureFormatR32Float,
+		Usage:         wgpu.TextureUsageStorageBinding | wgpu.TextureUsageTextureBinding,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create contact shadow output texture: %w", err)
+	}
+
+	csView, err = csTex.CreateView(nil)
+	if err != nil {
+		csTex.Release()
+		return nil, nil, fmt.Errorf("failed to create contact shadow output texture view: %w", err)
+	}
+
+	return csView, csTex, nil
 }
 
 func (b *wgpuRendererBackendImpl) CreateHiZTextures(width, height int) (
@@ -3353,10 +2909,26 @@ func (b *wgpuRendererBackendImpl) EndCompositionFrame() {
 		return
 	}
 
-	b.queue.Submit(commandBuffer)
-	commandBuffer.Release()
+	b.pendingCommandBuffers = append(b.pendingCommandBuffers, commandBuffer)
 	b.compositionFrameEncoder.Release()
 	b.compositionFrameEncoder = nil
+}
+
+// FlushFrame submits all accumulated per-frame command buffers to the GPU in a single
+// queue submission, then releases each command buffer and clears the pending slice.
+func (b *wgpuRendererBackendImpl) FlushFrame() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if len(b.pendingCommandBuffers) == 0 {
+		return
+	}
+
+	b.queue.Submit(b.pendingCommandBuffers...)
+	for _, cb := range b.pendingCommandBuffers {
+		cb.Release()
+	}
+	b.pendingCommandBuffers = b.pendingCommandBuffers[:0]
 }
 
 // mergeBindGroupLayouts merges the bind group layout descriptors from a vertex and fragment shader

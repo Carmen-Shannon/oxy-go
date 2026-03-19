@@ -150,3 +150,24 @@ func WithIndexCount(count int) BindGroupProviderOption {
 		p.indexCount = count
 	}
 }
+
+// NewBindGroupProvider creates a new BindGroupProvider with the provided options.
+//
+// Parameters:
+//   - options: a variadic list of options to configure the provider
+//
+// Returns:
+//   - BindGroupProvider: a new instance of BindGroupProvider configured with the provided options
+func NewBindGroupProvider(label string, options ...BindGroupProviderOption) BindGroupProvider {
+	p := &bindGroupProvider{
+		label:        label,
+		buffers:      make(map[int]*wgpu.Buffer),
+		textureViews: make(map[int]*wgpu.TextureView),
+		samplers:     make(map[int]*wgpu.Sampler),
+	}
+	for _, opt := range options {
+		opt(p)
+	}
+	p.Delegate = p
+	return p
+}

@@ -13,15 +13,15 @@
 //   @binding(2) storage  — tile_light_counts: per-tile visible light count
 //   @binding(3) storage  — tile_light_indices: per-tile light index list
 
-const TILE_SIZE: u32 = 16u;
-const MAX_LIGHTS_PER_TILE: u32 = 256u;
-const NUM_THREADS: u32 = 256u; // TILE_SIZE * TILE_SIZE
+//@oxy:inject TILE_SIZE u32 tile_size
+//@oxy:inject MAX_LIGHTS_PER_TILE u32 max_lights_per_tile
+//@oxy:inject NUM_THREADS u32 num_threads
 
 //@oxy:include light
 //@oxy:include light_cull_uniforms
 
 // Light type constants matching the fragment shader.
-const LIGHT_TYPE_DIRECTIONAL: u32 = 0u;
+//@oxy:inject LIGHT_TYPE_DIRECTIONAL u32 light_type_directional
 
 //@oxy:group 0 0 storage_uniform cull_uniforms light_cull_uniforms
 //@oxy:group 0 1 storage_read cull_lights array<light>
@@ -104,7 +104,7 @@ fn sphere_in_frustum(frustum: TileFrustum, center: vec3<f32>, radius: f32) -> bo
 // ── Entry point ────────────────────────────────────────────────────
 // Dispatch: (tile_count_x, tile_count_y, 1)
 // Each workgroup = one tile, 256 threads cooperatively cull all lights.
-@compute @workgroup_size(16, 16, 1)
+@compute @workgroup_size(TILE_SIZE, TILE_SIZE, 1)
 fn main(
     @builtin(workgroup_id) workgroup_id: vec3<u32>,
     @builtin(local_invocation_index) local_idx: u32,

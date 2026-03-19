@@ -19,7 +19,7 @@
 //@oxy:group 0 1 storage_read grid_params physics_grid_params
 //@oxy:group 0 2 storage_uniform globals physics_globals
 
-const EMPTY: u32 = 0xFFFFFFFFu;
+//@oxy:inject EMPTY u32 empty_sentinel
 
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {

@@ -164,7 +164,7 @@ func (g *GPUModelData) Size() int {
 //   - []byte: 64-byte buffer ready for GPU upload.
 func (g *GPUModelData) Marshal() []byte {
 	buf := make([]byte, 64)
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		binary.LittleEndian.PutUint32(buf[i*4:(i+1)*4], math.Float32bits(g.Model[i]))
 	}
 	return buf

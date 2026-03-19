@@ -11,7 +11,7 @@ import (
 
 // glfwWindow holds the GLFW-specific window state.
 type glfwWindow struct {
-	parent  *engineWindow
+	parent  *window
 	window  *glfw.Window
 	running bool
 }
@@ -20,7 +20,7 @@ type glfwWindow struct {
 //
 // GLFW reference: https://www.glfw.org/docs/latest/window_guide.html
 // go-gl/glfw: https://pkg.go.dev/github.com/go-gl/glfw/v3.3/glfw
-func newPlatformWindow(w *engineWindow) error {
+func newPlatformWindow(w *window) error {
 	runtime.LockOSThread()
 
 	if err := glfw.Init(); err != nil {
@@ -119,7 +119,7 @@ func newPlatformWindow(w *engineWindow) error {
 // Uses the wgpuglfw bridge package which has per-platform implementations (Windows, X11, Wayland, macOS).
 //
 // Reference: https://pkg.go.dev/github.com/cogentcore/webgpu/wgpuglfw#GetSurfaceDescriptor
-func platformGetSurfaceDescriptor(w *engineWindow) *wgpu.SurfaceDescriptor {
+func platformGetSurfaceDescriptor(w *window) *wgpu.SurfaceDescriptor {
 	if w.internalWindow == nil {
 		return nil
 	}
@@ -135,7 +135,7 @@ func platformGetSurfaceDescriptor(w *engineWindow) *wgpu.SurfaceDescriptor {
 //
 // Returns:
 //   - bool: true if the window is still running
-func platformIsRunningCheck(w *engineWindow) bool {
+func platformIsRunningCheck(w *window) bool {
 	if w.internalWindow == nil {
 		return false
 	}
@@ -151,7 +151,7 @@ func platformIsRunningCheck(w *engineWindow) bool {
 //
 // Returns:
 //   - error: error if the window is not initialized
-func platformCloseWindow(w *engineWindow) error {
+func platformCloseWindow(w *window) error {
 	if w.internalWindow == nil {
 		return fmt.Errorf("window is not initialized")
 	}
@@ -167,7 +167,7 @@ func platformCloseWindow(w *engineWindow) error {
 // This is the GLFW equivalent of the Win32 PeekMessage loop.
 //
 // Reference: https://pkg.go.dev/github.com/go-gl/glfw/v3.3/glfw#PollEvents
-func platformProcessMessages(w *engineWindow) bool {
+func platformProcessMessages(w *window) bool {
 	glfw.PollEvents()
 	return platformIsRunningCheck(w)
 }

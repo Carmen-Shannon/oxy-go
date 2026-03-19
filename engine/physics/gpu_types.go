@@ -49,7 +49,7 @@ func (g *GPUBody) Size() int {
 // Returns:
 //   - []byte: 160-byte buffer ready for GPU upload
 func (g *GPUBody) Marshal() []byte {
-	buf := make([]byte, 160)
+	buf := make([]byte, g.Size())
 	off := 0
 
 	// Position — vec4<f32> (16 bytes)
@@ -156,7 +156,7 @@ func (g *GPUParticle) Size() int {
 // Returns:
 //   - []byte: 96-byte buffer ready for GPU upload
 func (g *GPUParticle) Marshal() []byte {
-	buf := make([]byte, 96)
+	buf := make([]byte, g.Size())
 	off := 0
 
 	// WorldPosition — vec4<f32> (16 bytes)
@@ -237,7 +237,7 @@ func (g *GPUGridCell) Size() int {
 // Returns:
 //   - []byte: 64-byte buffer ready for GPU upload
 func (g *GPUGridCell) Marshal() []byte {
-	buf := make([]byte, 64)
+	buf := make([]byte, g.Size())
 	for i := range 4 {
 		binary.LittleEndian.PutUint32(buf[i*4:], g.Indices0[i])
 	}
@@ -289,7 +289,7 @@ type GPUPhysicsGlobals struct {
 // Returns:
 //   - int: the struct size in bytes (240)
 func (g *GPUPhysicsGlobals) Size() int {
-	return 240
+	return int(unsafe.Sizeof(*g))
 }
 
 // Marshal serializes the GPUPhysicsGlobals struct into a byte buffer suitable for
@@ -298,7 +298,7 @@ func (g *GPUPhysicsGlobals) Size() int {
 // Returns:
 //   - []byte: 240-byte buffer ready for GPU upload
 func (g *GPUPhysicsGlobals) Marshal() []byte {
-	buf := make([]byte, 240)
+	buf := make([]byte, g.Size())
 	off := 0
 
 	// DeltaTime — f32 (4 bytes)
@@ -398,7 +398,7 @@ func (g *GPUGridParams) Size() int {
 // Returns:
 //   - []byte: 32-byte buffer ready for GPU upload
 func (g *GPUGridParams) Marshal() []byte {
-	buf := make([]byte, 32)
+	buf := make([]byte, g.Size())
 	off := 0
 
 	// GridOrigin — vec4<f32> (16 bytes)

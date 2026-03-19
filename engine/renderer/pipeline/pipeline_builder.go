@@ -181,3 +181,43 @@ func WithBlendState(blendState *wgpu.BlendState) PipelineBuilderOption {
 		p.blendState = blendState
 	}
 }
+
+// NewPipeline is the entry point to create a new Pipeline interface. A PipelineType must be specified and provided upon creation.
+//
+// Parameters:
+//   - pipelineKey: the unique key for this pipeline
+//   - pipelineType: the type of pipeline to create (render or compute)
+//   - opts: a variadic list of PipelineBuilderOption functions to configure the pipeline
+//
+// Returns:
+//   - Pipeline: a new Pipeline instance with the specified type and configuration
+func NewPipeline(pipelineKey string, pipelineType PipelineType, opts ...PipelineBuilderOption) Pipeline {
+	p := &pipeline{
+		pipelineKey:       pipelineKey,
+		pipelineType:      pipelineType,
+		depthTestEnabled:  true,
+		depthWriteEnabled: true,
+		blendEnabled:      false,
+		cullMode:          wgpu.CullModeNone,
+		topology:          wgpu.PrimitiveTopologyTriangleList,
+		frontFace:         wgpu.FrontFaceCCW,
+		writeMask:         wgpu.ColorWriteMaskAll,
+		blendState: &wgpu.BlendState{
+			Color: wgpu.BlendComponent{
+				SrcFactor: wgpu.BlendFactorSrcAlpha,
+				DstFactor: wgpu.BlendFactorOneMinusSrcAlpha,
+				Operation: wgpu.BlendOperationAdd,
+			},
+			Alpha: wgpu.BlendComponent{
+				SrcFactor: wgpu.BlendFactorOne,
+				DstFactor: wgpu.BlendFactorOneMinusSrcAlpha,
+				Operation: wgpu.BlendOperationAdd,
+			},
+		},
+	}
+	for _, opt := range opts {
+		opt(p)
+	}
+	p.Delegate = p
+	return p
+}

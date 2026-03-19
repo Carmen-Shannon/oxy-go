@@ -8,24 +8,25 @@ import (
 )
 
 // GPUCameraUniformSource is the canonical WGSL definition of the CameraUniform struct.
-// Matches GPUCameraUniform layout exactly (80 bytes, std430 aligned).
+// Matches GPUCameraUniform layout exactly (144 bytes, std430 aligned).
 //
 //go:embed assets/camera-uniform.wgsl
 var GPUCameraUniformSource string
 
 // GPUCameraUniform is the GPU-aligned representation of the camera uniform buffer.
 // Matches the WGSL CameraUniform struct layout exactly (see GPUCameraUniformSource).
-// Size: 80 bytes (std430 / WGSL aligned).
+// Size: 144 bytes (std430 / WGSL aligned).
 type GPUCameraUniform struct {
-	ViewProj       [16]float32 // offset  0: combined view-projection matrix (mat4x4<f32>)
-	CameraPosition [3]float32  // offset 64: world-space camera position (vec3<f32>)
-	_pad           float32     // offset 76: padding to 80 bytes
+	ViewProj       [16]float32 // offset   0: combined view-projection matrix (mat4x4<f32>)
+	View           [16]float32 // offset  64: view matrix (mat4x4<f32>)
+	CameraPosition [3]float32  // offset 128: world-space camera position (vec3<f32>)
+	_pad           float32     // offset 140: padding to 144 bytes
 }
 
 // Size returns the size of the GPUCameraUniform struct in bytes.
 //
 // Returns:
-//   - int: the struct size in bytes (80)
+//   - int: the struct size in bytes (144)
 func (g *GPUCameraUniform) Size() int {
 	return int(unsafe.Sizeof(*g))
 }
@@ -39,9 +40,12 @@ func (g *GPUCameraUniform) Marshal() []byte {
 	for i := range 16 {
 		binary.LittleEndian.PutUint32(buf[i*4:], math.Float32bits(g.ViewProj[i]))
 	}
-	for i := range 3 {
-		binary.LittleEndian.PutUint32(buf[64+i*4:], math.Float32bits(g.CameraPosition[i]))
+	for i := range 16 {
+		binary.LittleEndian.PutUint32(buf[64+i*4:], math.Float32bits(g.View[i]))
 	}
-	binary.LittleEndian.PutUint32(buf[76:], 0) // _pad
+	for i := range 3 {
+		binary.LittleEndian.PutUint32(buf[128+i*4:], math.Float32bits(g.CameraPosition[i]))
+	}
+	binary.LittleEndian.PutUint32(buf[140:], 0)
 	return buf
 }

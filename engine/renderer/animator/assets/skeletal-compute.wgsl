@@ -17,7 +17,7 @@
 
 // Maximum number of bones supported per skeleton. Must match the vertex shader's
 // InstanceData.bone_matrices array size so the output stride is consistent.
-const MAX_BONES: u32 = 64u;
+//@oxy:inject MAX_BONES u32 max_bones
 
 //@oxy:include skeletal_animation_data
 //@oxy:include frustum_plane

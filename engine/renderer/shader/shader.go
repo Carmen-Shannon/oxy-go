@@ -1,9 +1,13 @@
+// Package shader provides the [Shader] interface and WGSL source processing pipeline
+// for the oxy-go renderer.
+//
+// [Shader] wraps a compiled WGSL module with its parsed bind group layout descriptors,
+// vertex buffer layouts, workgroup size, entry point, and pre-processor annotations.
+// Instances are created via [NewShader] using functional options for optional configuration
+// such as injection maps for the @oxy:inject pre-processor annotation system.
 package shader
 
 import (
-	"fmt"
-	"os"
-
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/cogentcore/webgpu/wgpu"
 )
@@ -21,24 +25,6 @@ const (
 	// ShaderTypeFragment is the fragment shader type, used for fragment processing in pair with a vertex shader.
 	ShaderTypeFragment
 )
-
-// shader is the implementation of the Shader interface.
-// It holds all of the persistent shader data required for pipeline creation and material binding.
-type shader struct {
-	common.DelegateImpl[Shader]
-
-	key                        string
-	source                     string
-	shaderType                 ShaderType
-	bindGroupLayoutDescriptors map[int]wgpu.BindGroupLayoutDescriptor
-	bindingVarNames            map[int]map[int]string
-	vertexLayouts              map[int][]wgpu.VertexBufferLayout
-	workGroupSize              [3]uint32
-	entryPoint                 string
-	module                     *wgpu.ShaderModuleDescriptor
-
-	pp PreProcessor
-}
 
 // Shader defines the interface for a loaded and parsed WGSL shader. It exposes the shader's
 // unique key, source code, entry point, bind group layout descriptors, vertex buffer layouts,
@@ -154,65 +140,30 @@ type Shader interface {
 
 var _ Shader = &shader{}
 
-// NewShader creates a new Shader instance with all specified options applied.
-// The VertexLayouts are automatically parsed from the source code if WithSource is used.
-// Additionally, the VertexLayouts will be automatically parsed when setting the source via SetSource.
-//
-// Parameters:
-//   - key: a unique identifier for the shader, used for caching and lookups
-//   - shaderType: the type of shader (vertex, fragment or compute), used for validation and pipeline setup
-//   - sourcePath: the file path to read WGSL source from
-//
-// Returns:
-//   - Shader: a new Shader instance with the provided configuration
-func NewShader(key string, shaderType ShaderType, sourcePath string) Shader {
-	if sourcePath == "" {
-		panic(fmt.Sprintf("shader: %s must have a valid source provided via WithSourceFromPath", key))
-	}
-	s := &shader{
-		key:                        key,
-		shaderType:                 shaderType,
-		bindGroupLayoutDescriptors: make(map[int]wgpu.BindGroupLayoutDescriptor),
-		bindingVarNames:            make(map[int]map[int]string),
-		vertexLayouts:              make(map[int][]wgpu.VertexBufferLayout),
-		workGroupSize:              [3]uint32{0, 0, 0},
-		pp:                         NewPreProcessor(),
-	}
-	s.parseSourceFromPath(sourcePath)
-	s.Delegate = s
-	return s
-}
-
-func (s *shader) Key() string {
-	return s.key
-}
-
-func (s *shader) Source() string {
-	return s.source
-}
-
-func (s *shader) VertexLayout(key int) []wgpu.VertexBufferLayout {
-	return s.vertexLayouts[key]
-}
-
-func (s *shader) VertexLayouts() map[int][]wgpu.VertexBufferLayout {
-	return s.vertexLayouts
-}
-
-func (s *shader) EntryPoint() string {
-	return s.entryPoint
-}
-
-func (s *shader) WorkgroupSize() [3]uint32 {
-	return s.workGroupSize
-}
+func (s *shader) Key() string                                      { return s.key }
+func (s *shader) Source() string                                   { return s.source }
+func (s *shader) VertexLayout(key int) []wgpu.VertexBufferLayout   { return s.vertexLayouts[key] }
+func (s *shader) VertexLayouts() map[int][]wgpu.VertexBufferLayout { return s.vertexLayouts }
+func (s *shader) EntryPoint() string                               { return s.entryPoint }
+func (s *shader) WorkgroupSize() [3]uint32                         { return s.workGroupSize }
+func (s *shader) BindGroupVarNames() map[int]map[int]string        { return s.bindingVarNames }
+func (s *shader) Module() *wgpu.ShaderModuleDescriptor             { return s.module }
+func (s *shader) ShaderType() ShaderType                           { return s.shaderType }
+func (s *shader) Declarations() []Annotation                       { return s.pp.Declarations() }
 
 func (s *shader) BindGroupLayoutDescriptor(bindingKey int) wgpu.BindGroupLayoutDescriptor {
 	return s.bindGroupLayoutDescriptors[bindingKey]
 }
-
 func (s *shader) BindGroupLayoutDescriptors() map[int]wgpu.BindGroupLayoutDescriptor {
 	return s.bindGroupLayoutDescriptors
+}
+
+func (s *shader) SetVertexLayout(key int, layout []wgpu.VertexBufferLayout) {
+	s.vertexLayouts[key] = layout
+}
+
+func (s *shader) SetVertexLayouts(layouts map[int][]wgpu.VertexBufferLayout) {
+	s.vertexLayouts = layouts
 }
 
 func (s *shader) BindGroupVarName(group, binding int) string {
@@ -232,68 +183,4 @@ func (s *shader) BindGroupFromVarName(group int, varName string) (int, bool) {
 		}
 	}
 	return -1, false
-}
-
-func (s *shader) BindGroupVarNames() map[int]map[int]string {
-	return s.bindingVarNames
-}
-
-func (s *shader) Module() *wgpu.ShaderModuleDescriptor {
-	return s.module
-}
-
-func (s *shader) SetVertexLayout(key int, layout []wgpu.VertexBufferLayout) {
-	s.vertexLayouts[key] = layout
-}
-
-func (s *shader) SetVertexLayouts(layouts map[int][]wgpu.VertexBufferLayout) {
-	s.vertexLayouts = layouts
-}
-
-func (s *shader) ShaderType() ShaderType {
-	return s.shaderType
-}
-
-func (s *shader) Declarations() []Annotation {
-	return s.pp.Declarations()
-}
-
-// parseSource sets the WGSL source, builds the shader module descriptor, parses the
-// entry point name, and extracts layout metadata appropriate for the shader type.
-// Vertex shaders get vertex buffer layouts parsed. Compute shaders get workgroup size
-// parsed. All shader types get bind group layout descriptors parsed.
-func (s *shader) parseSourceFromPath(path string) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		panic(fmt.Sprintf("shader: failed to read source file %q: %v", path, err))
-	}
-	s.source, err = s.pp.Process(string(data))
-	if err != nil {
-		panic(fmt.Sprintf("shader: failed to pre-process shader source %q: %v", path, err))
-	}
-	s.module = &wgpu.ShaderModuleDescriptor{
-		Label: s.key,
-		WGSLDescriptor: &wgpu.ShaderModuleWGSLDescriptor{
-			Code: s.source,
-		},
-	}
-	s.entryPoint = parseEntryPoint(s.source, s.shaderType)
-	if s.shaderType == ShaderTypeVertex {
-		s.vertexLayouts = parseVertexLayouts(s.source)
-	}
-	if s.shaderType == ShaderTypeCompute {
-		s.workGroupSize = parseWorkgroupSize(s.source)
-	}
-	var visibility wgpu.ShaderStage
-	switch s.shaderType {
-	case ShaderTypeVertex:
-		visibility = wgpu.ShaderStageVertex
-	case ShaderTypeFragment:
-		visibility = wgpu.ShaderStageFragment
-	case ShaderTypeCompute:
-		visibility = wgpu.ShaderStageCompute
-	default:
-		visibility = wgpu.ShaderStageNone
-	}
-	s.bindGroupLayoutDescriptors, s.bindingVarNames = parseBindGroupLayouts(s.source, visibility)
 }

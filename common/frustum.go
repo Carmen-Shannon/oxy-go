@@ -68,11 +68,11 @@ func ExtractFrustumFromMatrix(viewProj []float32) Frustum {
 	f.Planes[FrustumTop].Normal[2] = viewProj[11] - viewProj[9]
 	f.Planes[FrustumTop].Distance = viewProj[15] - viewProj[13]
 
-	// Near plane: row3 + row2
-	f.Planes[FrustumNear].Normal[0] = viewProj[3] + viewProj[2]
-	f.Planes[FrustumNear].Normal[1] = viewProj[7] + viewProj[6]
-	f.Planes[FrustumNear].Normal[2] = viewProj[11] + viewProj[10]
-	f.Planes[FrustumNear].Distance = viewProj[15] + viewProj[14]
+	// Near plane: row2 (WebGPU NDC z in [0,1]; condition is z_clip >= 0)
+	f.Planes[FrustumNear].Normal[0] = viewProj[2]
+	f.Planes[FrustumNear].Normal[1] = viewProj[6]
+	f.Planes[FrustumNear].Normal[2] = viewProj[10]
+	f.Planes[FrustumNear].Distance = viewProj[14]
 
 	// Far plane: row3 - row2
 	f.Planes[FrustumFar].Normal[0] = viewProj[3] - viewProj[2]

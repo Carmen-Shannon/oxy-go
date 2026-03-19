@@ -23,9 +23,9 @@
 //@oxy:group 0 1 storage_read_write particles array<physics_particle>
 //@oxy:group 0 2 storage_uniform globals physics_globals
 
-const FLAG_ACTIVE: u32    = 1u;       // bit 0
-const FLAG_STATIC: u32    = 2u;       // bit 1
-const FLAG_KINEMATIC: u32 = 4u;       // bit 2
+//@oxy:inject FLAG_ACTIVE u32 flag_active
+//@oxy:inject FLAG_STATIC u32 flag_static
+//@oxy:inject FLAG_KINEMATIC u32 flag_kinematic
 
 // quat_rotate_vec3 rotates a vector by a unit quaternion.
 // Quaternion layout: (x, y, z, w) where w is the scalar part.

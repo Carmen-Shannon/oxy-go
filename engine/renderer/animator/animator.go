@@ -1,3 +1,8 @@
+// Package animator provides animation orchestration for instance data used by the renderer.
+//
+// [Animator] is the primary interface in this package, bridging simple instance animation and
+// skeletal animation backends behind a shared API. The package is also responsible for per-frame
+// GPU staging and flush preparation for animation compute and output buffers.
 package animator
 
 import (
@@ -6,15 +11,6 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/cogentcore/webgpu/wgpu"
 )
-
-// animator is the implementation of the Animator interface.
-type animator struct {
-	common.DelegateImpl[Animator]
-
-	backendType AnimatorBackendType
-	backend     AnimatorBackend
-	model       model.Model
-}
 
 // Animator defines the public interface for the animation system.
 //
@@ -348,39 +344,23 @@ type Animator interface {
 
 var _ Animator = &animator{}
 
-// NewAnimator creates a new Animator instance with the specified backend type.
-// The backend is created based on the type and then configured using the provided options.
-// Binding indices are configured via WithBinding options rather than fixed struct parameters,
-// allowing any shader binding layout.
-//
-// Parameters:
-//   - backendType: the type of animation backend to use (BackendTypeSimple or BackendTypeSkeletal)
-//   - options: variadic list of AnimatorBuilderOption functions to configure the Animator
-//
-// Returns:
-//   - Animator: a new instance of Animator configured with the specified backend and options
-func NewAnimator(backendType AnimatorBackendType, options ...AnimatorBuilderOption) Animator {
-	a := &animator{
-		backendType: backendType,
-	}
-	switch backendType {
-	case BackendTypeSkeletal:
-		a.backend = newSkeletalAnimatorBackend()
-	case BackendTypeSimple:
-		fallthrough
-	default:
-		a.backend = newSimpleAnimatorBackend()
-	}
-	for _, opt := range options {
-		opt(a)
-	}
-	a.Delegate = a
-	return a
-}
-
-func (a *animator) MaxInstances() uint32 {
-	return a.backend.MaxInstances()
-}
+func (a *animator) MaxInstances() uint32                       { return a.backend.MaxInstances() }
+func (a *animator) Release()                                   { a.backend.Release() }
+func (a *animator) BackendType() AnimatorBackendType           { return a.backendType }
+func (a *animator) SetBoneCount(count uint32)                  { a.backend.SetBoneCount(count) }
+func (a *animator) CancelBlend(instanceIndex uint32)           { a.backend.CancelBlend(instanceIndex) }
+func (a *animator) Model() model.Model                         { return a.model }
+func (a *animator) SetFrustumPlanes(planes [6]GPUFrustumPlane) { a.backend.SetFrustumPlanes(planes) }
+func (a *animator) SetBoundingRadius(radius float32)           { a.backend.SetBoundingRadius(radius) }
+func (a *animator) BoundingRadius() float32                    { return a.backend.BoundingRadius() }
+func (a *animator) IndirectBuffer(binding int) *wgpu.Buffer    { return a.backend.IndirectBuffer(binding) }
+func (a *animator) CullingEnabled() bool                       { return a.backend.CullingEnabled() }
+func (a *animator) IsBlending(instanceIndex uint32) bool       { return a.backend.IsBlending(instanceIndex) }
+func (a *animator) NeedsRebuild() bool                         { return a.backend.NeedsRebuild() }
+func (a *animator) ClearNeedsRebuild()                         { a.backend.ClearNeedsRebuild() }
+func (a *animator) InstanceCount() uint32                      { return a.backend.InstanceCount() }
+func (a *animator) AddInstance() (uint32, error)               { return a.backend.AddInstance() }
+func (a *animator) Grow(newMax uint32)                         { a.backend.Grow(newMax) }
 
 func (a *animator) ComputeBindGroupProvider() bind_group_provider.BindGroupProvider {
 	return a.backend.ComputeBindGroupProvider()
@@ -390,28 +370,8 @@ func (a *animator) OutputBindGroupProvider() bind_group_provider.BindGroupProvid
 	return a.backend.OutputBindGroupProvider()
 }
 
-func (a *animator) AddInstance() (uint32, error) {
-	return a.backend.AddInstance()
-}
-
-func (a *animator) Grow(newMax uint32) {
-	a.backend.Grow(newMax)
-}
-
 func (a *animator) RemoveInstance(index uint32) (uint32, bool) {
 	return a.backend.RemoveInstance(index)
-}
-
-func (a *animator) NeedsRebuild() bool {
-	return a.backend.NeedsRebuild()
-}
-
-func (a *animator) ClearNeedsRebuild() {
-	a.backend.ClearNeedsRebuild()
-}
-
-func (a *animator) InstanceCount() uint32 {
-	return a.backend.InstanceCount()
 }
 
 func (a *animator) StagedWriteData() []bind_group_provider.BufferWrite {
@@ -438,18 +398,6 @@ func (a *animator) PrepareFrame(deltaTime float32, binding int) {
 	a.backend.PrepareFrame(deltaTime, binding)
 }
 
-func (a *animator) Release() {
-	a.backend.Release()
-}
-
-func (a *animator) BackendType() AnimatorBackendType {
-	return a.backendType
-}
-
-func (a *animator) SetBoneCount(count uint32) {
-	a.backend.SetBoneCount(count)
-}
-
 func (a *animator) SetBone(index uint32, inverseBindMatrix [16]float32, localTranslation [3]float32, localRotation [4]float32, localScale [3]float32, parentIndex int32, binding int) {
 	a.backend.SetBone(index, inverseBindMatrix, localTranslation, localRotation, localScale, parentIndex, binding)
 }
@@ -474,20 +422,20 @@ func (a *animator) SetAnimationSpeed(instanceIndex uint32, speed float32) {
 	a.backend.SetAnimationSpeed(instanceIndex, speed)
 }
 
-func (a *animator) IsBlending(instanceIndex uint32) bool {
-	return a.backend.IsBlending(instanceIndex)
-}
-
 func (a *animator) BlendProgress(instanceIndex uint32) float32 {
 	return a.backend.BlendProgress(instanceIndex)
 }
 
-func (a *animator) CancelBlend(instanceIndex uint32) {
-	a.backend.CancelBlend(instanceIndex)
+func (a *animator) ResetIndirectArgs(indexCount uint32, binding int) {
+	a.backend.ResetIndirectArgs(indexCount, binding)
 }
 
-func (a *animator) Model() model.Model {
-	return a.model
+func (a *animator) InstanceTransform(index uint32) (pos, scale [3]float32) {
+	return a.backend.InstanceTransform(index)
+}
+
+func (a *animator) InstanceRotation(index uint32) (rotSpeed, rot [3]float32) {
+	return a.backend.InstanceRotation(index)
 }
 
 func (a *animator) SetModel(m model.Model, boneBinding, packedBinding int) {
@@ -558,36 +506,4 @@ func (a *animator) SetModel(m model.Model, boneBinding, packedBinding int) {
 
 		a.AddClip(clip.Duration, clip.TicksPerSecond, channels, times, translations, rotations, scales, packedBinding)
 	}
-}
-
-func (a *animator) SetFrustumPlanes(planes [6]GPUFrustumPlane) {
-	a.backend.SetFrustumPlanes(planes)
-}
-
-func (a *animator) SetBoundingRadius(radius float32) {
-	a.backend.SetBoundingRadius(radius)
-}
-
-func (a *animator) BoundingRadius() float32 {
-	return a.backend.BoundingRadius()
-}
-
-func (a *animator) IndirectBuffer(binding int) *wgpu.Buffer {
-	return a.backend.IndirectBuffer(binding)
-}
-
-func (a *animator) CullingEnabled() bool {
-	return a.backend.CullingEnabled()
-}
-
-func (a *animator) ResetIndirectArgs(indexCount uint32, binding int) {
-	a.backend.ResetIndirectArgs(indexCount, binding)
-}
-
-func (a *animator) InstanceTransform(index uint32) (pos, scale [3]float32) {
-	return a.backend.InstanceTransform(index)
-}
-
-func (a *animator) InstanceRotation(index uint32) (rotSpeed, rot [3]float32) {
-	return a.backend.InstanceRotation(index)
 }

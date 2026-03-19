@@ -1,10 +1,14 @@
 package camera
 
 import (
+	"math"
+	"strconv"
+	"sync"
+
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 )
 
-type CameraBuilderOption func(*cameraImpl)
+type CameraBuilderOption func(*camera)
 
 // WithUp sets the camera's up vector.
 //
@@ -14,7 +18,7 @@ type CameraBuilderOption func(*cameraImpl)
 // Returns:
 //   - CameraBuilderOption: a function that sets the camera's up vector
 func WithUp(x, y, z float32) CameraBuilderOption {
-	return func(c *cameraImpl) {
+	return func(c *camera) {
 		c.up = [3]float32{x, y, z}
 		c.updateMatrices()
 	}
@@ -28,7 +32,7 @@ func WithUp(x, y, z float32) CameraBuilderOption {
 // Returns:
 //   - CameraBuilderOption: a function that sets the camera's field of view
 func WithFov(fov float32) CameraBuilderOption {
-	return func(c *cameraImpl) {
+	return func(c *camera) {
 		c.fov = fov
 		c.updateMatrices()
 	}
@@ -42,7 +46,7 @@ func WithFov(fov float32) CameraBuilderOption {
 // Returns:
 //   - CameraBuilderOption: a function that sets the camera's aspect ratio
 func WithAspect(aspect float32) CameraBuilderOption {
-	return func(c *cameraImpl) {
+	return func(c *camera) {
 		c.aspect = aspect
 		c.updateMatrices()
 	}
@@ -56,7 +60,7 @@ func WithAspect(aspect float32) CameraBuilderOption {
 // Returns:
 //   - CameraBuilderOption: a function that sets the near plane
 func WithNear(near float32) CameraBuilderOption {
-	return func(c *cameraImpl) {
+	return func(c *camera) {
 		c.near = near
 		c.updateMatrices()
 	}
@@ -70,7 +74,7 @@ func WithNear(near float32) CameraBuilderOption {
 // Returns:
 //   - CameraBuilderOption: functional option to set the far plane
 func WithFar(far float32) CameraBuilderOption {
-	return func(c *cameraImpl) {
+	return func(c *camera) {
 		c.far = far
 		c.updateMatrices()
 	}
@@ -85,7 +89,7 @@ func WithFar(far float32) CameraBuilderOption {
 // Returns:
 //   - CameraBuilderOption: functional option to set the controller
 func WithController(ctrl CameraController) CameraBuilderOption {
-	return func(c *cameraImpl) {
+	return func(c *camera) {
 		c.controller = ctrl
 	}
 }
@@ -99,7 +103,42 @@ func WithController(ctrl CameraController) CameraBuilderOption {
 // Returns:
 //   - CameraBuilderOption: functional option to set the bind group provider
 func WithBindGroupProvider(provider bind_group_provider.BindGroupProvider) CameraBuilderOption {
-	return func(c *cameraImpl) {
+	return func(c *camera) {
 		c.bindGroupProvider = provider
 	}
+}
+
+// NewCamera creates a new Camera with default perspective settings.
+// A controller must be attached via SetController or WithController option
+// before position/target data is available.
+//
+// Parameters:
+//   - options: functional options to configure the camera
+//
+// Returns:
+//   - Camera: the newly created camera
+func NewCamera(options ...CameraBuilderOption) Camera {
+	c := &camera{
+		mu:                   &sync.Mutex{},
+		up:                   [3]float32{0, 1, 0},
+		fov:                  45.0 * (math.Pi / 180.0), // radians
+		aspect:               1.0,
+		near:                 0.1,
+		far:                  100.0,
+		viewMatrix:           [16]float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1},
+		projectionMatrix:     [16]float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1},
+		viewProjectionMatrix: [16]float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1},
+		bindGroupProvider: bind_group_provider.NewBindGroupProvider(
+			"camera_" + strconv.FormatUint(cameraCount.Load(), 10),
+		),
+	}
+	for _, option := range options {
+		option(c)
+	}
+	if c.controller != nil {
+		c.updateMatrices()
+	}
+	cameraCount.Add(1)
+	c.Delegate = c
+	return c
 }

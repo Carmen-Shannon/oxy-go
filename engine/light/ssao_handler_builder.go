@@ -40,6 +40,20 @@ func WithSSAOSampleCount(count int) SSAOHandlerOption {
 	}
 }
 
+// WithSSAOMaxSamples sets the GPU compile-time upper bound for the SSAO kernel
+// sample array.
+//
+// Parameters:
+//   - max: the maximum number of samples (recommended: 32)
+//
+// Returns:
+//   - SSAOHandlerOption: a function that applies the max samples option to an ssaoHandlerImpl
+func WithSSAOMaxSamples(max int) SSAOHandlerOption {
+	return func(h *ssaoHandlerImpl) {
+		h.maxSamples = max
+	}
+}
+
 // WithSSAORadius sets the hemisphere sampling radius in world-space units.
 // Larger radii detect occlusion over longer distances but may introduce
 // halo artifacts.
@@ -134,6 +148,7 @@ func NewSSAOHandler(opts ...SSAOHandlerOption) SSAOHandler {
 	h := &ssaoHandlerImpl{
 		enabled:      false,
 		sampleCount:  16,
+		maxSamples:   32,
 		radius:       0.5,
 		bias:         0.025,
 		power:        2.0,

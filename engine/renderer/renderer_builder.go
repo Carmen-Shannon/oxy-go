@@ -1,7 +1,10 @@
 package renderer
 
 import (
+	"sync"
+
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
+	"github.com/Carmen-Shannon/oxy-go/engine/window"
 )
 
 // RendererBuilderOption is a functional option applied to a renderer during construction via NewRenderer.
@@ -76,4 +79,48 @@ func WithForceSoftwareRenderer(force bool) RendererBuilderOption {
 	return func(r *renderer) {
 		r.forceFallbackAdapter = force
 	}
+}
+
+// NewRenderer creates a new Renderer instance with the specified backend type and surface descriptor.
+// The surface descriptor is platform-specific and is typically obtained from Window.GetSurfaceDescriptor().
+//
+// Parameters:
+//   - backendType: the type of rendering backend to use (e.g., WGPU)
+//   - surfaceDescriptor: the platform-specific surface descriptor for WebGPU surface creation
+//   - options: variadic list of RendererBuilderOption functions to configure the Renderer
+//
+// Returns:
+//   - Renderer: a new instance of Renderer configured with the specified backend and options
+func NewRenderer(backendType RendererBackendType, window window.Window, options ...RendererBuilderOption) Renderer {
+	r := &renderer{
+		mu:            &sync.Mutex{},
+		pipelineCache: make(map[string]pipeline.Pipeline),
+		backendType:   backendType,
+	}
+
+	// Apply options first so config flags (e.g. forceFallbackAdapter) are
+	// available before the backend requests a GPU adapter.
+	for _, opt := range options {
+		opt(r)
+	}
+
+	msaa := MSAA4x // default
+	if r.pendingMSAA != nil {
+		msaa = *r.pendingMSAA
+	}
+
+	switch backendType {
+	case BackendTypeWGPU:
+		fallthrough
+	default:
+		r.backend = newWGPURendererBackend(window.SurfaceDescriptor(), r.forceFallbackAdapter, msaa)
+	}
+
+	if r.pendingPresentMode != nil {
+		r.backend.SetPresentMode(*r.pendingPresentMode)
+	}
+
+	r.backend.ConfigureSurface(window.Width(), window.Height())
+	r.Delegate = r
+	return r
 }

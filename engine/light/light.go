@@ -1,3 +1,11 @@
+// Package light provides the lighting subsystem interfaces for the rendering engine.
+//
+// This package defines the core types for scene illumination and deferred shading,
+// including [Light] sources, [ShadowHandler] cascade and atlas management,
+// [SSAOHandler] and [SSRHandler] screen-space effects, [GBufferHandler] geometry
+// buffer management, [CompositionHandler] tone mapping, and [ContactShadowHandler]
+// ray-marched contact shadows. GPU type definitions and standalone utilities live
+// alongside these interfaces.
 package light
 
 import "github.com/Carmen-Shannon/oxy-go/common"
@@ -21,23 +29,6 @@ const (
 	// distance and angle from the cone axis, controlled by inner and outer cone angles.
 	LightTypeSpot
 )
-
-// lightImpl is the implementation of the Light interface.
-type lightImpl struct {
-	common.DelegateImpl[Light]
-
-	lightType    LightType
-	position     [3]float32
-	direction    [3]float32
-	color        [3]float32
-	intensity    float32
-	lightRange   float32
-	innerCone    float32 // stored as cos(angle in radians)
-	outerCone    float32 // stored as cos(angle in radians)
-	enabled      bool
-	ephemeral    bool
-	castsShadows bool
-}
 
 // Light defines the interface for a light source in the scene.
 //
@@ -186,117 +177,45 @@ type Light interface {
 	// Parameters:
 	//   - castsShadows: true to enable shadow casting
 	SetCastsShadows(castsShadows bool)
+
+	// ShadowBias returns the depth comparison bias for this light's shadow map.
+	//
+	// Returns:
+	//   - float32: the shadow bias
+	ShadowBias() float32
+
+	// SetShadowBias sets the depth comparison bias for this light's shadow map.
+	//
+	// Parameters:
+	//   - bias: the depth bias value
+	SetShadowBias(bias float32)
 }
 
 var _ Light = &lightImpl{}
 
-// NewLight creates a new Light of the specified type with sensible defaults and
-// any provided options applied.
-//
-// Parameters:
-//   - lightType: the kind of light to create (directional, point, or spot)
-//   - opts: variadic list of LightBuilderOption functions to configure the light
-//
-// Returns:
-//   - Light: a new Light instance
-func NewLight(lightType LightType, opts ...LightBuilderOption) Light {
-	l := &lightImpl{
-		lightType:    lightType,
-		position:     [3]float32{0, 0, 0},
-		direction:    [3]float32{0, -1, 0},
-		color:        [3]float32{1, 1, 1},
-		intensity:    1.0,
-		lightRange:   10.0,
-		innerCone:    0.9063, // cos(25°)
-		outerCone:    0.8192, // cos(35°)
-		enabled:      true,
-		ephemeral:    false,
-		castsShadows: false,
-	}
-	for _, opt := range opts {
-		opt(l)
-	}
-	l.Delegate = l
-	return l
-}
-
-func (l *lightImpl) Type() LightType {
-	return l.lightType
-}
-
-func (l *lightImpl) Position() [3]float32 {
-	return l.position
-}
-
-func (l *lightImpl) Direction() [3]float32 {
-	return l.direction
-}
-
-func (l *lightImpl) Color() [3]float32 {
-	return l.color
-}
-
-func (l *lightImpl) Intensity() float32 {
-	return l.intensity
-}
-
-func (l *lightImpl) Range() float32 {
-	return l.lightRange
-}
-
-func (l *lightImpl) InnerCone() float32 {
-	return l.innerCone
-}
-
-func (l *lightImpl) OuterCone() float32 {
-	return l.outerCone
-}
-
-func (l *lightImpl) Enabled() bool {
-	return l.enabled
-}
-
-func (l *lightImpl) Ephemeral() bool {
-	return l.ephemeral
-}
-
-func (l *lightImpl) CastsShadows() bool {
-	return l.castsShadows
-}
-
-func (l *lightImpl) SetPosition(x, y, z float32) {
-	l.position = [3]float32{x, y, z}
-}
-
-func (l *lightImpl) SetDirection(x, y, z float32) {
-	l.direction = normalize3(x, y, z)
-}
-
-func (l *lightImpl) SetColor(r, g, b float32) {
-	l.color = [3]float32{r, g, b}
-}
-
-func (l *lightImpl) SetIntensity(intensity float32) {
-	l.intensity = intensity
-}
-
-func (l *lightImpl) SetRange(lightRange float32) {
-	l.lightRange = lightRange
-}
+func (l *lightImpl) Type() LightType                   { return l.lightType }
+func (l *lightImpl) Position() [3]float32              { return l.position }
+func (l *lightImpl) Direction() [3]float32             { return l.direction }
+func (l *lightImpl) Color() [3]float32                 { return l.color }
+func (l *lightImpl) Intensity() float32                { return l.intensity }
+func (l *lightImpl) Range() float32                    { return l.lightRange }
+func (l *lightImpl) InnerCone() float32                { return l.innerCone }
+func (l *lightImpl) OuterCone() float32                { return l.outerCone }
+func (l *lightImpl) Enabled() bool                     { return l.enabled }
+func (l *lightImpl) Ephemeral() bool                   { return l.ephemeral }
+func (l *lightImpl) CastsShadows() bool                { return l.castsShadows }
+func (l *lightImpl) SetPosition(x, y, z float32)       { l.position = [3]float32{x, y, z} }
+func (l *lightImpl) SetDirection(x, y, z float32)      { l.direction = normalize3(x, y, z) }
+func (l *lightImpl) SetColor(r, g, b float32)          { l.color = [3]float32{r, g, b} }
+func (l *lightImpl) SetIntensity(intensity float32)    { l.intensity = intensity }
+func (l *lightImpl) SetRange(lightRange float32)       { l.lightRange = lightRange }
+func (l *lightImpl) SetEnabled(enabled bool)           { l.enabled = enabled }
+func (l *lightImpl) SetEphemeral(ephemeral bool)       { l.ephemeral = ephemeral }
+func (l *lightImpl) SetCastsShadows(castsShadows bool) { l.castsShadows = castsShadows }
+func (l *lightImpl) ShadowBias() float32               { return l.shadowBias }
+func (l *lightImpl) SetShadowBias(bias float32)        { l.shadowBias = bias }
 
 func (l *lightImpl) SetSpotCone(innerDeg, outerDeg float32) {
 	l.innerCone = cosDeg(innerDeg)
 	l.outerCone = cosDeg(outerDeg)
-}
-
-func (l *lightImpl) SetEnabled(enabled bool) {
-	l.enabled = enabled
-}
-
-func (l *lightImpl) SetEphemeral(ephemeral bool) {
-	l.ephemeral = ephemeral
-}
-
-func (l *lightImpl) SetCastsShadows(castsShadows bool) {
-	l.castsShadows = castsShadows
 }

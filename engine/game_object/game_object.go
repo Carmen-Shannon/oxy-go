@@ -1,33 +1,19 @@
+// Package game_object provides the [GameObject] interface — a scene entity bound to an
+// [animator.Animator] instance.
+//
+// Transform data (position, rotation, scale) is derived from the Animator's internal
+// arrays via an instance ID, eliminating per-object data duplication. GameObjects can
+// have attached [light.Light] and [physics.RigidBody] components. Instances are created
+// via [NewGameObject] using functional options.
 package game_object
 
 import (
-	"sync/atomic"
-
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/light"
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
 	"github.com/Carmen-Shannon/oxy-go/engine/physics"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/animator"
 )
-
-type gameObject struct {
-	common.DelegateImpl[GameObject]
-
-	id                 uint64
-	enabled            atomic.Bool
-	ephemeral          bool
-	mdl                model.Model
-	animator           animator.Animator
-	animatorInstanceID int
-	attachedLight      light.Light
-	rigidBody          physics.RigidBody
-
-	// initial transform state used before the object is added to a Scene
-	initialPosition      [3]float32
-	initialScale         [3]float32
-	initialRotation      [3]float32
-	initialRotationSpeed [3]float32
-}
 
 // GameObject defines the interface for a scene entity bound to an Animator instance.
 // Position, rotation, and scale are derived from the Animator's internal arrays
@@ -193,47 +179,21 @@ type GameObject interface {
 
 var _ GameObject = &gameObject{}
 
-// NewGameObject creates a new GameObject configured with the given options.
-//
-// Parameters:
-//   - options: functional options to configure the object
-//
-// Returns:
-//   - GameObject: the newly created object
-func NewGameObject(options ...GameObjectBuilderOption) GameObject {
-	obj := &gameObject{
-		initialScale: [3]float32{1, 1, 1},
-	}
-	for _, option := range options {
-		option(obj)
-	}
-	obj.Delegate = obj
-	return obj
-}
-
-func (g *gameObject) ID() uint64 {
-	return g.id
-}
-
-func (g *gameObject) Enabled() bool {
-	return g.enabled.Load()
-}
-
-func (g *gameObject) Ephemeral() bool {
-	return g.ephemeral
-}
-
-func (g *gameObject) Model() model.Model {
-	return g.mdl
-}
-
-func (g *gameObject) Animator() animator.Animator {
-	return g.animator
-}
-
-func (g *gameObject) AnimatorInstanceID() int {
-	return g.animatorInstanceID
-}
+func (g *gameObject) ID() uint64                           { return g.id }
+func (g *gameObject) Enabled() bool                        { return g.enabled.Load() }
+func (g *gameObject) Ephemeral() bool                      { return g.ephemeral }
+func (g *gameObject) Model() model.Model                   { return g.mdl }
+func (g *gameObject) Animator() animator.Animator          { return g.animator }
+func (g *gameObject) AnimatorInstanceID() int              { return g.animatorInstanceID }
+func (g *gameObject) SetID(id uint64)                      { g.id = id }
+func (g *gameObject) SetEnabled(enabled bool)              { g.enabled.Store(enabled) }
+func (g *gameObject) SetModel(m model.Model)               { g.mdl = m }
+func (g *gameObject) SetAnimator(anim animator.Animator)   { g.animator = anim }
+func (g *gameObject) SetAnimatorInstanceID(instanceID int) { g.animatorInstanceID = instanceID }
+func (g *gameObject) Light() light.Light                   { return g.attachedLight }
+func (g *gameObject) SetLight(l light.Light)               { g.attachedLight = l }
+func (g *gameObject) RigidBody() physics.RigidBody         { return g.rigidBody }
+func (g *gameObject) SetRigidBody(rb physics.RigidBody)    { g.rigidBody = rb }
 
 func (g *gameObject) Position() (x, y, z float32) {
 	if g.animator == nil {
@@ -276,26 +236,6 @@ func (g *gameObject) TransformData() (pos, scale, rot, rotSpeed [3]float32) {
 	return
 }
 
-func (g *gameObject) SetID(id uint64) {
-	g.id = id
-}
-
-func (g *gameObject) SetEnabled(enabled bool) {
-	g.enabled.Store(enabled)
-}
-
-func (g *gameObject) SetModel(m model.Model) {
-	g.mdl = m
-}
-
-func (g *gameObject) SetAnimator(anim animator.Animator) {
-	g.animator = anim
-}
-
-func (g *gameObject) SetAnimatorInstanceID(instanceID int) {
-	g.animatorInstanceID = instanceID
-}
-
 func (g *gameObject) SetPosition(x, y, z float32) {
 	if g.animator == nil {
 		g.initialPosition = [3]float32{x, y, z}
@@ -330,20 +270,4 @@ func (g *gameObject) SetScale(sx, sy, sz float32) {
 	}
 	pos, _ := g.animator.InstanceTransform(uint32(g.animatorInstanceID))
 	g.animator.SetInstanceTransform(uint32(g.animatorInstanceID), pos, [3]float32{sx, sy, sz})
-}
-
-func (g *gameObject) Light() light.Light {
-	return g.attachedLight
-}
-
-func (g *gameObject) SetLight(l light.Light) {
-	g.attachedLight = l
-}
-
-func (g *gameObject) RigidBody() physics.RigidBody {
-	return g.rigidBody
-}
-
-func (g *gameObject) SetRigidBody(rb physics.RigidBody) {
-	g.rigidBody = rb
 }

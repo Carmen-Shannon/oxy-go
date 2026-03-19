@@ -152,3 +152,21 @@ func WithRigidBody(rb physics.RigidBody) GameObjectBuilderOption {
 		obj.rigidBody = rb
 	}
 }
+
+// NewGameObject creates a new GameObject configured with the given options.
+//
+// Parameters:
+//   - options: functional options to configure the object
+//
+// Returns:
+//   - GameObject: the newly created object
+func NewGameObject(options ...GameObjectBuilderOption) GameObject {
+	obj := &gameObject{
+		initialScale: [3]float32{1, 1, 1},
+	}
+	for _, option := range options {
+		option(obj)
+	}
+	obj.Delegate = obj
+	return obj
+}

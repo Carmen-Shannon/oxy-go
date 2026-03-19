@@ -200,3 +200,21 @@ func WithShadowCullMode(mode ShadowCullMode) ModelBuilderOption {
 		m.shadowCullMode = mode
 	}
 }
+
+// NewModel creates a new Model instance with the specified options applied.
+//
+// Parameters:
+//   - options: a variadic list of ModelBuilderOption functions to configure the Model
+//
+// Returns:
+//   - Model: a new instance of Model configured with the provided options
+func NewModel(options ...ModelBuilderOption) Model {
+	m := &model{
+		castsShadows: true,
+	}
+	for _, opt := range options {
+		opt(m)
+	}
+	m.Delegate = m
+	return m
+}

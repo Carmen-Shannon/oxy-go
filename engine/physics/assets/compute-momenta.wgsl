@@ -23,8 +23,8 @@
 //@oxy:group 0 1 storage_read particles array<physics_particle>
 //@oxy:group 0 2 storage_uniform globals physics_globals
 
-const FLAG_STATIC: u32    = 2u;
-const FLAG_KINEMATIC: u32 = 4u;
+//@oxy:inject FLAG_STATIC u32 flag_static
+//@oxy:inject FLAG_KINEMATIC u32 flag_kinematic
 
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {

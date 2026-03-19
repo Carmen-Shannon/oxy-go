@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"sync"
 
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine"
@@ -29,7 +30,7 @@ func main() {
 		engine.WithProfiling(true),
 		engine.WithTickRate(60),
 		engine.WithWindow(window.NewWindow(
-			window.WithTitle("Oxy Engine - Lit Scene (Forward+ / VSM+PCSS / SSAO / SSR / HDR)"),
+			window.WithTitle("Oxy Engine - Lit Scene (Forward+ / CSM+PCF / SSAO / SSR / HDR)"),
 			window.WithWidth(1920),
 			window.WithHeight(1080),
 		)),
@@ -47,7 +48,7 @@ func main() {
 		camera.WithFov(float32(45.0*math.Pi/180.0)),
 		camera.WithAspect(float32(eng.Window().Width())/float32(eng.Window().Height())),
 		camera.WithNear(0.1),
-		camera.WithFar(1000),
+		camera.WithFar(20000),
 		camera.WithController(camera.NewCameraController(
 			camera.WithRadius(200),
 			camera.WithTarget(0, 40, 0),
@@ -65,18 +66,17 @@ func main() {
 		scene.WithActive(true),
 		scene.WithScreenSize(eng.Window().Width(), eng.Window().Height()),
 		scene.WithLighting(light.NewLightingHandler(
-			light.WithShadowHalfExtent(120),
-			light.WithShadowNearFar(0.1, 400),
-			light.WithShadowBias(0.001),
-			light.WithShadowMapResolution(720),
-			light.WithPCSSEnabled(false),
-			light.WithVSMLightSize(10.0),
-			light.WithVSMMinVariance(0.001),
-			light.WithVSMLightBleedReduction(0.1),
+			light.WithShadowHandler(light.NewShadowHandler(
+				light.WithPCFRadius(2.0),
+				light.WithShadowNearFar(0.1, 2000),
+				light.WithShadowNormalBiasScale(2.0),
+				light.WithShadowMapResolution(2048),
+				light.WithShadowInnerRadius(1000),
+			)),
 			light.WithGBufferHandler(light.NewGBufferHandler()),
 			light.WithSSAOHandler(light.NewSSAOHandler(
 				light.WithSSAOSampleCount(16),
-				light.WithSSAORadius(0.5),
+				light.WithSSAORadius(0.1),
 				light.WithSSAOBias(0.025),
 				light.WithSSAOPower(2.0),
 				light.WithSSAOBlurRadius(2),
@@ -101,9 +101,10 @@ func main() {
 	sun := light.NewLight(light.LightTypeDirectional,
 		light.WithDirection(0, -1, 0),
 		light.WithColor(1.0, 0.95, 0.85),
-		light.WithIntensity(1.5),
+		light.WithIntensity(0.5),
 		light.WithCastsShadows(true),
-		light.WithEnabled(true),
+		light.WithShadowBias(0.0005),
+		light.WithEnabled(false),
 	)
 	sc.AddLight(sun)
 
@@ -111,9 +112,11 @@ func main() {
 	bluePoint := light.NewLight(light.LightTypePoint,
 		light.WithPosition(-50, 50, 30),
 		light.WithColor(0.2, 0.4, 1.0),
-		light.WithIntensity(1.5),
+		light.WithIntensity(1.0),
 		light.WithRange(200),
 		light.WithEnabled(true),
+		light.WithCastsShadows(true),
+		light.WithShadowBias(0.0005),
 	)
 	sc.AddLight(bluePoint)
 
@@ -121,21 +124,25 @@ func main() {
 	orangePoint := light.NewLight(light.LightTypePoint,
 		light.WithPosition(50, 50, -30),
 		light.WithColor(1.0, 0.5, 0.1),
-		light.WithIntensity(1.5),
+		light.WithIntensity(1.0),
 		light.WithRange(200),
 		light.WithEnabled(true),
+		light.WithCastsShadows(true),
+		light.WithShadowBias(0.0005),
 	)
 	sc.AddLight(orangePoint)
 
 	// Spot light (overhead, angled down)
 	spot := light.NewLight(light.LightTypeSpot,
-		light.WithPosition(0, 80, 60),
+		light.WithPosition(0, 100, 80),
 		light.WithDirection(0, -1, -0.5),
 		light.WithColor(0.0, 1.0, 0.5),
-		light.WithIntensity(2.0),
+		light.WithIntensity(1.0),
 		light.WithRange(200),
-		light.WithSpotCone(25, 35),
-		light.WithEnabled(true),
+		light.WithSpotCone(15, 15),
+		light.WithEnabled(false),
+		light.WithCastsShadows(true),
+		light.WithShadowBias(0.0005),
 	)
 	sc.AddLight(spot)
 
@@ -176,16 +183,16 @@ func main() {
 			model.WithVertexData(common.SliceToBytes(quadVerts)),
 			model.WithIndexData(common.SliceToBytes(quadIdx)),
 			model.WithIndexCount(len(quadIdx)),
-			model.WithMeshProvider(bind_group_provider.NewBindGroupProvider(
-				"quad_mesh",
-			)),
+			model.WithShadowCullMode(model.ShadowCullModeNone),
+			model.WithMeshProvider(bind_group_provider.NewBindGroupProvider("quad_mesh")),
 			model.WithRenderMaterials(material.NewMaterial(
 				material.WithName("quad_material"),
 				material.WithBaseColor([4]float32{0.7, 0.8, 0.95, quadAlpha}),
-				material.WithRoughness(0.05),
-				material.WithMetallic(1.0),
+				material.WithRoughness(0.3),
+				material.WithMetallic(0.0),
 				material.WithPipelineKey("reflective_floor"),
 			)),
+			model.WithCastsShadows(true),
 		)),
 		game_object.WithPosition(0, -1, 0),
 		game_object.WithScale(1, 1, 1),
@@ -242,7 +249,7 @@ func main() {
 	setupLitInput(eng, cam, fox, sun, bluePoint, orangePoint, spot, quadObj, sunIndicator)
 
 	fmt.Println("╔══════════════════════════════════════════════════════╗")
-	fmt.Println("║  Oxy Engine - Lit Scene (Forward+ / VSM+PCSS)        ║")
+	fmt.Println("║  Oxy Engine - Lit Scene (Forward+ / CSM+PCF)         ║")
 	fmt.Println("╠══════════════════════════════════════════════════════╣")
 	fmt.Println("║  Camera: WASD=Pan  Q/E=Up/Down  Scroll=Zoom        ║")
 	fmt.Println("║          Middle-mouse drag=Orbit                    ║")
@@ -252,10 +259,10 @@ func main() {
 	fmt.Println("║  T:      Toggle sun orbit (day/night cycle)          ║")
 	fmt.Println("║  V:      Cycle quad transparency                     ║")
 	fmt.Println("║  1-3:    Switch fox animation                       ║")
-	fmt.Println("║  Shadow: VSM + PCSS (contact-hardening soft shadows) ║")
+	fmt.Println("║  Shadow: CSM + PCF (dual-cascade sphere shadows)      ║")
 	fmt.Println("╚══════════════════════════════════════════════════════╝")
 
-	log.Println("Starting Oxy Engine - Lit Scene (Forward+ / VSM+PCSS)")
+	log.Println("Starting Oxy Engine - Lit Scene (Forward+ / CSM+PCF)")
 	eng.Run()
 }
 
@@ -281,7 +288,7 @@ func setupLitInput(
 	quad game_object.GameObject,
 	sunIndicator game_object.GameObject,
 ) {
-	keyState := make(map[uint32]bool)
+	var keyState sync.Map
 	animCount := fox.Model().AnimationCount()
 	pointsOn := true
 	sunOrbit := false
@@ -292,7 +299,7 @@ func setupLitInput(
 	alphaIdx := 0
 
 	eng.Window().SetKeyDownCallback(func(keyCode uint32) {
-		keyState[keyCode] = true
+		keyState.Store(keyCode, true)
 
 		// Number keys 1-9 switch animations with a smooth blend transition
 		if keyCode >= common.Key1 && keyCode <= common.Key9 {
@@ -356,7 +363,7 @@ func setupLitInput(
 	})
 
 	eng.Window().SetKeyUpCallback(func(keyCode uint32) {
-		keyState[keyCode] = false
+		keyState.Store(keyCode, false)
 	})
 
 	var dragging bool
@@ -403,35 +410,32 @@ func setupLitInput(
 			sun.SetDirection(0, dirY, dirZ)
 		}
 
-		// Update sun indicator sphere position to show the shadow-map eye.
-		// Eye = center - lightDir * far * 0.5 (matches ComputeDirectionalLightVP).
 		{
 			dir := sun.Direction()
-			const shadowFarHalf = 200.0 // far=400 * 0.5
-			// Shadow frustum center = camera target = (0, 40, 0)
+			const sunDistance = 200.0
 			sunIndicator.SetPosition(
-				0-dir[0]*shadowFarHalf,
-				40-dir[1]*shadowFarHalf,
-				0-dir[2]*shadowFarHalf,
+				0-dir[0]*sunDistance,
+				40-dir[1]*sunDistance,
+				0-dir[2]*sunDistance,
 			)
 		}
 
-		if keyState[common.KeyW] {
+		if v, ok := keyState.Load(common.KeyW); ok && v.(bool) {
 			cam.Controller().PanForward(1)
 		}
-		if keyState[common.KeyS] {
+		if v, ok := keyState.Load(common.KeyS); ok && v.(bool) {
 			cam.Controller().PanForward(-1)
 		}
-		if keyState[common.KeyA] {
+		if v, ok := keyState.Load(common.KeyA); ok && v.(bool) {
 			cam.Controller().PanRight(-1)
 		}
-		if keyState[common.KeyD] {
+		if v, ok := keyState.Load(common.KeyD); ok && v.(bool) {
 			cam.Controller().PanRight(1)
 		}
-		if keyState[common.KeyQ] {
+		if v, ok := keyState.Load(common.KeyQ); ok && v.(bool) {
 			cam.Controller().PanUp(1)
 		}
-		if keyState[common.KeyE] {
+		if v, ok := keyState.Load(common.KeyE); ok && v.(bool) {
 			cam.Controller().PanUp(-1)
 		}
 	})
@@ -453,7 +457,7 @@ func setupLitInput(
 //   - []uint32: 36 indices forming 12 triangles
 func buildLitQuad(alpha float32) ([]model.GPUVertex, []uint32) {
 	color := [4]float32{0.3, 0.5, 0.9, alpha}
-	half := float32(40)       // half-extent in X and Z
+	half := float32(80)       // half-extent in X and Z
 	thickness := float32(1.0) // half-thickness in Y
 
 	// Helper to make a vertex

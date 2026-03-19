@@ -32,7 +32,7 @@ func (g *GPUInstanceData) Size() int {
 // Returns:
 //   - []byte: 64-byte buffer ready for GPU upload.
 func (g *GPUInstanceData) Marshal() []byte {
-	buf := make([]byte, 64)
+	buf := make([]byte, g.Size())
 	for i := range 16 {
 		binary.LittleEndian.PutUint32(buf[i*4:(i+1)*4], math.Float32bits(g.Model[i]))
 	}
@@ -72,7 +72,7 @@ func (g *GPUAnimationData) Size() int {
 // Returns:
 //   - []byte: 64-byte buffer ready for GPU upload.
 func (g *GPUAnimationData) Marshal() []byte {
-	buf := make([]byte, 64)
+	buf := make([]byte, g.Size())
 	binary.LittleEndian.PutUint32(buf[0:4], math.Float32bits(g.RotSpeed[0]))
 	binary.LittleEndian.PutUint32(buf[4:8], math.Float32bits(g.RotSpeed[1]))
 	binary.LittleEndian.PutUint32(buf[8:12], math.Float32bits(g.RotSpeed[2]))
@@ -119,7 +119,7 @@ func (g *GPUFrustumPlane) Size() int {
 // Returns:
 //   - []byte: 16-byte buffer ready for GPU upload.
 func (g *GPUFrustumPlane) Marshal() []byte {
-	buf := make([]byte, 16)
+	buf := make([]byte, g.Size())
 	binary.LittleEndian.PutUint32(buf[0:4], math.Float32bits(g.Normal[0]))
 	binary.LittleEndian.PutUint32(buf[4:8], math.Float32bits(g.Normal[1]))
 	binary.LittleEndian.PutUint32(buf[8:12], math.Float32bits(g.Normal[2]))
@@ -157,7 +157,7 @@ func (g *GPUGlobalData) Size() int {
 // Returns:
 //   - []byte: 112-byte buffer ready for GPU upload.
 func (g *GPUGlobalData) Marshal() []byte {
-	buf := make([]byte, 112)
+	buf := make([]byte, g.Size())
 	binary.LittleEndian.PutUint32(buf[0:4], g.InstanceCount)
 	binary.LittleEndian.PutUint32(buf[4:8], math.Float32bits(g.DeltaTime))
 	binary.LittleEndian.PutUint32(buf[8:12], math.Float32bits(g.BoundingRadius))
@@ -208,7 +208,7 @@ func (g *GPUAnimationGlobals) Size() int {
 // Returns:
 //   - []byte: 128-byte buffer ready for GPU upload.
 func (g *GPUAnimationGlobals) Marshal() []byte {
-	buf := make([]byte, 128)
+	buf := make([]byte, g.Size())
 	binary.LittleEndian.PutUint32(buf[0:4], g.InstanceCount)
 	binary.LittleEndian.PutUint32(buf[4:8], g.BoneCount)
 	binary.LittleEndian.PutUint32(buf[8:12], math.Float32bits(g.BoundingRadius))
@@ -259,7 +259,7 @@ func (g *GPUIndirectArgs) Size() int {
 // Returns:
 //   - []byte: 20-byte buffer ready for GPU upload.
 func (g *GPUIndirectArgs) Marshal() []byte {
-	buf := make([]byte, 20)
+	buf := make([]byte, g.Size())
 	binary.LittleEndian.PutUint32(buf[0:4], g.IndexCount)
 	binary.LittleEndian.PutUint32(buf[4:8], g.InstanceCount)
 	binary.LittleEndian.PutUint32(buf[8:12], g.FirstIndex)
@@ -299,7 +299,7 @@ func (g *GPUBoneInfo) Size() int {
 // Returns:
 //   - []byte: 112-byte buffer ready for GPU upload.
 func (g *GPUBoneInfo) Marshal() []byte {
-	buf := make([]byte, 112)
+	buf := make([]byte, g.Size())
 	for i := range 16 {
 		binary.LittleEndian.PutUint32(buf[i*4:(i+1)*4], math.Float32bits(g.InverseBindMatrix[i]))
 	}
@@ -353,7 +353,7 @@ func (g *GPUKeyFrame) Size() int {
 // Returns:
 //   - []byte: 64-byte buffer ready for GPU upload.
 func (g *GPUKeyFrame) Marshal() []byte {
-	buf := make([]byte, 64)
+	buf := make([]byte, g.Size())
 	binary.LittleEndian.PutUint32(buf[0:4], math.Float32bits(g.Time))
 	binary.LittleEndian.PutUint32(buf[4:8], 0)   // _pad0[0]
 	binary.LittleEndian.PutUint32(buf[8:12], 0)  // _pad0[1]
@@ -400,7 +400,7 @@ func (g *GPUChannelHeader) Size() int {
 // Returns:
 //   - []byte: 32-byte buffer ready for GPU upload.
 func (g *GPUChannelHeader) Marshal() []byte {
-	buf := make([]byte, 32)
+	buf := make([]byte, g.Size())
 	binary.LittleEndian.PutUint32(buf[0:4], g.BoneIndex)
 	binary.LittleEndian.PutUint32(buf[4:8], g.PositionKeyOffset)
 	binary.LittleEndian.PutUint32(buf[8:12], g.PositionKeyCount)
@@ -435,7 +435,7 @@ func (g *GPUClipHeader) Size() int {
 // Returns:
 //   - []byte: 16-byte buffer ready for GPU upload.
 func (g *GPUClipHeader) Marshal() []byte {
-	buf := make([]byte, 16)
+	buf := make([]byte, g.Size())
 	binary.LittleEndian.PutUint32(buf[0:4], math.Float32bits(g.Duration))
 	binary.LittleEndian.PutUint32(buf[4:8], math.Float32bits(g.TicksPerSecond))
 	binary.LittleEndian.PutUint32(buf[8:12], g.ChannelOffset)
@@ -485,7 +485,7 @@ func (g *GPUSkeletalAnimationData) Size() int {
 // Returns:
 //   - []byte: 48-byte buffer ready for GPU upload.
 func (g *GPUSkeletalAnimationData) Marshal() []byte {
-	buf := make([]byte, 48)
+	buf := make([]byte, g.Size())
 	binary.LittleEndian.PutUint32(buf[0:4], g.AnimationIndex)
 	binary.LittleEndian.PutUint32(buf[4:8], math.Float32bits(g.AnimationTime))
 	binary.LittleEndian.PutUint32(buf[8:12], math.Float32bits(g.BlendWeight))

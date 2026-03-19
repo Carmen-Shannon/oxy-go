@@ -1,67 +1,16 @@
+// Package window provides platform windowing, input event handling, and WebGPU surface creation.
+//
+// The [Window] interface abstracts GLFW behind a common API that exposes resize,
+// keyboard, mouse, and scroll callbacks. Instances are created via [NewWindow]
+// using the option-builder pattern.
 package window
 
 import (
-	"fmt"
 	"runtime"
 
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/cogentcore/webgpu/wgpu"
 )
-
-// engineWindow is the implementation of the Window interface.
-// Holds window configuration, GLFW state, and event callbacks.
-type engineWindow struct {
-	common.DelegateImpl[Window]
-
-	// title is the window title displayed in the title bar.
-	title string
-
-	// maxWidth is the maximum allowed window width during resize.
-	maxWidth int
-
-	// maxHeight is the maximum allowed window height during resize.
-	maxHeight int
-
-	// minWidth is the minimum allowed window width during resize.
-	minWidth int
-
-	// minHeight is the minimum allowed window height during resize.
-	minHeight int
-
-	// width is the current window client area width in pixels.
-	width int
-
-	// height is the current window client area height in pixels.
-	height int
-
-	// internalWindow holds the platform-specific window data (glfwWindow).
-	internalWindow any
-
-	// onUpdate is called each iteration of the message loop (if set).
-	onUpdate func()
-
-	// onResize is called when the window is resized.
-	onResize func(width, height int)
-
-	// onScroll is called for mouse wheel events.
-	// Positive delta = scroll up (zoom in), negative = scroll down (zoom out).
-	onScroll func(delta float32)
-
-	// onKeyDown is called when a key is pressed.
-	onKeyDown func(keyCode uint32)
-
-	// onKeyUp is called when a key is released.
-	onKeyUp func(keyCode uint32)
-
-	// onMiddleMouseDown is called when the middle mouse button is pressed.
-	onMiddleMouseDown func(x, y int32)
-
-	// onMiddleMouseUp is called when the middle mouse button is released.
-	onMiddleMouseUp func(x, y int32)
-
-	// onMouseMove is called when the mouse moves within the window.
-	onMouseMove func(x, y int32)
-}
 
 // Window provides platform windowing and input event handling.
 // Wraps platform-specific window implementations with a common interface.
@@ -153,82 +102,27 @@ type Window interface {
 	Height() int
 }
 
-var _ Window = &engineWindow{}
+var _ Window = &window{}
 
-// NewWindow creates a new Window with the specified options.
-// Applies default values first, then each option in order.
-//
-// Parameters:
-//   - options: functional options to configure the window
-//
-// Returns:
-//   - Window: the configured window (not yet spawned)
-func NewWindow(options ...WindowBuilderOption) Window {
-	w := &engineWindow{
-		title:     "Default Window Title",
-		maxWidth:  1600,
-		maxHeight: 1200,
-		minWidth:  600,
-		minHeight: 200,
-		width:     1280,
-		height:    720,
-	}
-	for _, opt := range options {
-		opt(w)
-	}
-	if err := newPlatformWindow(w); err != nil {
-		panic(fmt.Sprintf("failed to create platform window: %v", err))
-	}
-	w.Delegate = w
-	return w
-}
+func (w *window) SetUpdateCallback(callback func())                  { w.onUpdate = callback }
+func (w *window) SetResizeCallback(callback func(width, height int)) { w.onResize = callback }
+func (w *window) SetScrollCallback(callback func(delta float32))     { w.onScroll = callback }
+func (w *window) SetKeyDownCallback(callback func(keyCode uint32))   { w.onKeyDown = callback }
+func (w *window) SetKeyUpCallback(callback func(keyCode uint32))     { w.onKeyUp = callback }
+func (w *window) SetMiddleMouseUpCallback(callback func(x, y int32)) { w.onMiddleMouseUp = callback }
+func (w *window) SetMouseMoveCallback(callback func(x, y int32))     { w.onMouseMove = callback }
+func (w *window) SurfaceDescriptor() *wgpu.SurfaceDescriptor         { return platformGetSurfaceDescriptor(w) }
+func (w *window) IsRunning() bool                                    { return platformIsRunningCheck(w) }
+func (w *window) Close() error                                       { return platformCloseWindow(w) }
+func (w *window) Width() int                                         { return w.width }
+func (w *window) Height() int                                        { return w.height }
 
-func (w *engineWindow) SetUpdateCallback(callback func()) {
-	w.onUpdate = callback
-}
-
-func (w *engineWindow) SetResizeCallback(callback func(width, height int)) {
-	w.onResize = callback
-}
-
-func (w *engineWindow) SetScrollCallback(callback func(delta float32)) {
-	w.onScroll = callback
-}
-
-func (w *engineWindow) SetKeyDownCallback(callback func(keyCode uint32)) {
-	w.onKeyDown = callback
-}
-
-func (w *engineWindow) SetKeyUpCallback(callback func(keyCode uint32)) {
-	w.onKeyUp = callback
-}
-
-func (w *engineWindow) SetMiddleMouseDownCallback(callback func(x, y int32)) {
+func (w *window) SetMiddleMouseDownCallback(callback func(x, y int32)) {
 	w.onMiddleMouseDown = callback
 }
 
-func (w *engineWindow) SetMiddleMouseUpCallback(callback func(x, y int32)) {
-	w.onMiddleMouseUp = callback
-}
-
-func (w *engineWindow) SetMouseMoveCallback(callback func(x, y int32)) {
-	w.onMouseMove = callback
-}
-
-func (w *engineWindow) SurfaceDescriptor() *wgpu.SurfaceDescriptor {
-	return platformGetSurfaceDescriptor(w)
-}
-
-func (w *engineWindow) IsRunning() bool {
-	return platformIsRunningCheck(w)
-}
-
-func (w *engineWindow) Close() error {
-	return platformCloseWindow(w)
-}
-
-func (w *engineWindow) ProcessMessages() {
-	for w.IsRunning() {
+func (w *window) ProcessMessages() {
+	for w.Delegate.IsRunning() {
 		if succ := platformProcessMessages(w); !succ {
 			break
 		}
@@ -239,12 +133,4 @@ func (w *engineWindow) ProcessMessages() {
 
 		runtime.Gosched()
 	}
-}
-
-func (w *engineWindow) Width() int {
-	return w.width
-}
-
-func (w *engineWindow) Height() int {
-	return w.height
 }

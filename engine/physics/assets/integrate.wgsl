@@ -22,8 +22,8 @@
 //@oxy:group 0 0 storage_read_write bodies array<physics_body>
 //@oxy:group 0 1 storage_uniform globals physics_globals
 
-const FLAG_STATIC: u32    = 2u;
-const FLAG_KINEMATIC: u32 = 4u;
+//@oxy:inject FLAG_STATIC u32 flag_static
+//@oxy:inject FLAG_KINEMATIC u32 flag_kinematic
 
 // Per-second velocity retention targets. These define how much momentum is
 // preserved after one full second of simulation, independent of timestep.

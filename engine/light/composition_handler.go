@@ -5,38 +5,6 @@ import (
 	"github.com/cogentcore/webgpu/wgpu"
 )
 
-// compositionHandlerImpl is the implementation of the CompositionHandler interface.
-type compositionHandlerImpl struct {
-	enabled bool
-
-	screenWidth  int
-	screenHeight int
-
-	toneMappingEnabled bool
-	exposure           float32
-
-	pipelineKeys map[string]string
-	bgps         map[string]bind_group_provider.BindGroupProvider
-
-	// Offscreen HDR render target (RGBA16Float) that the lit pass writes to
-	// instead of the swapchain when composition is active.
-	hdrTexture     *wgpu.Texture
-	hdrTextureView *wgpu.TextureView
-
-	// MSAA resolve target for the HDR texture when MSAA is enabled.
-	// The lit pass renders to this multi-sampled texture, which resolves
-	// into hdrTexture at the end of the render pass.
-	msaaTexture     *wgpu.Texture
-	msaaTextureView *wgpu.TextureView
-
-	// Depth texture for the offscreen HDR render pass.
-	depthTexture     *wgpu.Texture
-	depthTextureView *wgpu.TextureView
-
-	// Linear sampler for sampling the HDR and SSR textures in the composition shader.
-	linearSampler *wgpu.Sampler
-}
-
 // CompositionHandler defines the interface for the scene's composition and tone mapping subsystem.
 //
 // The CompositionHandler manages the offscreen HDR render target, the full-screen
@@ -236,44 +204,34 @@ type CompositionHandler interface {
 
 var _ CompositionHandler = &compositionHandlerImpl{}
 
-func (h *compositionHandlerImpl) Enabled() bool {
-	return h.enabled
-}
+func (h *compositionHandlerImpl) Enabled() bool                            { return h.enabled }
+func (h *compositionHandlerImpl) SetEnabled(enabled bool)                  { h.enabled = enabled }
+func (h *compositionHandlerImpl) ScreenWidth() int                         { return h.screenWidth }
+func (h *compositionHandlerImpl) ScreenHeight() int                        { return h.screenHeight }
+func (h *compositionHandlerImpl) ToneMappingEnabled() bool                 { return h.toneMappingEnabled }
+func (h *compositionHandlerImpl) Exposure() float32                        { return h.exposure }
+func (h *compositionHandlerImpl) SetExposure(exposure float32)             { h.exposure = exposure }
+func (h *compositionHandlerImpl) PipelineKey(name string) string           { return h.pipelineKeys[name] }
+func (h *compositionHandlerImpl) PipelineKeys() map[string]string          { return h.pipelineKeys }
+func (h *compositionHandlerImpl) SetPipelineKey(name, key string)          { h.pipelineKeys[name] = key }
+func (h *compositionHandlerImpl) HDRTexture() *wgpu.Texture                { return h.hdrTexture }
+func (h *compositionHandlerImpl) SetHDRTexture(t *wgpu.Texture)            { h.hdrTexture = t }
+func (h *compositionHandlerImpl) HDRTextureView() *wgpu.TextureView        { return h.hdrTextureView }
+func (h *compositionHandlerImpl) SetHDRTextureView(tv *wgpu.TextureView)   { h.hdrTextureView = tv }
+func (h *compositionHandlerImpl) MSAATexture() *wgpu.Texture               { return h.msaaTexture }
+func (h *compositionHandlerImpl) SetMSAATexture(t *wgpu.Texture)           { h.msaaTexture = t }
+func (h *compositionHandlerImpl) MSAATextureView() *wgpu.TextureView       { return h.msaaTextureView }
+func (h *compositionHandlerImpl) SetMSAATextureView(tv *wgpu.TextureView)  { h.msaaTextureView = tv }
+func (h *compositionHandlerImpl) DepthTexture() *wgpu.Texture              { return h.depthTexture }
+func (h *compositionHandlerImpl) SetDepthTexture(t *wgpu.Texture)          { h.depthTexture = t }
+func (h *compositionHandlerImpl) DepthTextureView() *wgpu.TextureView      { return h.depthTextureView }
+func (h *compositionHandlerImpl) SetDepthTextureView(tv *wgpu.TextureView) { h.depthTextureView = tv }
+func (h *compositionHandlerImpl) LinearSampler() *wgpu.Sampler             { return h.linearSampler }
+func (h *compositionHandlerImpl) SetLinearSampler(s *wgpu.Sampler)         { h.linearSampler = s }
 
-func (h *compositionHandlerImpl) SetEnabled(enabled bool) {
-	h.enabled = enabled
-}
-
-func (h *compositionHandlerImpl) ScreenWidth() int {
-	return h.screenWidth
-}
-
-func (h *compositionHandlerImpl) ScreenHeight() int {
-	return h.screenHeight
-}
-
-func (h *compositionHandlerImpl) ToneMappingEnabled() bool {
-	return h.toneMappingEnabled
-}
-
-func (h *compositionHandlerImpl) Exposure() float32 {
-	return h.exposure
-}
-
-func (h *compositionHandlerImpl) SetExposure(exposure float32) {
-	h.exposure = exposure
-}
-
-func (h *compositionHandlerImpl) PipelineKey(name string) string {
-	return h.pipelineKeys[name]
-}
-
-func (h *compositionHandlerImpl) PipelineKeys() map[string]string {
-	return h.pipelineKeys
-}
-
-func (h *compositionHandlerImpl) SetPipelineKey(name, key string) {
-	h.pipelineKeys[name] = key
+func (h *compositionHandlerImpl) Resize(width, height int) {
+	h.screenWidth = width
+	h.screenHeight = height
 }
 
 func (h *compositionHandlerImpl) Bgp(key string) bind_group_provider.BindGroupProvider {
@@ -286,65 +244,4 @@ func (h *compositionHandlerImpl) Bgps() map[string]bind_group_provider.BindGroup
 
 func (h *compositionHandlerImpl) SetBgp(key string, bgp bind_group_provider.BindGroupProvider) {
 	h.bgps[key] = bgp
-}
-
-func (h *compositionHandlerImpl) HDRTexture() *wgpu.Texture {
-	return h.hdrTexture
-}
-
-func (h *compositionHandlerImpl) SetHDRTexture(t *wgpu.Texture) {
-	h.hdrTexture = t
-}
-
-func (h *compositionHandlerImpl) HDRTextureView() *wgpu.TextureView {
-	return h.hdrTextureView
-}
-
-func (h *compositionHandlerImpl) SetHDRTextureView(tv *wgpu.TextureView) {
-	h.hdrTextureView = tv
-}
-
-func (h *compositionHandlerImpl) MSAATexture() *wgpu.Texture {
-	return h.msaaTexture
-}
-
-func (h *compositionHandlerImpl) SetMSAATexture(t *wgpu.Texture) {
-	h.msaaTexture = t
-}
-
-func (h *compositionHandlerImpl) MSAATextureView() *wgpu.TextureView {
-	return h.msaaTextureView
-}
-
-func (h *compositionHandlerImpl) SetMSAATextureView(tv *wgpu.TextureView) {
-	h.msaaTextureView = tv
-}
-
-func (h *compositionHandlerImpl) DepthTexture() *wgpu.Texture {
-	return h.depthTexture
-}
-
-func (h *compositionHandlerImpl) SetDepthTexture(t *wgpu.Texture) {
-	h.depthTexture = t
-}
-
-func (h *compositionHandlerImpl) DepthTextureView() *wgpu.TextureView {
-	return h.depthTextureView
-}
-
-func (h *compositionHandlerImpl) SetDepthTextureView(tv *wgpu.TextureView) {
-	h.depthTextureView = tv
-}
-
-func (h *compositionHandlerImpl) LinearSampler() *wgpu.Sampler {
-	return h.linearSampler
-}
-
-func (h *compositionHandlerImpl) SetLinearSampler(s *wgpu.Sampler) {
-	h.linearSampler = s
-}
-
-func (h *compositionHandlerImpl) Resize(width, height int) {
-	h.screenWidth = width
-	h.screenHeight = height
 }

@@ -62,11 +62,13 @@ type PreProcessor interface {
 	//
 	// Parameters:
 	//   - source: the raw WGSL shader source code containing annotations to be processed
+	//   - injections: optional injection maps providing values for @oxy:inject annotations.
+	//     Multiple maps can be provided; later maps override earlier ones for duplicate keys.
 	//
 	// Returns:
 	//   - string: the processed WGSL shader source code with annotations replaced
 	//   - error: an error if any annotation is malformed or references an unknown type
-	Process(source string) (string, error)
+	Process(source string, injections ...map[string]string) (string, error)
 
 	// Declarations returns the list of AnnotationTypeBindingGroup and AnnotationTypeProvider
 	// annotations collected during the most recent call to Process, in source-order.
@@ -96,8 +98,9 @@ func NewPreProcessor() PreProcessor {
 			AnnotationArgEffectParams:          {Source: material.GPUEffectParamsSource, Type: "EffectParams"},
 			AnnotationArgLight:                 {Source: light.GPULightSource, Type: "Light"},
 			AnnotationArgLightHeader:           {Source: light.GPULightHeaderSource, Type: "LightHeader"},
-			AnnotationArgShadowData:            {Source: light.GPUShadowDataSource, Type: "ShadowData"},
 			AnnotationArgShadowUniform:         {Source: light.GPUShadowUniformSource, Type: "ShadowUniform"},
+			AnnotationArgCSMData:               {Source: light.GPUCSMDataSource, Type: "CSMData"},
+			AnnotationArgLightShadowEntry:      {Source: light.GPULightShadowEntrySource, Type: "LightShadowEntry"},
 			annotationArgLightCullUniforms:     {Source: light.GPULightCullUniformsSource, Type: "LightCullUniforms"},
 			AnnotationArgTileUniforms:          {Source: light.GPUTileUniformsSource, Type: "TileUniforms"},
 			AnnotationArgAnimationData:         {Source: animator.GPUAnimationDataSource, Type: "AnimationData"},
@@ -117,13 +120,9 @@ func NewPreProcessor() PreProcessor {
 			AnnotationArgGBufferOutput:         {Source: light.GPUGBufferOutputSource, Type: "GBufferOutput"},
 			annotationArgSSAOParams:            {Source: light.GPUSSAOParamsSource, Type: "SSAOParams"},
 			annotationArgBlurParams:            {Source: light.GPUBlurParamsSource, Type: "BlurParams"},
-			annotationArgSATParams:             {Source: light.GPUSATParamsSource, Type: "SATParams"},
-			AnnotationArgIrradianceProbe:       {Source: light.GPUIrradianceProbeSource, Type: "IrradianceProbe"},
-			AnnotationArgProbeGridParams:       {Source: light.GPUProbeGridParamsSource, Type: "ProbeGridParams"},
-			annotationArgProbeBakeCamera:       {Source: light.GPUProbeBakeCameraSource, Type: "ProbeBakeCamera"},
-			annotationArgSHProjectParams:       {Source: light.GPUSHProjectParamsSource, Type: "SHProjectParams"},
 			annotationArgCompositionParams:     {Source: light.GPUCompositionParamsSource, Type: "CompositionParams"},
 			annotationArgSSRParams:             {Source: light.GPUSSRParamsSource, Type: "SSRParams"},
+			annotationArgContactShadowParams:   {Source: light.GPUContactShadowParamsSource, Type: "ContactShadowParams"},
 		},
 		addressSpaceRegistry: map[AnnotationArg]string{
 			annotationArgStorageTypeUniform:   "var<uniform>",
@@ -133,8 +132,9 @@ func NewPreProcessor() PreProcessor {
 	}
 }
 
-func (p *preProcessor) Process(source string) (string, error) {
+func (p *preProcessor) Process(source string, injections ...map[string]string) (string, error) {
 	p.declarations = p.declarations[:0]
+	injectionMap := p.resolveInjections(injections)
 
 	lines := strings.Split(source, "\n")
 	out := make([]string, 0, len(lines))
@@ -174,6 +174,15 @@ func (p *preProcessor) Process(source string) (string, error) {
 
 			out = append(out, fmt.Sprintf("@group(%d) @binding(%d) %s %s: %s;", *a.Group, *a.Binding, addrSpace, varName, wgslType))
 			p.declarations = append(p.declarations, *a)
+		case annotationTypeInject:
+			key := string(a.Args[2])
+			val, ok := injectionMap[key]
+			if !ok {
+				return "", fmt.Errorf("line %d: no injection value provided for key %q", i+1, key)
+			}
+			constName := string(a.Args[0])
+			wgslType := string(a.Args[1])
+			out = append(out, fmt.Sprintf("const %s: %s = %s;", constName, wgslType, val))
 		case AnnotationTypeProvider:
 			p.declarations = append(p.declarations, *a)
 		default:
@@ -182,6 +191,18 @@ func (p *preProcessor) Process(source string) (string, error) {
 
 	}
 	return strings.Join(out, "\n"), nil
+}
+
+// resolveInjections merges zero or more injection maps into a single lookup map.
+// Later maps override earlier ones for duplicate keys.
+func (p *preProcessor) resolveInjections(injections []map[string]string) map[string]string {
+	merged := make(map[string]string)
+	for _, m := range injections {
+		for k, v := range m {
+			merged[k] = v
+		}
+	}
+	return merged
 }
 
 func (p *preProcessor) Declarations() []Annotation {

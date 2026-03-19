@@ -1,7 +1,5 @@
 package light
 
-import "math"
-
 // LightBuilderOption is a function that configures a Light instance during construction.
 type LightBuilderOption func(*lightImpl)
 
@@ -136,18 +134,46 @@ func WithCastsShadows(castsShadows bool) LightBuilderOption {
 	}
 }
 
-// normalize3 normalizes a 3-component vector. Returns a zero vector if the input
-// has zero length.
-func normalize3(x, y, z float32) [3]float32 {
-	length := float32(math.Sqrt(float64(x*x + y*y + z*z)))
-	if length == 0 {
-		return [3]float32{0, 0, 0}
+// WithShadowBias sets the depth comparison bias for this light's shadow map.
+// Default is 0.0.
+//
+// Parameters:
+//   - bias: the depth bias value
+//
+// Returns:
+//   - LightBuilderOption: a function that applies the shadow bias option to a lightImpl
+func WithShadowBias(bias float32) LightBuilderOption {
+	return func(l *lightImpl) {
+		l.shadowBias = bias
 	}
-	inv := 1.0 / length
-	return [3]float32{x * inv, y * inv, z * inv}
 }
 
-// cosDeg converts an angle in degrees to the cosine of that angle in radians.
-func cosDeg(deg float32) float32 {
-	return float32(math.Cos(float64(deg) * math.Pi / 180.0))
+// NewLight creates a new Light of the specified type with sensible defaults and
+// any provided options applied.
+//
+// Parameters:
+//   - lightType: the kind of light to create (directional, point, or spot)
+//   - opts: variadic list of LightBuilderOption functions to configure the light
+//
+// Returns:
+//   - Light: a new Light instance
+func NewLight(lightType LightType, opts ...LightBuilderOption) Light {
+	l := &lightImpl{
+		lightType:    lightType,
+		position:     [3]float32{0, 0, 0},
+		direction:    [3]float32{0, -1, 0},
+		color:        [3]float32{1, 1, 1},
+		intensity:    1.0,
+		lightRange:   10.0,
+		innerCone:    0.9063, // cos(25°)
+		outerCone:    0.8192, // cos(35°)
+		enabled:      true,
+		ephemeral:    false,
+		castsShadows: false,
+	}
+	for _, opt := range opts {
+		opt(l)
+	}
+	l.Delegate = l
+	return l
 }

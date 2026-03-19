@@ -35,3 +35,33 @@ func WithModel(m model.Model, boneBinding, packedBinding int) AnimatorBuilderOpt
 		a.SetModel(m, boneBinding, packedBinding)
 	}
 }
+
+// NewAnimator creates a new Animator instance with the specified backend type.
+// The backend is created based on the type and then configured using the provided options.
+// Binding indices are configured via WithBinding options rather than fixed struct parameters,
+// allowing any shader binding layout.
+//
+// Parameters:
+//   - backendType: the type of animation backend to use (BackendTypeSimple or BackendTypeSkeletal)
+//   - options: variadic list of AnimatorBuilderOption functions to configure the Animator
+//
+// Returns:
+//   - Animator: a new instance of Animator configured with the specified backend and options
+func NewAnimator(backendType AnimatorBackendType, options ...AnimatorBuilderOption) Animator {
+	a := &animator{
+		backendType: backendType,
+	}
+	switch backendType {
+	case BackendTypeSkeletal:
+		a.backend = newSkeletalAnimatorBackend()
+	case BackendTypeSimple:
+		fallthrough
+	default:
+		a.backend = newSimpleAnimatorBackend()
+	}
+	for _, opt := range options {
+		opt(a)
+	}
+	a.Delegate = a
+	return a
+}

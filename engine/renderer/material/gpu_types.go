@@ -7,6 +7,23 @@ import (
 	"unsafe"
 )
 
+// GPUMaterialParams holds per-material scalar parameters for the GPU uniform buffer.
+type GPUMaterialParams struct {
+	AlphaCutoff float32
+}
+
+// Size returns the byte size of GPUMaterialParams as a GPU uniform buffer (16 bytes, std140 padded).
+func (g *GPUMaterialParams) Size() int {
+	return int(unsafe.Sizeof(*g))
+}
+
+// Marshal serializes GPUMaterialParams to a 16-byte little-endian buffer.
+func (g *GPUMaterialParams) Marshal() []byte {
+	buf := make([]byte, g.Size())
+	binary.LittleEndian.PutUint32(buf[0:4], math.Float32bits(g.AlphaCutoff))
+	return buf
+}
+
 // GPUOverlayParamsSource is the canonical WGSL definition of the OverlayParams struct.
 // Matches GPUOverlayParams layout exactly (16 bytes, std430 aligned).
 //
@@ -33,7 +50,7 @@ func (g *GPUOverlayParams) Size() int {
 // Returns:
 //   - []byte: 16-byte buffer ready for GPU upload.
 func (g *GPUOverlayParams) Marshal() []byte {
-	buf := make([]byte, 16)
+	buf := make([]byte, g.Size())
 	binary.LittleEndian.PutUint32(buf[0:4], math.Float32bits(g.OverlayColor[0]))
 	binary.LittleEndian.PutUint32(buf[4:8], math.Float32bits(g.OverlayColor[1]))
 	binary.LittleEndian.PutUint32(buf[8:12], math.Float32bits(g.OverlayColor[2]))
@@ -69,7 +86,7 @@ func (g *GPUEffectParams) Size() int {
 // Returns:
 //   - []byte: 16-byte buffer ready for GPU upload.
 func (g *GPUEffectParams) Marshal() []byte {
-	buf := make([]byte, 16)
+	buf := make([]byte, g.Size())
 	binary.LittleEndian.PutUint32(buf[0:4], math.Float32bits(g.TintColor[0]))
 	binary.LittleEndian.PutUint32(buf[4:8], math.Float32bits(g.TintColor[1]))
 	binary.LittleEndian.PutUint32(buf[8:12], math.Float32bits(g.TintColor[2]))

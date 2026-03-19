@@ -20,13 +20,14 @@
 @group(0) @binding(2) var noise_texture: texture_2d<f32>;
 @group(0) @binding(3) var output_tex: texture_storage_2d<r32float, write>;
 //@oxy:group 0 4 storage_uniform ssao_params ssao_params
-@group(0) @binding(5) var<uniform> ssao_kernel: array<vec4<f32>, 32>;
+//@oxy:inject MAX_SSAO_SAMPLES u32 max_ssao_samples
+@group(0) @binding(5) var<uniform> ssao_kernel: array<vec4<f32>, MAX_SSAO_SAMPLES>;
 
 // reconstructWorldPos reconstructs the world-space position and linear depth
 // from a screen UV and hardware depth value using the inverse view-projection
 // matrix. Returns (world_x, world_y, world_z, linear_depth).
 fn reconstructWorldPos(uv: vec2<f32>, depth: f32) -> vec4<f32> {
-    let ndc = vec4<f32>(uv * 2.0 - vec2<f32>(1.0), depth, 1.0);
+    let ndc = vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0);
     let world = ssao_params.inv_view_proj * ndc;
     let world_pos = world.xyz / world.w;
     let linear_depth = length(world_pos - ssao_params.camera_position);
@@ -81,7 +82,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let bitangent = cross(normal, tangent);
     let TBN = mat3x3<f32>(tangent, bitangent, normal);
 
-    let sample_count = min(ssao_params.sample_count, 32u);
+    let sample_count = min(ssao_params.sample_count, MAX_SSAO_SAMPLES);
     var occlusion = 0.0;
 
     for (var i = 0u; i < sample_count; i++) {
@@ -113,8 +114,9 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let scene_pos = reconstructWorldPos(sample_uv, sample_hw_depth);
         let scene_depth = scene_pos.w;
 
-        // Range check: only count occlusion within the configured radius.
-        let range_check = smoothstep(0.0, 1.0, ssao_params.radius / max(abs(frag_depth - scene_depth), 0.0001));
+        // Range check: only count occlusion from surfaces within radius in 3D world space.
+        let scene_world_dist = length(scene_pos.xyz - frag_pos);
+        let range_check = 1.0 - smoothstep(0.0, 1.0, scene_world_dist / ssao_params.radius);
 
         // Compare linear depths: if the scene surface at the sample pixel is
         // closer than the hemisphere sample point, the sample is occluded.

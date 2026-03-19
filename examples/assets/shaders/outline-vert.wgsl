@@ -9,7 +9,7 @@
 // Rendered with front-face culling so only the back faces of the inflated
 // mesh are visible, creating a solid outline / silhouette around the model.
 
-const MAX_BONES: u32 = 64u;
+//@oxy:inject MAX_BONES u32 max_bones
 const FLOATS_PER_INSTANCE: u32 = (1u + MAX_BONES) * 4u;
 
 // Outline thickness in clip-space units (scaled by w for perspective).

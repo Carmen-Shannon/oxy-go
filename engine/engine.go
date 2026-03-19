@@ -1,45 +1,18 @@
+// Package engine provides the main [Engine] interface and orchestration layer for the
+// game engine's core loops and window management.
+//
+// [Engine] coordinates the fixed-rate tick loop, the render loop, and scene lifecycle.
+// Scenes are iterated in z-index order each frame through compute, geometry, lighting,
+// and composition phases. Instances are created via [NewEngine] using functional options.
 package engine
 
 import (
-	"log"
-	"maps"
-	"runtime/debug"
-	"sort"
-	"sync"
 	"time"
 
 	"github.com/Carmen-Shannon/oxy-go/common"
-	"github.com/Carmen-Shannon/oxy-go/engine/profiler"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	"github.com/Carmen-Shannon/oxy-go/engine/window"
 )
-
-// engine implements the Engine interface.
-// Coordinates engine, render, and window threads.
-type engine struct {
-	common.DelegateImpl[Engine]
-
-	tickRateChannel chan time.Duration // Channel for dynamic tick rate updates
-
-	running bool
-	wg      sync.WaitGroup
-
-	quitChannel chan struct{}
-	quitOnce    sync.Once // Ensures quitChannel is only closed once
-
-	window window.Window
-
-	profiler         *profiler.Profiler
-	profilingEnabled bool
-
-	engineTickRate time.Duration
-	tickCallback   func(deltaTime float32)
-	renderCallback func(deltaTime float32)
-
-	scenes map[int]scene.Scene
-
-	renderFrameLimit time.Duration // minimum frame duration; 0 = uncapped
-}
 
 // Engine is the main entry point for the engine.
 // It orchestrates the engine loop, render loop, and window management.
@@ -125,259 +98,24 @@ type Engine interface {
 	Quit()
 }
 
-// NewEngine creates a new Engine instance with the provided options.
-// Initializes message channels and profiler with sensible defaults.
-// Options are applied directly to the engine struct via the option-builder pattern.
-//
-// Parameters:
-//   - options: functional options for engine configuration (profiling, tick rate, etc.)
-//
-// Returns:
-//   - Engine: the newly created engine
-func NewEngine(options ...EngineBuilderOption) Engine {
-	e := &engine{
-		tickRateChannel:  make(chan time.Duration, 1),
-		quitChannel:      make(chan struct{}),
-		scenes:           make(map[int]scene.Scene),
-		running:          false,
-		wg:               sync.WaitGroup{},
-		profiler:         profiler.NewProfiler(),
-		profilingEnabled: false,
-		engineTickRate:   time.Second / 60,
-	}
+var _ Engine = &engine{}
 
-	for _, opt := range options {
-		opt(e)
-	}
-
-	if e.window != nil {
-		e.window.SetResizeCallback(func(width, height int) {
-			for _, s := range e.scenes {
-				s.Resize(width, height)
-			}
-		})
-	}
-	e.Delegate = e
-	return e
-}
-
-func (e *engine) Window() window.Window {
-	return e.window
-}
+func (e *engine) Quit()                                              { e.signalQuit() }
+func (e *engine) EnableProfiler()                                    { e.profilingEnabled = true }
+func (e *engine) DisableProfiler()                                   { e.profilingEnabled = false }
+func (e *engine) SetTickCallback(callback func(deltaTime float32))   { e.tickCallback = callback }
+func (e *engine) SetRenderCallback(callback func(deltaTime float32)) { e.renderCallback = callback }
+func (e *engine) AddScene(key int, s scene.Scene)                    { e.scenes[key] = s }
+func (e *engine) RemoveScene(key int)                                { delete(e.scenes, key) }
+func (e *engine) Scene(key int) scene.Scene                          { return e.scenes[key] }
+func (e *engine) Scenes() map[int]scene.Scene                        { return e.scenes }
+func (e *engine) Window() window.Window                              { return e.window }
 
 func (e *engine) Run() {
 	e.handle()
 	e.window.ProcessMessages()
 }
 
-// Quit signals all engine goroutines to stop and shuts down the engine.
-// Safe to call multiple times; subsequent calls are no-ops due to sync.Once.
-func (e *engine) Quit() {
-	e.signalQuit()
-}
-
-// signalQuit closes the quit channel to signal all goroutines to exit.
-// Uses sync.Once to ensure the channel is only closed once.
-func (e *engine) signalQuit() {
-	e.quitOnce.Do(func() {
-		e.running = false
-		close(e.quitChannel)
-	})
-}
-
-// handle launches the engine, render, and quit goroutines.
-// Each goroutine is tracked by the engine's WaitGroup.
-func (e *engine) handle() {
-	e.running = true
-	e.wg.Add(3)
-	go e.handleEngine()
-	go e.handleRender()
-	go e.handleQuit()
-}
-
-// handleEngine runs the fixed-rate engine tick loop in its own goroutine.
-// Fires the tick callback at the configured tick rate and listens for dynamic rate changes
-// via tickRateChannel. Exits when the quit channel is closed.
-func (e *engine) handleEngine() {
-	defer e.wg.Done()
-
-	ticker := time.NewTicker(e.engineTickRate)
-	defer ticker.Stop()
-
-	lastTick := time.Now()
-
-	for {
-		select {
-		case <-e.quitChannel:
-			return
-		case <-ticker.C:
-			now := time.Now()
-			dt := float32(now.Sub(lastTick).Seconds())
-			lastTick = now
-
-			if e.tickCallback != nil {
-				e.tickCallback(dt)
-			}
-		case newRate := <-e.tickRateChannel:
-			ticker.Reset(newRate)
-			e.engineTickRate = newRate
-		}
-	}
-}
-
-// handleRender runs the uncapped (or frame-limited) render loop in its own goroutine.
-// Iterates active scenes in ascending z-index order, executing the full frame lifecycle:
-// compute dispatch, shadow pass, light culling, and draw calls.
-// Recovers from panics to avoid crashing the process and signals quit on recovery.
-func (e *engine) handleRender() {
-	defer e.wg.Done()
-	// Recover from panics inside the render goroutine to avoid crashing the whole process.
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("render goroutine recovered from panic: %v\n%s", r, debug.Stack())
-			e.signalQuit()
-		}
-	}()
-
-	lastRender := time.Now()
-
-	for {
-		select {
-		case <-e.quitChannel:
-			return
-		default:
-			now := time.Now()
-			dt := float32(now.Sub(lastRender).Seconds())
-			lastRender = now
-
-			// Draw all active scenes in ascending z-index order.
-			// The engine owns the frame lifecycle: BeginFrame once, Render each scene, EndFrame + Present once.
-			// All scenes sharing the same renderer are rendered within a single render pass, enabling layered compositing.
-			keys := make([]int, 0, len(e.scenes))
-			for k := range e.scenes {
-				keys = append(keys, k)
-			}
-			sort.Ints(keys)
-
-			// Collect active scenes and find the renderer for the frame
-			var activeScenes []scene.Scene
-			for _, k := range keys {
-				s := e.scenes[k]
-				if s.Active() {
-					activeScenes = append(activeScenes, s)
-				}
-			}
-
-			if len(activeScenes) > 0 {
-				// Use the first active scene's renderer to manage the frame
-				frameRenderer := activeScenes[0].Renderer()
-				if frameRenderer != nil {
-					// Phase 1 — Compute: batch all compute dispatches into a single GPU submission
-					if err := frameRenderer.BeginComputeFrame(); err == nil {
-						for _, s := range activeScenes {
-							s.PrepareCompute(dt)
-						}
-						frameRenderer.EndComputeFrame()
-					}
-
-					// Phase 1b+1c — Geometry pre-pass: merge shadow and G-Buffer render
-					// passes into a single command encoder and GPU submission. The VSM
-					// blur is deferred until after the geometry frame is submitted so the
-					// shadow textures are available for compute reads.
-					if err := frameRenderer.BeginGeometryFrame(); err == nil {
-						for _, s := range activeScenes {
-							s.PrepareShadows()
-						}
-						for _, s := range activeScenes {
-							s.PrepareGBuffer()
-						}
-						frameRenderer.EndGeometryFrame()
-					}
-
-					// Phase 1b-post + 1d + 1e — Shadow blur, light culling, and SSAO:
-					// all compute work batched into a single GPU submission. Shadow
-					// textures were written by the geometry frame above, so they are
-					// safe to read here. The individual Prepare* methods call their
-					// own Begin/EndComputeFrame internally; the outer pair coalesces
-					// them via ref-counted nesting.
-					if err := frameRenderer.BeginComputeFrame(); err == nil {
-						for _, s := range activeScenes {
-							s.PrepareShadowBlur()
-						}
-						for _, s := range activeScenes {
-							s.PrepareLightCulling()
-						}
-						for _, s := range activeScenes {
-							s.PrepareSSAO()
-						}
-						frameRenderer.EndComputeFrame()
-					}
-
-					// Phase 2 — Render: all lit scenes use the HDR pipeline (G-Buffer +
-					// SSAO + Forward+ tiling + HDR render → SSR → Composition → Present).
-					if err := activeScenes[0].BeginHDRFrame(); err == nil {
-						for _, s := range activeScenes {
-							_ = s.DrawCalls()
-						}
-						frameRenderer.EndFrame()
-
-						// Phase 2b — SSR: screen-space reflections reading HDR + G-Buffer.
-						// Wrapped in an outer compute frame so PrepareSSR's internal
-						// Begin/End are coalesced into one submission.
-						if err := frameRenderer.BeginComputeFrame(); err == nil {
-							for _, s := range activeScenes {
-								s.PrepareSSR()
-							}
-							frameRenderer.EndComputeFrame()
-						}
-
-						// Phase 2c — Composition: fullscreen tone mapping + gamma correction → swapchain.
-						for _, s := range activeScenes {
-							s.PrepareComposition()
-						}
-
-						frameRenderer.Present()
-					}
-				}
-			}
-
-			if e.renderCallback != nil {
-				e.renderCallback(dt)
-			}
-
-			if e.profilingEnabled && e.profiler != nil {
-				e.profiler.Tick()
-			}
-
-			// Frame rate limiting
-			if e.renderFrameLimit > 0 {
-				elapsed := time.Since(lastRender)
-				if remaining := e.renderFrameLimit - elapsed; remaining > 0 {
-					time.Sleep(remaining)
-				}
-			}
-		}
-	}
-}
-
-// handleQuit blocks until the quit channel is closed, then decrements the WaitGroup.
-func (e *engine) handleQuit() {
-	defer e.wg.Done()
-	<-e.quitChannel
-}
-
-// EnableProfiler enables performance profiling output to the log.
-func (e *engine) EnableProfiler() {
-	e.profilingEnabled = true
-}
-
-// DisableProfiler disables performance profiling output.
-func (e *engine) DisableProfiler() {
-	e.profilingEnabled = false
-}
-
-// SetTickRate sets the engine tick rate in frames per second.
-// If the engine is running, the change takes effect immediately.
 func (e *engine) SetTickRate(fps float64) {
 	if fps <= 0 {
 		fps = 60
@@ -403,40 +141,10 @@ func (e *engine) SetTickRate(fps float64) {
 	}
 }
 
-// SetTickCallback registers the function called each engine tick.
-func (e *engine) SetTickCallback(callback func(deltaTime float32)) {
-	e.tickCallback = callback
-}
-
-// SetRenderCallback registers the function called each render frame.
-func (e *engine) SetRenderCallback(callback func(deltaTime float32)) {
-	e.renderCallback = callback
-}
-
-// SetRenderFrameLimit sets an optional render frame rate cap.
-// Pass 0 to uncap the render loop.
 func (e *engine) SetRenderFrameLimit(fps float64) {
 	if fps <= 0 {
 		e.renderFrameLimit = 0
 		return
 	}
 	e.renderFrameLimit = time.Second / time.Duration(fps)
-}
-
-func (e *engine) AddScene(key int, s scene.Scene) {
-	e.scenes[key] = s
-}
-
-func (e *engine) RemoveScene(key int) {
-	delete(e.scenes, key)
-}
-
-func (e *engine) Scene(key int) scene.Scene {
-	return e.scenes[key]
-}
-
-func (e *engine) Scenes() map[int]scene.Scene {
-	cp := make(map[int]scene.Scene, len(e.scenes))
-	maps.Copy(cp, e.scenes)
-	return cp
 }

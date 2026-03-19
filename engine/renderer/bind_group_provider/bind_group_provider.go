@@ -1,40 +1,14 @@
+// Package bind_group_provider defines interfaces for renderer bind group provisioning.
+//
+// The [BindGroupProvider] interface is the primary abstraction in this package, which
+// centralizes GPU bind group resources used by renderer initialization and update
+// paths, including buffers, texture views, samplers, and mesh buffers.
 package bind_group_provider
 
 import (
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/cogentcore/webgpu/wgpu"
 )
-
-// bindGroupProvider is the unexported implementation of BindGroupProvider.
-type bindGroupProvider struct {
-	common.DelegateImpl[BindGroupProvider]
-
-	// label is a debug label added for convenience.
-	label string
-
-	// The following fields are GPU allocated resources and must be released when no longer needed. They are populated by the Renderer during initialization, not by user-creation.
-
-	// bindGroup is the GPU bind group created for this provider, or nil if not initialized with the Renderer.
-	bindGroup *wgpu.BindGroup
-	// bindGroupLayout is the GPU bind group layout created for this provider, or nil if not initialized with the Renderer.
-	// TODO: Investigate whether this even needs to remain persisted anywhere, once the layout is created via the Shader that holds the BindGroupLayoutDescriptor what do we need this for?
-	bindGroupLayout *wgpu.BindGroupLayout
-	// buffers holds the GPU buffers created for this provider, keyed by binding index.
-	buffers map[int]*wgpu.Buffer
-	// textureViews holds the GPU texture views created for this provider, keyed by binding index.
-	textureViews map[int]*wgpu.TextureView
-	// samplers holds the GPU samplers created for this provider, keyed by binding index.
-	samplers map[int]*wgpu.Sampler
-
-	// The following fields are specific to vertex pulling providers. They are used to stage vertex/index data and describe vertex formats before GPU upload.
-
-	// vertexBuffer is the GPU vertex buffer created for this provider, or nil if not initialized with the Renderer.
-	vertexBuffer *wgpu.Buffer
-	// indexBuffer is the GPU index buffer created for this provider, or nil if not initialized with the Renderer.
-	indexBuffer *wgpu.Buffer
-	// indexCount is the number of indices for draw calls, used by the Renderer to issue drawIndexed calls for this provider.
-	indexCount int
-}
 
 // BindGroupProvider defines the interface for components that require GPU bind group resources.
 // Components (Camera, GameObject, etc.) hold a BindGroupProvider to describe their GPU binding
@@ -212,81 +186,27 @@ type BindGroupProvider interface {
 // Compile-time check that bindGroupProvider implements BindGroupProvider
 var _ BindGroupProvider = &bindGroupProvider{}
 
-// NewBindGroupProvider creates a new BindGroupProvider with the provided options.
-//
-// Parameters:
-//   - options: a variadic list of options to configure the provider
-//
-// Returns:
-//   - BindGroupProvider: a new instance of BindGroupProvider configured with the provided options
-func NewBindGroupProvider(label string, options ...BindGroupProviderOption) BindGroupProvider {
-	p := &bindGroupProvider{
-		label:        label,
-		buffers:      make(map[int]*wgpu.Buffer),
-		textureViews: make(map[int]*wgpu.TextureView),
-		samplers:     make(map[int]*wgpu.Sampler),
-	}
-	for _, opt := range options {
-		opt(p)
-	}
-	p.Delegate = p
-	return p
-}
-
-func (p *bindGroupProvider) Label() string {
-	return p.label
-}
-
-func (p *bindGroupProvider) BindGroup() *wgpu.BindGroup {
-	return p.bindGroup
-}
-
-func (p *bindGroupProvider) BindGroupLayout() *wgpu.BindGroupLayout {
-	return p.bindGroupLayout
-}
-
-func (p *bindGroupProvider) Buffer(binding int) *wgpu.Buffer {
-	return p.buffers[binding]
-}
-
-func (p *bindGroupProvider) Buffers() map[int]*wgpu.Buffer {
-	return p.buffers
-}
+func (p *bindGroupProvider) Label() string                                { return p.label }
+func (p *bindGroupProvider) BindGroup() *wgpu.BindGroup                   { return p.bindGroup }
+func (p *bindGroupProvider) BindGroupLayout() *wgpu.BindGroupLayout       { return p.bindGroupLayout }
+func (p *bindGroupProvider) Buffer(binding int) *wgpu.Buffer              { return p.buffers[binding] }
+func (p *bindGroupProvider) Buffers() map[int]*wgpu.Buffer                { return p.buffers }
+func (p *bindGroupProvider) TextureViews() map[int]*wgpu.TextureView      { return p.textureViews }
+func (p *bindGroupProvider) Sampler(binding int) *wgpu.Sampler            { return p.samplers[binding] }
+func (p *bindGroupProvider) Samplers() map[int]*wgpu.Sampler              { return p.samplers }
+func (p *bindGroupProvider) VertexBuffer() *wgpu.Buffer                   { return p.vertexBuffer }
+func (p *bindGroupProvider) IndexBuffer() *wgpu.Buffer                    { return p.indexBuffer }
+func (p *bindGroupProvider) IndexCount() int                              { return p.indexCount }
+func (p *bindGroupProvider) SetBindGroup(bg *wgpu.BindGroup)              { p.bindGroup = bg }
+func (p *bindGroupProvider) SetBindGroupLayout(bgl *wgpu.BindGroupLayout) { p.bindGroupLayout = bgl }
+func (p *bindGroupProvider) SetBuffers(buffers map[int]*wgpu.Buffer)      { p.buffers = buffers }
+func (p *bindGroupProvider) SetVertexBuffer(buf *wgpu.Buffer)             { p.vertexBuffer = buf }
+func (p *bindGroupProvider) SetIndexBuffer(buf *wgpu.Buffer)              { p.indexBuffer = buf }
+func (p *bindGroupProvider) SetIndexCount(count int)                      { p.indexCount = count }
+func (p *bindGroupProvider) SetSamplers(samplers map[int]*wgpu.Sampler)   { p.samplers = samplers }
 
 func (p *bindGroupProvider) TextureView(binding int) *wgpu.TextureView {
 	return p.textureViews[binding]
-}
-
-func (p *bindGroupProvider) TextureViews() map[int]*wgpu.TextureView {
-	return p.textureViews
-}
-
-func (p *bindGroupProvider) Sampler(binding int) *wgpu.Sampler {
-	return p.samplers[binding]
-}
-
-func (p *bindGroupProvider) Samplers() map[int]*wgpu.Sampler {
-	return p.samplers
-}
-
-func (p *bindGroupProvider) VertexBuffer() *wgpu.Buffer {
-	return p.vertexBuffer
-}
-
-func (p *bindGroupProvider) IndexBuffer() *wgpu.Buffer {
-	return p.indexBuffer
-}
-
-func (p *bindGroupProvider) IndexCount() int {
-	return p.indexCount
-}
-
-func (p *bindGroupProvider) SetBindGroup(bg *wgpu.BindGroup) {
-	p.bindGroup = bg
-}
-
-func (p *bindGroupProvider) SetBindGroupLayout(bgl *wgpu.BindGroupLayout) {
-	p.bindGroupLayout = bgl
 }
 
 func (p *bindGroupProvider) SetBuffer(binding int, buf *wgpu.Buffer) {
@@ -294,22 +214,6 @@ func (p *bindGroupProvider) SetBuffer(binding int, buf *wgpu.Buffer) {
 		p.buffers = make(map[int]*wgpu.Buffer)
 	}
 	p.buffers[binding] = buf
-}
-
-func (p *bindGroupProvider) SetBuffers(buffers map[int]*wgpu.Buffer) {
-	p.buffers = buffers
-}
-
-func (p *bindGroupProvider) SetVertexBuffer(buf *wgpu.Buffer) {
-	p.vertexBuffer = buf
-}
-
-func (p *bindGroupProvider) SetIndexBuffer(buf *wgpu.Buffer) {
-	p.indexBuffer = buf
-}
-
-func (p *bindGroupProvider) SetIndexCount(count int) {
-	p.indexCount = count
 }
 
 func (p *bindGroupProvider) SetTextureView(binding int, tv *wgpu.TextureView) {
@@ -328,10 +232,6 @@ func (p *bindGroupProvider) SetSampler(binding int, s *wgpu.Sampler) {
 		p.samplers = make(map[int]*wgpu.Sampler)
 	}
 	p.samplers[binding] = s
-}
-
-func (p *bindGroupProvider) SetSamplers(samplers map[int]*wgpu.Sampler) {
-	p.samplers = samplers
 }
 
 func (p *bindGroupProvider) Release() {
