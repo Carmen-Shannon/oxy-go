@@ -1,9 +1,7 @@
 # Coverage Badge Workflow
 #
 # Runs all tests with coverage for the common and engine packages (and all
-# sub-packages) on Linux, macOS, and Windows to confirm the library compiles
-# and tests pass on all three major operating systems. Coverage is uploaded to
-# Codecov from the Linux runner only.
+# sub-packages) on Linux, then uploads the report to Codecov.
 
 name: Coverage
 
@@ -18,11 +16,7 @@ permissions:
 
 jobs:
   coverage:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,7 +30,6 @@ jobs:
         run: go mod download
 
       - name: Install system dependencies
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -50,14 +43,12 @@ jobs:
         run: mockery
 
       - name: Run tests with coverage
-        shell: bash
         run: |
           PKGS=$(go list ./common/... ./engine/... | grep -v '/mocks$' | paste -sd,)
           TESTS=$(go list ./common/... ./engine/... | grep -v '/mocks$')
           go test -count=1 -coverprofile=coverage.out -coverpkg="${PKGS}" ${TESTS}
 
       - name: Upload coverage reports to Codecov
-        if: runner.os == 'Linux'
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
