@@ -82,10 +82,7 @@ func (l *loader) Load(path string) (model.Model, error) {
 		return nil, fmt.Errorf("failed to load %s: %w", path, err)
 	}
 
-	m, err := l.importedToModel(imported)
-	if err != nil {
-		return nil, err
-	}
+	m, _ := l.importedToModel(imported)
 
 	l.mu.Lock()
 	l.modelCache[path] = m
