@@ -105,18 +105,12 @@ func NewEngine(options ...EngineBuilderOption) Engine {
 		profilingEnabled: false,
 		engineTickRate:   time.Second / 60,
 	}
-
 	for _, opt := range options {
 		opt(e)
 	}
 
 	if e.window != nil {
-		e.window.SetResizeCallback(func(width, height int) {
-			for _, s := range e.scenes {
-				s.Resize(width, height)
-			}
-		})
+		e.window.SetResizeCallback(e.resizeCallback)
 	}
-	e.Delegate = e
 	return e
 }

@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/profiler"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	"github.com/Carmen-Shannon/oxy-go/engine/window"
@@ -16,8 +15,6 @@ import (
 // engine implements the Engine interface.
 // Coordinates engine, render, and window threads.
 type engine struct {
-	common.DelegateImpl[Engine]
-
 	tickRateChannel chan time.Duration
 
 	running bool
@@ -201,7 +198,14 @@ func (e *engine) handleRender() {
 			if e.renderFrameLimit > 0 {
 				elapsed := time.Since(lastRender)
 				if remaining := e.renderFrameLimit - elapsed; remaining > 0 {
-					time.Sleep(remaining)
+					timer := time.NewTimer(remaining)
+					select {
+					case <-e.quitChannel:
+						timer.Stop()
+						return
+					case <-timer.C:
+					}
+					timer.Stop()
 				}
 			}
 		}
@@ -212,4 +216,10 @@ func (e *engine) handleRender() {
 func (e *engine) handleQuit() {
 	defer e.wg.Done()
 	<-e.quitChannel
+}
+
+func (e *engine) resizeCallback(width, height int) {
+	for _, s := range e.scenes {
+		s.Resize(width, height)
+	}
 }

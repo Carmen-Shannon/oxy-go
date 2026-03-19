@@ -9,7 +9,6 @@ package engine
 import (
 	"time"
 
-	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	"github.com/Carmen-Shannon/oxy-go/engine/window"
 )
@@ -17,8 +16,6 @@ import (
 // Engine is the main entry point for the engine.
 // It orchestrates the engine loop, render loop, and window management.
 type Engine interface {
-	common.Delegate[Engine]
-
 	// Window returns the underlying window.
 	//
 	// Returns:

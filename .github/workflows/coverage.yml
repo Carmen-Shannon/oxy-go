@@ -1,7 +1,7 @@
 # Coverage Badge Workflow
 #
-# Runs all tests with coverage for the common and engine packages, then
-# pushes a shields.io-compatible JSON endpoint to a GitHub Gist.
+# Runs all tests with coverage for the common and engine packages (and all
+# sub-packages), then uploads the report to Codecov for badge and PR comments.
 
 name: Coverage
 
@@ -13,7 +13,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   coverage:
@@ -27,16 +26,6 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            xorg-dev \
-            libgl1-mesa-dev \
-            mesa-vulkan-drivers \
-            libvulkan1 \
-            xvfb
-
       - name: Install Go dependencies
         run: go mod download
 
@@ -48,77 +37,11 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          xvfb-run -a go test ./tests/... \
-            -count=1 \
-            -coverpkg="github.com/Carmen-Shannon/oxy-go/common/...,github.com/Carmen-Shannon/oxy-go/engine/..." \
-            -coverprofile="coverage.out"
+          PKGS=$(go list ./common/... ./engine/... | grep -v '/mocks$' | paste -sd,)
+          TESTS=$(go list ./common/... ./engine/... | grep -v '/mocks$')
+          go test -count=1 -coverprofile=coverage.out -coverpkg="${PKGS}" ${TESTS}
 
-      - name: Extract coverage percentage
-        id: cov
-        run: |
-          COVERAGE=$(go tool cover -func="coverage.out" | grep '^total:' | awk '{print $NF}' | tr -d '%')
-          echo "pct=${COVERAGE}" >> "$GITHUB_OUTPUT"
-          echo "Coverage: ${COVERAGE}%"
-
-      - name: Determine badge color
-        id: badge
-        run: |
-          PCT=${{ steps.cov.outputs.pct }}
-          # Convert to integer for comparison (bash doesn't do float comparison)
-          INT_PCT=${PCT%.*}
-          if   [ "$INT_PCT" -ge 90 ]; then COLOR="brightgreen"
-          elif [ "$INT_PCT" -ge 80 ]; then COLOR="green"
-          elif [ "$INT_PCT" -ge 70 ]; then COLOR="yellowgreen"
-          elif [ "$INT_PCT" -ge 60 ]; then COLOR="yellow"
-          elif [ "$INT_PCT" -ge 50 ]; then COLOR="orange"
-          else                              COLOR="red"
-          fi
-          echo "color=${COLOR}" >> "$GITHUB_OUTPUT"
-
-      - name: Fetch main branch coverage
-        if: github.event_name == 'pull_request'
-        id: main_cov
-        run: |
-          MAIN_PCT=$(curl -sS "https://gist.githubusercontent.com/${{ github.repository_owner }}/${{ secrets.GIST_ID }}/raw/oxy-go-coverage.json" \
-            | grep -oP '"message"\s*:\s*"[\d.]+' | grep -oP '[\d.]+$') || true
-          if [ -z "$MAIN_PCT" ]; then MAIN_PCT="0"; fi
-          echo "pct=${MAIN_PCT}" >> "$GITHUB_OUTPUT"
-
-      - name: Compute coverage diff
-        if: github.event_name == 'pull_request'
-        id: diff
-        run: |
-          BRANCH=${{ steps.cov.outputs.pct }}
-          MAIN=${{ steps.main_cov.outputs.pct }}
-          DIFF=$(awk "BEGIN {d=$BRANCH-$MAIN; printf \"%+.2f\", d}")
-          if   echo "$DIFF" | grep -q '^+'; then ICON="📈"
-          elif echo "$DIFF" | grep -q '^-[^0]'; then ICON="📉"
-          else ICON="➡️"; fi
-          # Treat exactly +0.00 as neutral
-          if [ "$DIFF" = "+0.00" ]; then ICON="➡️"; fi
-          echo "diff=${DIFF}" >> "$GITHUB_OUTPUT"
-          echo "icon=${ICON}" >> "$GITHUB_OUTPUT"
-
-      - name: Comment coverage on PR
-        if: github.event_name == 'pull_request'
-        uses: thollander/actions-comment-pull-request@v3
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
         with:
-          message: |
-            ### Coverage Report
-            **Total coverage: ${{ steps.cov.outputs.pct }}%**
-
-            | Branch | Main | Diff |
-            | ------ | ---- | ---- |
-            | ${{ steps.cov.outputs.pct }}% | ${{ steps.main_cov.outputs.pct }}% | ${{ steps.diff.outputs.icon }} ${{ steps.diff.outputs.diff }}% |
-          comment-tag: coverage-report
-
-      - name: Update Gist badge endpoint
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: schneegans/dynamic-badges-action@v1.7.0
-        with:
-          auth: ${{ secrets.GIST_TOKEN }}
-          gistID: ${{ secrets.GIST_ID }}
-          filename: oxy-go-coverage.json
-          label: coverage
-          message: ${{ steps.cov.outputs.pct }}%
-          color: ${{ steps.badge.outputs.color }}
+          token: ${{ secrets.CODECOV_TOKEN }}
