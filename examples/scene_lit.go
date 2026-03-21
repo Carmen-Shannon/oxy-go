@@ -162,7 +162,7 @@ func main() {
 		game_object.WithScale(1, 1, 1),
 	)
 
-	_ = sc.Add(fox)
+	_ = sc.AddGameObject(fox)
 
 	// Start initial animation (first clip, looped)
 	if foxModel.AnimationCount() > 0 {
@@ -199,7 +199,7 @@ func main() {
 		game_object.WithEphemeral(true),
 	)
 
-	_ = sc.Add(quadObj,
+	_ = sc.AddGameObject(quadObj,
 		pipeline.WithBlendEnabled(true),
 		pipeline.WithBlendState(&wgpu.BlendState{
 			Color: wgpu.BlendComponent{
@@ -241,7 +241,7 @@ func main() {
 		game_object.WithScale(1, 1, 1),
 		game_object.WithEphemeral(true),
 	)
-	_ = sc.Add(sunIndicator)
+	_ = sc.AddGameObject(sunIndicator)
 
 	eng.AddScene(0, sc)
 

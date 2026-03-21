@@ -25,7 +25,7 @@ type engine struct {
 
 	window window.Window
 
-	profiler         *profiler.Profiler
+	profiler         profiler.Profiler
 	profilingEnabled bool
 
 	engineTickRate               time.Duration

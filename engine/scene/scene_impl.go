@@ -39,8 +39,6 @@ type boneParticleUpdateGroup struct {
 }
 
 type scene struct {
-	common.DelegateImpl[Scene]
-
 	mu *sync.RWMutex
 
 	name   string
@@ -1336,9 +1334,6 @@ func (s *scene) initPhysics() {
 
 		// Resolve annotated bindings via the declaration list
 		for _, decl := range sh.Declarations() {
-			if decl.Type != shader.AnnotationTypeBindingGroup || decl.Binding == nil {
-				continue
-			}
 			typeArg := string(decl.Args[2])
 			if stripped, ok := strings.CutPrefix(typeArg, "array<"); ok {
 				typeArg = strings.TrimSuffix(stripped, ">")
@@ -1491,9 +1486,6 @@ func (s *scene) initPhysicsSyncGroup(anim animator.Animator) int {
 	if s.physicsAnimBinding < 0 {
 		syncComputeShader := shader.NewShader("_sync_compute_init", shader.ShaderTypeCompute, "engine/renderer/animator/assets/simple-compute.wgsl", shader.WithInjections(s.injections))
 		for _, decl := range syncComputeShader.Declarations() {
-			if decl.Type != shader.AnnotationTypeBindingGroup || decl.Binding == nil {
-				continue
-			}
 			typeArg := string(decl.Args[2])
 			if stripped, ok := strings.CutPrefix(typeArg, "array<"); ok {
 				typeArg = strings.TrimSuffix(stripped, ">")
@@ -1503,9 +1495,6 @@ func (s *scene) initPhysicsSyncGroup(anim animator.Animator) int {
 				break
 			}
 		}
-	}
-	if s.physicsAnimBinding < 0 {
-		panic("scene: AnimationData binding not found in compute shader declarations")
 	}
 
 	if s.physicsSyncGroup == nil {

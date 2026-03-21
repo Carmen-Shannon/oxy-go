@@ -118,9 +118,11 @@ func NewWindow(options ...WindowBuilderOption) Window {
 	for _, opt := range options {
 		opt(w)
 	}
-	if err := newPlatformWindow(w); err != nil {
+	backend, err := newPlatformWindow(w)
+	if err != nil {
 		panic(fmt.Sprintf("failed to create platform window: %v", err))
 	}
+	w.backend = backend
 	w.Delegate = w
 	return w
 }

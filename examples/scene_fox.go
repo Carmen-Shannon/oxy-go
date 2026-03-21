@@ -147,7 +147,7 @@ func main() {
 	copy(allMats, originalMats)
 	allMats = append(allMats, tintMat, rainbowMat, overlayMat, woodMat)
 	foxModel.SetRenderMaterials(allMats)
-	_ = sc.Add(fox)
+	_ = sc.AddGameObject(fox)
 	// Restore original materials as the active set (variants inactive by default).
 	foxModel.SetRenderMaterials(originalMats)
 

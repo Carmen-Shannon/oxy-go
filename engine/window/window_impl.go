@@ -1,6 +1,18 @@
 package window
 
-import "github.com/Carmen-Shannon/oxy-go/common"
+import (
+	"github.com/Carmen-Shannon/oxy-go/common"
+	"github.com/cogentcore/webgpu/wgpu"
+)
+
+// platformBackend abstracts the platform-specific windowing operations.
+// Implemented by glfwWindow for production; replaced by a fake in tests.
+type platformBackend interface {
+	isRunning() bool
+	processMessages() bool
+	surfaceDescriptor() *wgpu.SurfaceDescriptor
+	close() error
+}
 
 // window is the implementation of the Window interface.
 // Holds window configuration, GLFW state, and event callbacks.
@@ -28,8 +40,8 @@ type window struct {
 	// height is the current window client area height in pixels.
 	height int
 
-	// internalWindow holds the platform-specific window data (glfwWindow).
-	internalWindow any
+	// backend is the platform-specific windowing backend.
+	backend platformBackend
 
 	// onUpdate is called each iteration of the message loop (if set).
 	onUpdate func()

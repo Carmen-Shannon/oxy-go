@@ -6,38 +6,17 @@ import (
 	"time"
 )
 
-// Profiler tracks frame rate and memory statistics for performance monitoring.
-// Outputs stats to the log at a configurable interval.
-type Profiler struct {
-	frameCount     int
-	lastTime       time.Time
-	updateInterval time.Duration
-	memStats       runtime.MemStats
-	lastGCCount    uint32
-	lastTotalAlloc uint64
+type Profiler interface {
+	// Tick should be called once per frame to track frame timing.
+	// Logs performance statistics when the update interval has elapsed.
+	// Statistics include: FPS, heap usage, allocation rate, GC count/pause times, total memory.
+	//
+	// Returns:
+	//   - bool: true if stats were logged this tick, false otherwise
+	Tick() bool
 }
 
-// NewProfiler creates a new Profiler with default settings.
-// Update interval defaults to 1 second.
-//
-// Returns:
-//   - *Profiler: the newly created profiler instance
-func NewProfiler() *Profiler {
-	return &Profiler{
-		frameCount:     0,
-		lastTime:       time.Now(),
-		updateInterval: time.Second,
-		memStats:       runtime.MemStats{},
-	}
-}
-
-// Tick should be called once per frame to track frame timing.
-// Logs performance statistics when the update interval has elapsed.
-// Statistics include: FPS, heap usage, allocation rate, GC count/pause times, total memory.
-//
-// Returns:
-//   - bool: true if stats were logged this tick, false otherwise
-func (p *Profiler) Tick() bool {
+func (p *profiler) Tick() bool {
 	p.frameCount++
 	currentTime := time.Now()
 	elapsed := currentTime.Sub(p.lastTime)

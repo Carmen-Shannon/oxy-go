@@ -89,7 +89,7 @@ func main() {
 		game_object.WithEphemeral(true),
 	)
 
-	_ = sc.Add(cube)
+	_ = sc.AddGameObject(cube)
 
 	eng.AddScene(0, sc)
 

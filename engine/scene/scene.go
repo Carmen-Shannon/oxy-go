@@ -35,8 +35,6 @@ import (
 // Scenes can be hot-swapped via the Active flag to switch between different views or levels.
 // Thread-safe for concurrent access.
 type Scene interface {
-	common.Delegate[Scene]
-
 	// Name returns the scene's identifier.
 	Name() string
 
@@ -105,7 +103,7 @@ type Scene interface {
 	//
 	// Returns:
 	//   - uint64: the assigned object ID
-	Add(obj game_object.GameObject, pipelineOpts ...pipeline.PipelineBuilderOption) uint64
+	AddGameObject(obj game_object.GameObject, pipelineOpts ...pipeline.PipelineBuilderOption) uint64
 
 	// Get retrieves a non-ephemeral GameObject by its ID.
 	// Returns nil if not found.
@@ -117,12 +115,12 @@ type Scene interface {
 	//   - game_object.GameObject: the object or nil
 	Get(id uint64) game_object.GameObject
 
-	// Remove removes a non-ephemeral GameObject from the registry by ID
+	// RemoveGameObject removes a non-ephemeral GameObject from the registry by ID
 	// and swap-removes the instance data from its animator.
 	//
 	// Parameters:
 	//   - id: the object's unique ID
-	Remove(id uint64)
+	RemoveGameObject(id uint64)
 
 	// PrepareCompute updates camera matrices, advances animation state,
 	// uploads staged buffer writes, and dispatches all compute shaders for this scene.
@@ -1285,7 +1283,7 @@ func (s *scene) CountEphemeral() int {
 	return count
 }
 
-func (s *scene) Add(obj game_object.GameObject, pipelineOpts ...pipeline.PipelineBuilderOption) uint64 {
+func (s *scene) AddGameObject(obj game_object.GameObject, pipelineOpts ...pipeline.PipelineBuilderOption) uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1423,7 +1421,7 @@ func (s *scene) Add(obj game_object.GameObject, pipelineOpts ...pipeline.Pipelin
 	return obj.ID()
 }
 
-func (s *scene) Remove(id uint64) {
+func (s *scene) RemoveGameObject(id uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1944,9 +1942,6 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 			}
 			instCount := a.InstanceCount()
 			groups := (instCount + xSize - 1) / xSize
-			if groups == 0 {
-				groups = 1
-			}
 			s.r.DispatchCompute(key, a.ComputeBindGroupProvider(), [3]uint32{groups, 1, 1})
 		}
 	}

@@ -229,7 +229,5 @@ func NewScene(name string, cam camera.Camera, r renderer.Renderer, options ...Sc
 			panic(fmt.Sprintf("scene: failed to init camera bind group: %v", err))
 		}
 	}
-
-	s.Delegate = s
 	return s
 }

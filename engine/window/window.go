@@ -6,6 +6,7 @@
 package window
 
 import (
+	"fmt"
 	"runtime"
 
 	"github.com/Carmen-Shannon/oxy-go/common"
@@ -111,11 +112,28 @@ func (w *window) SetKeyDownCallback(callback func(keyCode uint32))   { w.onKeyDo
 func (w *window) SetKeyUpCallback(callback func(keyCode uint32))     { w.onKeyUp = callback }
 func (w *window) SetMiddleMouseUpCallback(callback func(x, y int32)) { w.onMiddleMouseUp = callback }
 func (w *window) SetMouseMoveCallback(callback func(x, y int32))     { w.onMouseMove = callback }
-func (w *window) SurfaceDescriptor() *wgpu.SurfaceDescriptor         { return platformGetSurfaceDescriptor(w) }
-func (w *window) IsRunning() bool                                    { return platformIsRunningCheck(w) }
-func (w *window) Close() error                                       { return platformCloseWindow(w) }
-func (w *window) Width() int                                         { return w.width }
-func (w *window) Height() int                                        { return w.height }
+func (w *window) SurfaceDescriptor() *wgpu.SurfaceDescriptor {
+	if w.backend == nil {
+		return nil
+	}
+	return w.backend.surfaceDescriptor()
+}
+
+func (w *window) IsRunning() bool {
+	if w.backend == nil {
+		return false
+	}
+	return w.backend.isRunning()
+}
+
+func (w *window) Close() error {
+	if w.backend == nil {
+		return fmt.Errorf("window is not initialized")
+	}
+	return w.backend.close()
+}
+func (w *window) Width() int  { return w.width }
+func (w *window) Height() int { return w.height }
 
 func (w *window) SetMiddleMouseDownCallback(callback func(x, y int32)) {
 	w.onMiddleMouseDown = callback
@@ -123,14 +141,12 @@ func (w *window) SetMiddleMouseDownCallback(callback func(x, y int32)) {
 
 func (w *window) ProcessMessages() {
 	for w.Delegate.IsRunning() {
-		if succ := platformProcessMessages(w); !succ {
+		if !w.backend.processMessages() {
 			break
 		}
-
 		if w.onUpdate != nil {
 			w.onUpdate()
 		}
-
 		runtime.Gosched()
 	}
 }
