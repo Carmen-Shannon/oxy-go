@@ -109,12 +109,7 @@ func NewRenderer(backendType RendererBackendType, window window.Window, options 
 		msaa = *r.pendingMSAA
 	}
 
-	switch backendType {
-	case BackendTypeWGPU:
-		fallthrough
-	default:
-		r.backend = newWGPURendererBackend(window.SurfaceDescriptor(), r.forceFallbackAdapter, msaa)
-	}
+	r.backend = newWGPURendererBackend(window.SurfaceDescriptor(), r.forceFallbackAdapter, msaa)
 
 	if r.pendingPresentMode != nil {
 		r.backend.SetPresentMode(*r.pendingPresentMode)

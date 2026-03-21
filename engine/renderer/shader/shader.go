@@ -158,14 +158,6 @@ func (s *shader) BindGroupLayoutDescriptors() map[int]wgpu.BindGroupLayoutDescri
 	return s.bindGroupLayoutDescriptors
 }
 
-func (s *shader) SetVertexLayout(key int, layout []wgpu.VertexBufferLayout) {
-	s.vertexLayouts[key] = layout
-}
-
-func (s *shader) SetVertexLayouts(layouts map[int][]wgpu.VertexBufferLayout) {
-	s.vertexLayouts = layouts
-}
-
 func (s *shader) BindGroupVarName(group, binding int) string {
 	if s.bindingVarNames[group] == nil {
 		return ""

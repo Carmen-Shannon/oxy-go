@@ -153,12 +153,7 @@ func (p *preProcessor) Process(source string, injections ...map[string]string) (
 		// handle annotation based on its type and arguments
 		switch a.Type {
 		case annotationTypeInclude:
-			entry, ok := p.structRegistry[a.Args[0]]
-			if !ok {
-				return "", fmt.Errorf("line %d: unknown @oxy:include argument %q", i+1, a.Args[0])
-			}
-
-			out = append(out, entry.Source)
+			out = append(out, p.structRegistry[a.Args[0]].Source)
 		case AnnotationTypeBindingGroup:
 			addrSpace := p.addressSpaceRegistry[a.Args[0]]
 			varName := string(a.Args[1])
@@ -185,8 +180,6 @@ func (p *preProcessor) Process(source string, injections ...map[string]string) (
 			out = append(out, fmt.Sprintf("const %s: %s = %s;", constName, wgslType, val))
 		case AnnotationTypeProvider:
 			p.declarations = append(p.declarations, *a)
-		default:
-			return "", fmt.Errorf("line %d: unknown annotation type %q", i+1, a.Type)
 		}
 
 	}
