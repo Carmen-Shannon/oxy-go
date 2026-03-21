@@ -14,6 +14,7 @@ The `game_object` package defines the scene entity abstraction for the Oxy engin
   - [Model & Animator](#model--animator)
   - [Transform Access](#transform-access)
   - [Light Attachment](#light-attachment)
+  - [Physics](#physics)
 - [Transform Lifecycle](#transform-lifecycle)
 - [Usage Example](#usage-example)
 
@@ -60,26 +61,24 @@ Defaults applied before options:
 | Light          | `nil`       |
 | RigidBody      | `nil`       |
 
-The `GameObject` interface embeds `common.Delegate[GameObject]`, exposing `SetDelegate(delegate GameObject)`. In production code the delegate is set to the instance itself during construction. In test code the delegate can be replaced with a mock.
-
 ---
 
 ## Builder Options
 
 All options follow the `GameObjectBuilderOption` functional option pattern.
 
-| Option              | Parameters           | Description                                                       |
-| ------------------- | -------------------- | ----------------------------------------------------------------- |
-| `WithID`            | `id uint64`          | Sets the object's unique identifier                               |
-| `WithEnabled`       | `enabled bool`       | Enables or disables the object for rendering                      |
-| `WithEphemeral`     | `ephemeral bool`     | Marks the object as ephemeral (not persisted in scene registry)   |
-| `WithModel`         | `m model.Model`      | Associates a Model with the object                                |
-| `WithPosition`      | `x, y, z float32`    | Sets the initial position (applied when added to a scene)         |
-| `WithScale`         | `sx, sy, sz float32` | Sets the initial scale (applied when added to a scene)            |
-| `WithRotation`      | `rx, ry, rz float32` | Sets the initial rotation (applied when added to a scene)         |
-| `WithRotationSpeed` | `rx, ry, rz float32` | Sets the initial rotation speed (applied when added to a scene)   |
-| `WithLight`         | `l light.Light`      | Attaches a light whose position syncs from the object's transform |
-| `WithRigidBody`     | `rb physics.RigidBody` | Attaches a rigid body for physics simulation                     |
+| Option              | Parameters             | Description                                                       |
+| ------------------- | ---------------------- | ----------------------------------------------------------------- |
+| `WithID`            | `id uint64`            | Sets the object's unique identifier                               |
+| `WithEnabled`       | `enabled bool`         | Enables or disables the object for rendering                      |
+| `WithEphemeral`     | `ephemeral bool`       | Marks the object as ephemeral (not persisted in scene registry)   |
+| `WithModel`         | `m model.Model`        | Associates a Model with the object                                |
+| `WithPosition`      | `x, y, z float32`      | Sets the initial position (applied when added to a scene)         |
+| `WithScale`         | `sx, sy, sz float32`   | Sets the initial scale (applied when added to a scene)            |
+| `WithRotation`      | `rx, ry, rz float32`   | Sets the initial rotation (applied when added to a scene)         |
+| `WithRotationSpeed` | `rx, ry, rz float32`   | Sets the initial rotation speed (applied when added to a scene)   |
+| `WithLight`         | `l light.Light`        | Attaches a light whose position syncs from the object's transform |
+| `WithRigidBody`     | `rb physics.RigidBody` | Attaches a rigid body for physics simulation                      |
 
 ---
 
@@ -97,14 +96,14 @@ All options follow the `GameObjectBuilderOption` functional option pattern.
 
 ### Model & Animator
 
-| Method                                | Description                                                    |
-| ------------------------------------- | -------------------------------------------------------------- |
-| `Model() model.Model`                 | Returns the associated Model, or `nil`                         |
-| `SetModel(m model.Model)`             | Associates a Model with this object                            |
-| `Animator() animator.Animator`        | Returns the associated Animator, or `nil`                      |
-| `SetAnimator(anim animator.Animator)` | Sets the Animator for this object                              |
-| `AnimatorInstanceID() int`            | Returns the instance index within the Animator (`-1` if unset) |
-| `SetAnimatorInstanceID(id int)`       | Sets the instance index within the Animator                    |
+| Method                                  | Description                                                    |
+| --------------------------------------- | -------------------------------------------------------------- |
+| `Model() model.Model`                   | Returns the associated Model, or `nil`                         |
+| `SetModel(m model.Model)`               | Associates a Model with this object                            |
+| `Animator() animator.Animator`          | Returns the associated Animator, or `nil`                      |
+| `SetAnimator(anim animator.Animator)`   | Sets the Animator for this object                              |
+| `AnimatorInstanceID() int`              | Returns the instance index within the Animator (`-1` if unset) |
+| `SetAnimatorInstanceID(instanceID int)` | Sets the instance index within the Animator                    |
 
 ### Transform Access
 
@@ -133,10 +132,10 @@ All transform setters write through to the Animator, preserving sibling values (
 
 ### Physics
 
-| Method                                     | Description                                                 |
-| ------------------------------------------ | ----------------------------------------------------------- |
-| `RigidBody() physics.RigidBody`            | Returns the attached RigidBody, or `nil`                    |
-| `SetRigidBody(rb physics.RigidBody)`       | Attaches a RigidBody for physics simulation (pass `nil` to detach) |
+| Method                               | Description                                                        |
+| ------------------------------------ | ------------------------------------------------------------------ |
+| `RigidBody() physics.RigidBody`      | Returns the attached RigidBody, or `nil`                           |
+| `SetRigidBody(rb physics.RigidBody)` | Attaches a RigidBody for physics simulation (pass `nil` to detach) |
 
 ---
 
@@ -201,3 +200,13 @@ func main() {
     obj.SetRotationSpeed(0, 1.0, 0)
 }
 ```
+
+---
+
+## Files
+
+| File                     | Contents                                                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------------ |
+| `game_object.go`         | `GameObject` interface definition and exported forwarding method bodies                    |
+| `game_object_impl.go`    | Unexported `gameObject` struct and internal transform method implementations               |
+| `game_object_builder.go` | `GameObjectBuilderOption` type, all `With*` builder functions, `NewGameObject` constructor |

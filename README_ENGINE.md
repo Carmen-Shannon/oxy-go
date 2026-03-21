@@ -9,9 +9,9 @@ The `engine` package is the **main entrypoint** of the oxy-go package. It repres
 ## Architecture
 
 ```
-Engine (public interface, embeds common.Delegate[Engine])
- └─ engine (unexported struct, embeds common.DelegateImpl[Engine])
-      ├── Window              — GLFW window, message loop, input callbacks
+Engine (public interface)
+ └─ engine (unexported struct)
+      ├── window              — GLFW window, message loop, input callbacks
       ├── scenes              — map[int]Scene keyed by z-index (render order)
       ├── tickCallback        — fixed-rate game logic callback
       ├── renderCallback      — per-frame render callback
@@ -38,7 +38,7 @@ The window's `ProcessMessages()` blocks on the main thread (required by GLFW/OS)
 func NewEngine(options ...EngineBuilderOption) Engine
 ```
 
-Creates a new Engine with sensible defaults, applies each option in order, sets the delegation target to itself (`e.Delegate = e`), and wires the window's resize callback to call `Scene.Resize(width, height)` on all registered scenes.
+Creates a new Engine with sensible defaults and applies each option in order. When a window is provided via `WithWindow()`, wires the window's resize callback to call `Scene.Resize(width, height)` on all registered scenes.
 
 **Defaults:**
 
@@ -65,10 +65,6 @@ Creates a new Engine with sensible defaults, applies each option in order, sets 
 
 ## Engine Interface
 
-### Delegation
-
-The `Engine` interface embeds `common.Delegate[Engine]`, exposing `SetDelegate(delegate Engine)`. In production code the delegate is set to the instance itself during construction. In test code the delegate can be replaced with a mock.
-
 ### Lifecycle
 
 | Method   | Description                                                                                                        |
@@ -80,7 +76,7 @@ The `Engine` interface embeds `common.Delegate[Engine]`, exposing `SetDelegate(d
 
 | Method            | Description                             |
 | ----------------- | --------------------------------------- |
-| `Window() Window` | Returns the underlying window instance. |
+| `Window() window.Window` | Returns the underlying window instance. |
 
 ### Tick & Render
 
@@ -104,8 +100,8 @@ The `Engine` interface embeds `common.Delegate[Engine]`, exposing `SetDelegate(d
 | ------------------------ | ---------------------------------------------------------------- |
 | `AddScene(key, s)`       | Registers a scene at the given z-index. Lower keys render first. |
 | `RemoveScene(key)`       | Removes the scene at the given z-index.                          |
-| `Scene(key) Scene`       | Retrieves the scene at the given z-index, or `nil`.              |
-| `Scenes() map[int]Scene` | Returns a copy of all registered scenes keyed by z-index.        |
+| `Scene(key) scene.Scene`       | Retrieves the scene at the given z-index, or `nil`.              |
+| `Scenes() map[int]scene.Scene` | Returns a copy of all registered scenes keyed by z-index.        |
 
 ---
 
@@ -114,22 +110,39 @@ The `Engine` interface embeds `common.Delegate[Engine]`, exposing `SetDelegate(d
 Each iteration of `handleRender`, for all active scenes sorted by ascending z-index:
 
 ```
-1. renderer.BeginComputeFrame()
-   ── scene.PrepareCompute(dt)       for each active scene
-   renderer.EndComputeFrame()
+Phase A — Compute (animation, physics):
+  renderer.BeginComputeFrame()
+  ── scene.PrepareCompute(dt)            for each active scene
+  renderer.EndComputeFrame()
 
-2. scene.PrepareShadows()             for each active scene
+Phase B — Geometry (shadows, G-Buffer):
+  renderer.BeginGeometryFrame()
+  ── scene.PrepareShadows()              for each active scene
+  ── scene.PrepareGBuffer()              for each active scene
+  renderer.EndGeometryFrame()
 
-3. scene.PrepareLightCulling()        for each active scene
+Phase C — Compute (light culling, SSAO, contact shadows):
+  renderer.BeginComputeFrame()
+  ── scene.PrepareLightCulling()         for each active scene
+  ── scene.PrepareSSAO()                 for each active scene
+  ── scene.PrepareContactShadows()       for each active scene
+  renderer.EndComputeFrame()
 
-4. renderer.BeginFrame()
-   ── scene.DrawCalls()              for each active scene
-   renderer.EndFrame()
-   renderer.Present()
+Phase D — HDR draw + post-process:
+  scene.BeginHDRFrame()  (or renderer.BeginFrame() as fallback)
+  ── scene.DrawCalls()                   for each active scene
+  renderer.EndFrame()
+  renderer.BeginComputeFrame()           (SSR sub-pass, HDR path only)
+  ── scene.PrepareSSR()                  for each active scene
+  renderer.EndComputeFrame()
+  ── scene.PrepareComposition()          for each active scene  (HDR path only)
+  renderer.FlushFrame()                  (batched GPU submit)
+  renderer.Present()
 
-5. renderCallback(dt)                 user render callback (if set)
-6. profiler.Tick()                    profiling sample (if enabled)
-7. frame rate limiting sleep          (if renderFrameLimit > 0)
+Post-frame:
+  renderCallback(dt)                     user render callback (if set)
+  profiler.Tick()                        profiling sample (if enabled)
+  frame rate limiting sleep              (if renderFrameLimit > 0)
 ```
 
 All active scenes sharing the same renderer are rendered within a single render pass, enabling layered compositing by z-index order.
@@ -162,5 +175,6 @@ The `handleRender` goroutine includes a `recover()` guard — if a panic occurs 
 
 | File                | Purpose                                                                                                   |
 | ------------------- | --------------------------------------------------------------------------------------------------------- |
-| `engine.go`         | `Engine` interface, `engine` struct, `NewEngine` constructor, goroutine loops, all method implementations |
-| `engine_builder.go` | `EngineBuilderOption` type and 5 builder functions                                                        |
+| `engine.go`         | `Engine` interface definition and thin method delegation implementations                                  |
+| `engine_impl.go`    | `engine` unexported struct, goroutine loops (`handleEngine`, `handleRender`, `handleQuit`), internal helpers |
+| `engine_builder.go` | `EngineBuilderOption` type, 5 `With*` builder functions, and `NewEngine` constructor                      |

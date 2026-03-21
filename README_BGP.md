@@ -15,7 +15,7 @@ BindGroupProvider (public interface)
       └─ common.DelegateImpl[BindGroupProvider]
 ```
 
-The package follows the standard oxy-go interface-first pattern: a single public `BindGroupProvider` interface backed by an unexported `bindGroupProvider` struct with a compile-time implementation check. The interface embeds `common.Delegate[BindGroupProvider]` for mock/test delegation support.
+The package follows the standard oxy-go interface-first pattern: a single public `BindGroupProvider` interface backed by an unexported `bindGroupProvider` struct (defined in `bind_group_provider_impl.go`) with a compile-time implementation check. The interface embeds `common.Delegate[BindGroupProvider]` for mock/test delegation support.
 
 ---
 
@@ -105,7 +105,7 @@ The `NewBindGroupProvider` constructor accepts a required label and variadic `Bi
 func NewBindGroupProvider(label string, options ...BindGroupProviderOption) BindGroupProvider
 ```
 
-Creates a new `BindGroupProvider` with initialized empty maps for buffers, texture views, and samplers. Sets `p.Delegate = p` so delegation routes to itself by default. Builder options are applied after map initialization.
+Creates a new `BindGroupProvider` with initialized empty maps for buffers, texture views, and samplers. Builder options are applied after map initialization. `p.Delegate` is set to `p` last so delegation routes to itself by default.
 
 ---
 
@@ -142,8 +142,9 @@ Each resource is released and removed from its map/nil'd to prevent double-free.
 
 ## Files
 
-| File                             | Purpose                                                                       |
-| -------------------------------- | ----------------------------------------------------------------------------- |
-| `bind_group_provider.go`         | `BindGroupProvider` interface, `bindGroupProvider` struct, constructor, impls |
-| `bind_group_provider_builder.go` | `BindGroupProviderOption` type and builder functions                          |
-| `buffer_write.go`                | `BufferWrite` struct for batched GPU buffer writes                            |
+| File                             | Purpose                                                                                           |
+| -------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `bind_group_provider.go`         | `BindGroupProvider` interface definition and all method implementations on `*bindGroupProvider`   |
+| `bind_group_provider_builder.go` | `BindGroupProviderOption` type, `With*` builder functions, and `NewBindGroupProvider` constructor |
+| `bind_group_provider_impl.go`    | `bindGroupProvider` unexported struct definition                                                  |
+| `buffer_write.go`                | `BufferWrite` struct for batched GPU buffer writes                                                |

@@ -86,8 +86,6 @@ All options follow the `ModelBuilderOption` functional option pattern.
 
 ## Model Interface
 
-The `Model` interface embeds `common.Delegate[Model]`, exposing `SetDelegate(delegate Model)`. In production code the delegate is set to the instance itself during construction. In test code the delegate can be replaced with a mock.
-
 ### Identity & Mesh Data
 
 | Method                       | Description                                              |
@@ -122,13 +120,13 @@ The `Model` interface embeds `common.Delegate[Model]`, exposing `SetDelegate(del
 
 ### GPU Providers
 
-| Method                                          | Description                                                |
-| ----------------------------------------------- | ---------------------------------------------------------- |
-| `MeshProvider() BindGroupProvider`              | Returns the bind group provider holding GPU mesh resources |
-| `EffectProvider() BindGroupProvider`            | Returns the per-model effect parameter provider, or `nil`  |
-| `SetEffectProvider(provider BindGroupProvider)` | Assigns an effect parameter bind group provider            |
-| `ComputePipelineKey() string`                   | Returns the compute pipeline key for the model's animator  |
-| `SetComputePipelineKey(key string)`             | Sets the compute pipeline key                              |
+| Method                                                              | Description                                                |
+| ------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `MeshProvider() bind_group_provider.BindGroupProvider`              | Returns the bind group provider holding GPU mesh resources |
+| `EffectProvider() bind_group_provider.BindGroupProvider`            | Returns the per-model effect parameter provider, or `nil`  |
+| `SetEffectProvider(provider bind_group_provider.BindGroupProvider)` | Assigns an effect parameter bind group provider            |
+| `ComputePipelineKey() string`                                       | Returns the compute pipeline key for the model's animator  |
+| `SetComputePipelineKey(key string)`                                 | Sets the compute pipeline key                              |
 
 ### Shadow Settings
 
@@ -334,3 +332,12 @@ obj := game_object.NewGameObject(
 ```
 
 ---
+
+## Files
+
+| File               | Contents                                                                                                                       |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `model.go`         | `Model` interface, `ShadowCullMode` constants, and exported method implementations                                             |
+| `model_impl.go`    | Unexported `model` struct definition                                                                                           |
+| `model_builder.go` | `ModelBuilderOption` type, all `With*` builder functions, `NewModel` constructor                                               |
+| `gpu_types.go`     | `GPUVertex`, `GPUSkinnedVertex`, `GPUModelData` structs with `Size()`/`Marshal()`, WGSL embed sources, `ComputeBoundingRadius` |

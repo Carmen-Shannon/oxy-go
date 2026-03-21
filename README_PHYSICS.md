@@ -16,6 +16,7 @@ The `physics` package implements a GPU-accelerated rigid body physics simulation
 - [Particle](#particle)
   - [VoxelizeMesh](#voxelizemesh)
   - [AssignBoneIndices](#assignboneindices)
+- [Constants](#constants)
 - [Physics Controller](#physics-controller)
   - [Creating a Physics Controller](#creating-a-physics-controller)
   - [Physics Builder Options](#physics-builder-options)
@@ -47,9 +48,11 @@ The entire collision and integration pipeline executes on the GPU. The CPU is re
 
 ```
 physics/
-├── physics.go              Physics controller interface and implementation
+├── physics.go              Physics controller interface
+├── physics_impl.go         Unexported physicsImpl struct and method bodies
 ├── physics_builder.go      PhysicsBuilderOption functional options
-├── rigid_body.go           RigidBody interface and implementation
+├── rigid_body.go           RigidBody interface
+├── rigid_body_impl.go      Unexported rigidBody struct and method bodies
 ├── rigid_body_builder.go   RigidBodyOption functional options
 ├── particle.go             Particle struct, VoxelizeMesh, AssignBoneIndices
 ├── gpu_types.go            GPU-aligned structs (GPUBody, GPUParticle, etc.)
@@ -215,6 +218,24 @@ Associates each voxel particle with its nearest bone from a skinned model. For e
 
 ---
 
+## Constants
+
+### PhysicsState
+
+The `PhysicsState` type is a bitmask used to classify a rigid body's simulation mode.
+
+```go
+type PhysicsState int
+
+const (
+    PhysicsStateActive    PhysicsState = 1 // Body participates in full simulation
+    PhysicsStateStatic    PhysicsState = 2 // Body is immovable (collides but never moves)
+    PhysicsStateKinematic PhysicsState = 4 // Body is animation-driven (not gravity-affected)
+)
+```
+
+---
+
 ## Physics Controller
 
 ### Creating a Physics Controller
@@ -259,9 +280,9 @@ The system starts disabled and becomes active upon the first `RegisterBody` call
 | -------------------- | -------------- | --------------------------------------------------------------- |
 | `WithFixedDt`        | `float32`      | Fixed timestep in seconds                                       |
 | `WithMaxSubsteps`    | `int`          | Max substeps per frame (spiral-of-death cap)                    |
-| `WithMaxBodies`      | `uint32`       | Maximum rigid body count (GPU buffer size)                      |
-| `WithMaxParticles`   | `uint32`       | Maximum particle count (GPU buffer size)                        |
-| `WithMaxGridCells`   | `uint32`       | Maximum spatial grid cells (x×y×z cap)                          |
+| `WithMaxBodies`      | `int`          | Maximum rigid body count (GPU buffer size)                      |
+| `WithMaxParticles`   | `int`          | Maximum particle count (GPU buffer size)                        |
+| `WithMaxGridCells`   | `int`          | Maximum spatial grid cells (x×y×z cap)                          |
 | `WithSpringCoeff`    | `float32`      | DEM spring coefficient $k$                                      |
 | `WithDampingCoeff`   | `float32`      | DEM damping coefficient $\eta$                                  |
 | `WithShearCoeff`     | `float32`      | DEM tangential friction coefficient $\mu_t$                     |
@@ -272,14 +293,16 @@ The system starts disabled and becomes active upon the first `RegisterBody` call
 
 **State Queries**
 
-| Method            | Returns  | Description                          |
-| ----------------- | -------- | ------------------------------------ |
-| `Enabled()`       | `bool`   | Whether the physics system is active |
-| `BodiesCount()`   | `int`    | Number of allocated body slots       |
-| `ParticleCount()` | `int`    | Total particles across all bodies    |
-| `MaxBodies()`     | `uint32` | Maximum body capacity                |
-| `MaxParticles()`  | `uint32` | Maximum particle capacity            |
-| `MaxGridCells()`  | `uint32` | Maximum grid cell count              |
+| Method            | Returns  | Description                                                                 |
+| ----------------- | -------- | --------------------------------------------------------------------------- |
+| `Enabled()`       | `bool`   | Whether the physics system is active                                        |
+| `BodiesCount()`   | `int`    | Number of allocated body slots                                              |
+| `ParticleCount()` | `int`    | Total particles across all bodies                                           |
+| `MaxBodies()`     | `int`    | Maximum body capacity                                                       |
+| `MaxParticles()`  | `int`    | Maximum particle capacity                                                   |
+| `MaxGridCells()`  | `int`    | Maximum grid cell count                                                     |
+| `SlotsPerCell()`  | `uint32` | Returns the number of particle slots per grid cell                          |
+| `BodyIdxMask()`   | `uint32` | Returns the bitmask used to extract body indices from packed grid cell data |
 
 **Buffer Management**
 

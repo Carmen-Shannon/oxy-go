@@ -9,9 +9,10 @@ The `engine/loader` package provides 3D model loading and caching for the oxy-go
 The loader is organized in layers:
 
 ```
-Loader (public API + model cache, embeds common.Delegate[Loader])
+Loader (public API + model cache)
   └── loaderBackend (format-specific dispatch)
-        └── gltfImporter (orchestration)
+        └── gltfLoaderBackend → gltfLoaderBackendImpl (glTF backend)
+              └── gltfImporter (orchestration)
               ├── gltfParser         (JSON/GLB parse + accessor reads)
               ├── gltfMeshExtractor  (vertex, index, tangent data)
               ├── gltfMaterialExtractor (textures, samplers, PBR params)
@@ -49,13 +50,11 @@ ldr := loader.NewLoader(loader.BackendTypeGLTF)
 
 ## Loader Interface
 
-The `Loader` interface embeds `common.Delegate[Loader]`, exposing `SetDelegate(delegate Loader)`. In production code the delegate is set to the instance itself during construction. In test code the delegate can be replaced with a mock.
-
 | Method                                   | Description                                                                                                                               |
 | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `Load(path string) (model.Model, error)` | Full import — meshes, skeleton, animations, materials. Caches by file path. Returns CPU-side data only; GPU init is handled by the Scene. |
 | `Get(name string) model.Model`           | Retrieve a cached model by name. Returns nil if not found.                                                                                |
-| `Models() map[string]model.Model`        | Returns a copy of the full model cache.                                                                                                   |
+| `Models() map[string]model.Model`        | Returns the internal model cache map directly. Callers must not mutate the returned map.                                                  |
 
 All `Load` calls are cache-aware: if a model has already been loaded under the same key, the cached version is returned immediately.
 
@@ -79,6 +78,7 @@ All `Load` calls are cache-aware: if a model has already been loaded under the s
 - Normal map
 - Texture image sources: external file, buffer view (GLB), data URI (base64)
 - Sampler parameters (filter modes, wrap modes) converted to WebGPU equivalents
+- Alpha mode (`OPAQUE`, `MASK`, `BLEND`) and alpha cutoff threshold
 
 ### Skeletons
 

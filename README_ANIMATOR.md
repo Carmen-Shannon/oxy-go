@@ -102,16 +102,16 @@ These methods no-op on simple backends:
 
 ### Bind Group Providers
 
-| Method                                                                       | Description                                                |
-| ---------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `ComputeBindGroupProvider() bind_group_provider.BindGroupProvider`           | Returns the bind group provider for the compute dispatch   |
-| `OutputBindGroupProvider() bind_group_provider.BindGroupProvider`            | Returns the bind group provider for the output/result data |
+| Method                                                             | Description                                                |
+| ------------------------------------------------------------------ | ---------------------------------------------------------- |
+| `ComputeBindGroupProvider() bind_group_provider.BindGroupProvider` | Returns the bind group provider for the compute dispatch   |
+| `OutputBindGroupProvider() bind_group_provider.BindGroupProvider`  | Returns the bind group provider for the output/result data |
 
 ### Model
 
 | Method                                    | Description                                                                                        |
 | ----------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `Model() Model`                           | Returns the associated Model, or `nil`.                                                            |
+| `Model() model.Model`                     | Returns the associated Model, or `nil`.                                                            |
 | `SetModel(m, boneBinding, packedBinding)` | Assigns a Model. For skinned models, flattens skeleton bones and animation clips into the backend. |
 
 ### Frustum Culling
@@ -131,7 +131,7 @@ These methods no-op on simple backends:
 | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `PrepareFrame(deltaTime, binding)`                         | Advances animation state, stages per-frame uniform data. For skeletal backends, advances playback time, handles looping and blend resolution. |
 | `Flush(instanceBinding, boneBinding, modelBinding) uint32` | Stages dirty instance data as GPU buffer writes. Returns the number of instances flushed.                                                     |
-| `StagedWriteData() []BufferWrite`                          | Returns and clears pending GPU buffer writes for the Renderer to submit.                                                                      |
+| `StagedWriteData() []bind_group_provider.BufferWrite`      | Returns and clears pending GPU buffer writes for the Renderer to submit.                                                                      |
 | `Release()`                                                | Frees all GPU resources held by this animator.                                                                                                |
 
 ### Metadata
@@ -146,19 +146,19 @@ These methods no-op on simple backends:
 
 All GPU structs are std430-aligned and have embedded WGSL source files loaded via `//go:embed`. Each type implements `Size() int` and `Marshal() []byte`.
 
-| Go Type                    | WGSL Type               | Size  | Backend  | Description                                                    |
-| -------------------------- | ----------------------- | ----- | -------- | -------------------------------------------------------------- |
-| `GPUInstanceData`          | `InstanceData`          | 64 B  | Output   | Per-instance 4×4 model matrix (compute output).                |
-| `GPUAnimationData`         | `AnimationData`         | 64 B  | Simple   | Per-instance rotation, position, scale (compute input).        |
-| `GPUSkeletalAnimationData` | `SkeletalAnimationData` | 48 B  | Skeletal | Per-instance clip index, time, blend weight.                   |
-| `GPUAnimationGlobals`      | `AnimationGlobals`      | 128 B | Skeletal | Per-frame uniform: counts, offsets, frustum planes.            |
-| `GPUGlobalData`            | `GlobalData`            | 112 B | Simple   | Per-frame uniform: instance count, delta time, frustum planes. |
-| `GPUFrustumPlane`          | `FrustumPlane`          | 16 B  | Both     | Single frustum plane (normal + distance).                      |
-| `GPUIndirectArgs`          | `IndirectArgs`          | 20 B  | Both     | DrawIndexedIndirect arguments written by compute shader.       |
-| `GPUBoneInfo`              | `BoneInfo`              | 112 B | Skeletal | Inverse bind matrix, local transform, parent index.            |
-| `GPUKeyFrame`              | —                       | 64 B  | Skeletal | Time, translation, rotation, scale per keyframe.               |
-| `GPUChannelHeader`         | —                       | 32 B  | Skeletal | Bone index + keyframe offsets/counts per channel.              |
-| `GPUClipHeader`            | —                       | 16 B  | Skeletal | Duration, ticks/sec, channel offset/count per clip.            |
+| Go Type                    | WGSL Type               | Size  | Backend  | Description                                                                                                   |
+| -------------------------- | ----------------------- | ----- | -------- | ------------------------------------------------------------------------------------------------------------- |
+| `GPUInstanceData`          | `InstanceData`          | 64 B  | Output   | Per-instance 4×4 model matrix (compute output).                                                               |
+| `GPUAnimationData`         | `AnimationData`         | 64 B  | Simple   | Per-instance rotation, position, scale (compute input).                                                       |
+| `GPUSkeletalAnimationData` | `SkeletalAnimationData` | 48 B  | Skeletal | Per-instance primary clip index, animation time, blend weight, secondary clip index, and secondary clip time. |
+| `GPUAnimationGlobals`      | `AnimationGlobals`      | 128 B | Skeletal | Per-frame uniform: counts, offsets, frustum planes.                                                           |
+| `GPUGlobalData`            | `GlobalData`            | 112 B | Simple   | Per-frame uniform: instance count, delta time, frustum planes.                                                |
+| `GPUFrustumPlane`          | `FrustumPlane`          | 16 B  | Both     | Single frustum plane (normal + distance).                                                                     |
+| `GPUIndirectArgs`          | `IndirectArgs`          | 20 B  | Both     | DrawIndexedIndirect arguments written by compute shader.                                                      |
+| `GPUBoneInfo`              | `BoneInfo`              | 112 B | Skeletal | Inverse bind matrix, local transform, parent index.                                                           |
+| `GPUKeyFrame`              | —                       | 64 B  | Skeletal | Time, translation, rotation, scale per keyframe.                                                              |
+| `GPUChannelHeader`         | —                       | 32 B  | Skeletal | Bone index + keyframe offsets/counts per channel.                                                             |
+| `GPUClipHeader`            | —                       | 16 B  | Skeletal | Duration, ticks/sec, channel offset/count per clip.                                                           |
 
 ---
 
@@ -188,29 +188,30 @@ Offsets (`channelDataOffset`, `keyframeDataOffset`) are stored in the per-frame 
 
 ## WGSL Assets
 
-| Asset File                     | Embedded Variable                | WGSL Struct             |
-| ------------------------------ | -------------------------------- | ----------------------- |
-| `animation-data.wgsl`          | `GPUAnimationDataSource`         | `AnimationData`         |
-| `animation-globals.wgsl`       | `GPUAnimationGlobalsSource`      | `AnimationGlobals`      |
-| `bone-info.wgsl`               | `GPUBoneInfoSource`              | `BoneInfo`              |
-| `frustum-plane.wgsl`           | `GPUFrustumPlaneSource`          | `FrustumPlane`          |
-| `indirect-args.wgsl`           | `GPUIndirectArgsSource`          | `IndirectArgs`          |
-| `instance-data.wgsl`           | `GPUInstanceDataSource`          | `InstanceData`          |
-| `simple-globals.wgsl`          | `GPUGlobalDataSource`            | `GlobalData`            |
-| `skeletal-animation-data.wgsl` | `GPUSkeletalAnimationDataSource` | `SkeletalAnimationData` |
-| `simple-compute.wgsl`          | —                                | Compute shader (simple) |
+| Asset File                     | Embedded Variable                | WGSL Struct               |
+| ------------------------------ | -------------------------------- | ------------------------- |
+| `animation-data.wgsl`          | `GPUAnimationDataSource`         | `AnimationData`           |
+| `animation-globals.wgsl`       | `GPUAnimationGlobalsSource`      | `AnimationGlobals`        |
+| `bone-info.wgsl`               | `GPUBoneInfoSource`              | `BoneInfo`                |
+| `frustum-plane.wgsl`           | `GPUFrustumPlaneSource`          | `FrustumPlane`            |
+| `indirect-args.wgsl`           | `GPUIndirectArgsSource`          | `IndirectArgs`            |
+| `instance-data.wgsl`           | `GPUInstanceDataSource`          | `InstanceData`            |
+| `simple-globals.wgsl`          | `GPUGlobalDataSource`            | `GlobalData`              |
+| `skeletal-animation-data.wgsl` | `GPUSkeletalAnimationDataSource` | `SkeletalAnimationData`   |
+| `simple-compute.wgsl`          | —                                | Compute shader (simple)   |
 | `skeletal-compute.wgsl`        | —                                | Compute shader (skeletal) |
 
 ---
 
 ## Files
 
-| File                           | Purpose                                                                                                                         |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| `animator.go`                  | `Animator` interface, `animator` struct, `NewAnimator` constructor, all delegation methods                                      |
-| `animator_backend.go`          | `AnimatorBackendType` enum, `AnimatorBackend` union interface                                                                   |
-| `animator_builder.go`          | `AnimatorBuilderOption` type and builder functions                                                                              |
-| `gpu_types.go`                 | All GPU-aligned structs with `Size()`, `Marshal()`, and embedded WGSL sources                                                   |
-| `simple_animator_backend.go`   | `simpleAnimatorBackend` interface + `simpleAnimatorBackendImpl` (sparse dirty tracking, transform staging)                      |
-| `skeletal_animator_backend.go` | `skeletalAnimatorBackend` interface + `skeletalAnimatorBackendImpl` (bone data, clip storage, blend transitions, packed buffer) |
-| `assets/`                      | 8 embedded `.wgsl` struct definition files + 2 compute shader files                                                             |
+| File                           | Purpose                                                                                                                             |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `animator.go`                  | `Animator` interface definition, all delegation method implementations forwarding to `AnimatorBackend`                              |
+| `animator_backend.go`          | `AnimatorBackendType` enum, `AnimatorBackend` union interface                                                                       |
+| `animator_builder.go`          | `AnimatorBuilderOption` type, `WithMaxInstances` and `WithModel` builder functions, `NewAnimator` constructor                       |
+| `animator_impl.go`             | `animator` unexported struct definition (fields: `backendType AnimatorBackendType`, `backend AnimatorBackend`, `model model.Model`) |
+| `gpu_types.go`                 | All GPU-aligned structs with `Size()`, `Marshal()`, and embedded WGSL sources                                                       |
+| `simple_animator_backend.go`   | `simpleAnimatorBackend` interface + `simpleAnimatorBackendImpl` (sparse dirty tracking, transform staging)                          |
+| `skeletal_animator_backend.go` | `skeletalAnimatorBackend` interface + `skeletalAnimatorBackendImpl` (bone data, clip storage, blend transitions, packed buffer)     |
+| `assets/`                      | 8 embedded `.wgsl` struct definition files + 2 compute shader files                                                                 |

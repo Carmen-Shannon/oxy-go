@@ -2,6 +2,8 @@
 
 The `common` package provides shared types, math utilities, and constants used throughout the oxy-go engine. It contains plain structs and standalone functions — no interface-wrapped systems — serving as the foundation that every other package imports.
 
+**Package path:** `github.com/Carmen-Shannon/oxy-go/common`
+
 ---
 
 ## Files
@@ -87,15 +89,15 @@ All matrix operations use **column-major** layout (OpenGL/WebGPU convention). Ma
 
 ### Matrix Functions
 
-| Function             | Description                                                                      |
-| -------------------- | -------------------------------------------------------------------------------- |
-| `Identity()`         | Resets a 4×4 slice to the identity matrix                                        |
-| `Mul4()`             | Multiplies two 4×4 matrices: `out = a * b`                                       |
-| `Perspective()`      | Builds a perspective projection matrix (WebGPU clip space `[0, 1]`)              |
-| `BuildModelMatrix()` | Constructs a model matrix from position, Euler rotation (Y×X×Z), and scale       |
-| `Invert4()`          | Computes the cofactor-based inverse of a 4×4 matrix; returns `false` if singular |
-| `Invert3x3()`        | Computes the inverse of a 3×3 row-major matrix; returns `false` if singular      |
-| `LookAt()`           | Builds a view matrix from eye position, target point, and up vector              |
+| Function             | Description                                                                                                       |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `Identity()`         | Resets a 4×4 slice to the identity matrix                                                                         |
+| `Mul4()`             | Multiplies two 4×4 matrices: `out = a * b`                                                                        |
+| `Perspective()`      | Builds a perspective projection matrix (WebGPU clip space `[0, 1]`)                                               |
+| `BuildModelMatrix()` | Constructs a model matrix from position, Euler rotation (Y×X×Z), and scale                                        |
+| `Invert4()`          | Computes the cofactor-based inverse of a 4×4 matrix; returns `false` if singular                                  |
+| `Invert3x3()`        | Computes the inverse of a 3×3 row-major matrix (`[9]float32`); returns the inverted array and `false` if singular |
+| `LookAt()`           | Builds a view matrix from eye position, target point, and up vector                                               |
 
 ### Byte Conversion Functions
 
@@ -118,8 +120,8 @@ Plain structs used to shuttle data between the loader, material, and bind group 
 | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `TextureStagingData` | RGBA pixel data (`[]byte`) + width/height + `Linear` flag, staged for GPU texture upload. When `Linear` is true, uses `RGBA8Unorm` instead of `RGBA8UnormSrgb` (for non-color data like normal maps). |
 | `SamplerStagingData` | Sampler configuration (address modes, filter modes, LOD clamps, anisotropy, compare function)                                                                                                         |
-| `ImportedMaterial`   | Material properties from a model file: base color, metallic, roughness, texture paths/data                                                                                                            |
-| `ImportedTexture`    | Texture data from a model file: embedded bytes or file path, MIME type, optional sampler override                                                                                                     |
+| `ImportedMaterial`   | Material properties from a model file: name, base color, metallic, roughness, alpha mode, alpha cutoff, and texture paths/data                                                                        |
+| `ImportedTexture`    | Texture data from a model file: name, embedded bytes or file path, MIME type, optional sampler override. `Width` and `Height` fields are populated after calling `Decode()`.                          |
 
 ### Methods
 
@@ -134,6 +136,7 @@ Plain structs used to shuttle data between the loader, material, and bind group 
 | Function     | Description                                                                |
 | ------------ | -------------------------------------------------------------------------- |
 | `Coalesce()` | Returns the first non-zero value from a variadic list of comparable values |
+| `ToPtr()`    | Returns a pointer to the given value of any type `T`                       |
 
 ---
 

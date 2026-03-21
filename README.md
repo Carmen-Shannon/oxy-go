@@ -86,7 +86,7 @@ import (
 
 func main() {
     eng := engine.NewEngine(
-        engine.WithProfiler(true), // profiler option
+        engine.WithProfiling(true), // profiler option
         engine.WithTickRate(60), // engine tick rate in hz
         engine.WithWindow(window.NewWindow(
             window.WithTitle("Oxy Engine"),
@@ -150,7 +150,7 @@ WGSL shaders use `@oxy:` annotations to declare their resource requirements dire
 Run the full test suite with coverage across the `common` and `engine` packages:
 
 ```bash
-go test ./tests/... -coverpkg="github.com/Carmen-Shannon/oxy-go/common/...,github.com/Carmen-Shannon/oxy-go/engine/..." -coverprofile="coverage.out"
+go test ./... -coverpkg="github.com/Carmen-Shannon/oxy-go/common/...,github.com/Carmen-Shannon/oxy-go/engine/..." -coverprofile="coverage.out"
 ```
 
 Then view the per-function coverage report:
@@ -175,7 +175,7 @@ Then regenerate all mocks from the project root:
 mockery
 ```
 
-Mockery reads `.mockery.yaml` automatically and writes generated mocks to `tests/mocks/`.
+Mockery reads `.mockery.yaml` automatically and writes generated mocks into each package's own `mocks/` subdirectory (e.g., `engine/mocks/`, `common/mocks/`).
 
 ---
 

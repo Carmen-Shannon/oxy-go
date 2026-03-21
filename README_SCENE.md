@@ -10,9 +10,7 @@ The `engine/scene` package is the central orchestrator of the oxy-go engine. A S
 
 ```
 Scene (public interface)
- ├─ common.Delegate[Scene]   ← mock / test delegation
- └─ scene (unexported struct)
-      ├─ common.DelegateImpl[Scene]
+ └─ scene (unexported struct in scene_impl.go)
       ├── Camera           — view/projection, frustum planes, GPU uniform
       ├── Renderer         — pipeline cache, GPU resource init, frame submission
       ├── animatorPool     — map[Model][]Animator (compute + render per model)
@@ -41,7 +39,7 @@ func NewScene(
 ) Scene
 ```
 
-Creates a new Scene. Both required arguments (camera, renderer) must be non-nil — panics otherwise. The vertex shader is loaded internally from the engine's standard shader assets. Sets `s.Delegate = s` so delegation routes to itself by default.
+Creates a new Scene. Both required arguments (camera, renderer) must be non-nil — panics otherwise. The vertex shader is loaded internally from the engine's standard shader assets.
 
 ---
 
@@ -56,8 +54,9 @@ The `NewScene` constructor accepts variadic `SceneBuilderOption` functions:
 | `WithComputeWorkers(n)`         | Sets the number of parallel CPU prep goroutines. Default: `max(runtime.NumCPU()-1, 1)`.          |
 | `WithCullingDisabled(disabled)` | Disables GPU frustum culling. Default: `false` (culling enabled).                                |
 | `WithLighting(handler)`         | Sets the `light.LightingHandler` for the scene. Enables lighting, shadows, and Forward+ culling. |
-| `WithPhysics(ph)`               | Sets the `physics.Physics` handler for the scene. Enables GPU-driven physics simulation.         |
+| `WithPhysics(opts ...physics.PhysicsBuilderOption)` | Configures the physics subsystem with the given builder options; constructs the Physics handler internally |
 | `WithScreenSize(width, height)` | Sets the initial screen dimensions for light culling tile calculations and shadow map setup.     |
+| `WithMaxBonesGPU`               | `n uint64` — Sets the maximum number of bones per model for GPU buffer allocation                |
 
 ---
 
@@ -67,13 +66,13 @@ The `NewScene` constructor accepts variadic `SceneBuilderOption` functions:
 
 | Method                             | Description                                                                                                            |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `Add(obj, pipelineOpts...) uint64` | Adds a GameObject, auto-creates/reuses an Animator, registers pipelines, inits GPU resources, returns the assigned ID. |
-| `Get(id) GameObject`               | Retrieves a non-ephemeral object by ID, or `nil`.                                                                      |
-| `Remove(id)`                       | Removes a non-ephemeral object and swap-removes its instance from the animator.                                        |
+| `AddGameObject(obj, pipelineOpts...) uint64` | Adds a GameObject, auto-creates/reuses an Animator, registers pipelines, inits GPU resources, returns the assigned ID. |
+| `Get(id) GameObject`                         | Retrieves a non-ephemeral object by ID, or `nil`.                                                                      |
+| `RemoveGameObject(id)`                       | Removes a non-ephemeral object and swap-removes its instance from the animator.                                        |
 | `Count() int`                      | Number of persisted (non-ephemeral) objects.                                                                           |
 | `CountEphemeral() int`             | Total instance count across all animators.                                                                             |
 
-Shaders are resolved automatically inside `Add` based on whether the model is skinned and whether lighting is enabled — no shader parameters are needed.
+Shaders are resolved automatically inside `AddGameObject` based on whether the model is skinned and whether lighting is enabled — no shader parameters are needed.
 
 ### Scene State
 
@@ -113,7 +112,7 @@ Shaders are resolved automatically inside `Add` based on whether the model is sk
 | `AmbientColor() [3]float32` | Returns the scene’s ambient RGB color.                                                                                         |
 | `SetAmbientColor(color)`    | Sets the ambient RGB color.                                                                                                    |
 
-All lighting/shadow/culling/GI initialization methods (`initLightBindGroup`, `initVSMShadowMap`, `initShadowLitBindGroup`, `initLightCullResources`, `initSATResources`, `initGBuffer`, `initSSAO`, `initSSAOLitBindGroup`, `initComposition`, `initSSR`, `initProbeGrid`, `initProbesLitBindGroup`, `initLighting`) are **unexported** and called automatically by `AddLight` on the first light addition. Shadow and GI configuration is handled by the `light.LightingHandler` and its sub-handlers passed via `WithLighting`.
+All lighting/shadow/culling initialization methods (`initLighting`, `initShadowMap`, `initCSMShadowLitBindGroup`, `initGBuffer`, `initSSAO`, `initSSAOLitBindGroup`, `initContactShadows`, `initLightCullResources`, `initComposition`, `initSSR`, `initLightBindGroup`, `initPhysics`) are **unexported** and called automatically by `AddLight` on the first light addition. Shadow configuration is handled by the `light.LightingHandler` and its sub-handlers passed via `WithLighting`.
 
 ### Frame Methods
 
@@ -121,6 +120,14 @@ All lighting/shadow/culling/GI initialization methods (`initLightBindGroup`, `in
 | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `PrepareCompute(deltaTime)` | Updates camera, syncs light positions, advances animations, uploads buffers, dispatches compute shaders. Must be called within `BeginComputeFrame`/`EndComputeFrame`. |
 | `DrawCalls() error`         | Issues instanced draw calls for all animators. Must be called within `BeginFrame`/`EndFrame`. Uses indirect draw when frustum culling is active.                      |
+| `PrepareShadows()` | Renders shadow depth passes for all shadow-casting lights |
+| `PrepareLightCulling()` | Dispatches the Forward+ tile light culling compute pass |
+| `PrepareGBuffer()` | Renders the G-Buffer MRT pre-pass (normals, albedo, depth) |
+| `PrepareSSAO()` | Dispatches the SSAO compute pass and bilateral blur |
+| `PrepareContactShadows()` | Dispatches the screen-space contact shadow ray march compute pass |
+| `PrepareSSR()` | Dispatches the Hi-Z SSR compute pass |
+| `PrepareComposition()` | Dispatches the ACES tone-mapping composition pass |
+| `BeginHDRFrame() error` | Begins the HDR lit draw pass (Forward+ lit fragment shader) |
 
 ---
 
@@ -135,15 +142,13 @@ A typical frame follows this order:
 
 2. (internal) prepareLightCulling    — Forward+ tile culling (automatic if lighting enabled)
 
-3. (internal) prepareShadows         — VSM depth-moments pass + separable blur (or SAT when PCSS enabled)
+3. **Shadow pass** (`PrepareShadows`) — renders depth-only passes for the directional dual-cascade CSM atlas and any shadow-casting spot/point lights (16-tap Poisson PCF, no blur pass).
 
 4. (internal) G-Buffer pre-pass      — MRT geometry pass (position, normal, albedo) when GI is active
 
 5. (internal) SSAO compute           — hemisphere sampling + bilateral blur when SSAO handler present
 
-6. renderer.BeginFrame() / BeginHDRFrame()
-   scene.DrawCalls()                 — instanced draw calls (regular or indirect), SSAO + probe bind groups wired
-   renderer.EndFrame()
+6. **Lit draw calls** (`DrawCalls()`) — instanced draw calls (regular or indirect) with SSAO bind groups wired from the lighting handler.
 
 7. (internal) SSR compute            — Hi-Z ray march when SSR handler present
 
@@ -180,7 +185,6 @@ The Scene uses shader annotation declarations to automatically wire bind groups 
 | `@oxy:provider shadow`      | Scene's shadow lit BGP                   |
 | `@oxy:provider tiles`       | Scene's tile lit BGP                     |
 | `@oxy:provider ssao`        | LightingHandler's `"ssao_lit"` BGP       |
-| `@oxy:provider probes`      | LightingHandler's `"probe_lit"` BGP      |
 | `@oxy:provider composition` | CompositionHandler's `"composition"` BGP |
 | `@oxy:provider ssr`         | SSRHandler's `"ssr_compute"` BGP         |
 | `@oxy:provider effect`      | Model's effect provider                  |
@@ -206,5 +210,6 @@ The worker count defaults to `runtime.NumCPU()-1` and can be overridden with `Wi
 
 | File               | Purpose                                                                               |
 | ------------------ | ------------------------------------------------------------------------------------- |
-| `scene.go`         | `Scene` interface, `scene` struct, `NewScene` constructor, all method implementations |
+| `scene.go`         | `Scene` interface and exported method implementations                                 |
+| `scene_impl.go`    | Unexported `scene` struct and all internal helper functions                           |
 | `scene_builder.go` | `SceneBuilderOption` type and builder functions                                       |
