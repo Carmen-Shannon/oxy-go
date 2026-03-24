@@ -68,23 +68,30 @@ func main() {
 		scene.WithLighting(light.NewLightingHandler(
 			light.WithShadowHandler(light.NewShadowHandler(
 				light.WithPCFRadius(2.0),
-				light.WithShadowNearFar(0.1, 2000),
-				light.WithShadowNormalBiasScale(2.0),
+				light.WithShadowNearFar(0.1, 1000),
+				light.WithShadowNormalBiasScale(1.0),
 				light.WithShadowMapResolution(2048),
-				light.WithShadowInnerRadius(1000),
+				light.WithShadowInnerRadius(250),
 			)),
 			light.WithGBufferHandler(light.NewGBufferHandler()),
 			light.WithSSAOHandler(light.NewSSAOHandler(
-				light.WithSSAOSampleCount(16),
-				light.WithSSAORadius(0.1),
+				light.WithSSAOSampleCount(8),
+				light.WithSSAOScreenRadius(24.0),
 				light.WithSSAOBias(0.025),
 				light.WithSSAOPower(2.0),
-				light.WithSSAOBlurRadius(2),
-				light.WithSSAOHalfResolution(true),
+				light.WithSSAOBlurRadius(4),
+				light.WithSSAOHalfResolution(false),
 			)),
 			light.WithCompositionHandler(light.NewCompositionHandler(
 				light.WithToneMappingEnabled(true),
 				light.WithExposure(1.5),
+				light.WithAutoExposure(true),
+				light.WithAdaptSpeed(8.0),
+				light.WithMinExposure(0.02),
+				light.WithMaxExposure(30.0),
+				light.WithBloomEnabled(true),
+				light.WithBloomThreshold(1.0),
+				light.WithBloomIntensity(0.5),
 			)),
 			light.WithSSRHandler(light.NewSSRHandler(
 				light.WithSSRMaxSteps(64),
@@ -103,7 +110,6 @@ func main() {
 		light.WithColor(1.0, 0.95, 0.85),
 		light.WithIntensity(0.5),
 		light.WithCastsShadows(true),
-		light.WithShadowBias(0.0005),
 		light.WithEnabled(false),
 	)
 	sc.AddLight(sun)
@@ -116,7 +122,6 @@ func main() {
 		light.WithRange(200),
 		light.WithEnabled(true),
 		light.WithCastsShadows(true),
-		light.WithShadowBias(0.0005),
 	)
 	sc.AddLight(bluePoint)
 
@@ -128,7 +133,6 @@ func main() {
 		light.WithRange(200),
 		light.WithEnabled(true),
 		light.WithCastsShadows(true),
-		light.WithShadowBias(0.0005),
 	)
 	sc.AddLight(orangePoint)
 
@@ -142,7 +146,6 @@ func main() {
 		light.WithSpotCone(15, 15),
 		light.WithEnabled(false),
 		light.WithCastsShadows(true),
-		light.WithShadowBias(0.0005),
 	)
 	sc.AddLight(spot)
 
@@ -359,6 +362,14 @@ func setupLitInput(
 			quad.Model().SetVertexData(common.SliceToBytes(newVerts))
 			quad.Model().SetIndexData(common.SliceToBytes(newIdx))
 			fmt.Printf("[Quad] Alpha = %.2f\n", newAlpha)
+		}
+
+		// Space prints the current camera position info
+		if keyCode == common.KeySpace {
+			tx, ty, tz := cam.Controller().Target()
+			fmt.Printf("[Camera] radius=%.2f target=(%.2f, %.2f, %.2f) azimuth=%.4f elevation=%.4f\n",
+				cam.Controller().Radius(), tx, ty, tz,
+				cam.Controller().Azimuth(), cam.Controller().Elevation())
 		}
 	})
 

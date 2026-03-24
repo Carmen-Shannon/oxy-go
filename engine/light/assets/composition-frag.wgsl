@@ -9,6 +9,8 @@
 @group(0) @binding(2) var ssr_texture: texture_2d<f32>;
 @group(0) @binding(3) var ssr_sampler: sampler;
 //@oxy:group 0 4 storage_uniform composition_params composition_params
+@group(0) @binding(5) var<storage, read> exposure_buffer: f32;
+@group(0) @binding(6) var bloom_texture: texture_2d<f32>;
 
 // aces_tonemap applies the ACES filmic tone mapping curve.
 // Reference: https://knarkowicz.wordpress.com/2016/01/06/aces-filmic-tone-mapping-curve/
@@ -31,7 +33,19 @@ fn fs_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
 
     // Apply exposure scaling before tone mapping so HDR values land in
     // the sweet-spot of the ACES curve.
-    var color = combined * composition_params.exposure;
+    var exposure: f32;
+    if composition_params.auto_exposure_enabled != 0u {
+        exposure = exposure_buffer;
+    } else {
+        exposure = composition_params.exposure;
+    }
+    var color = combined * exposure;
+
+    // Add bloom contribution after exposure, before tone mapping.
+    if composition_params.bloom_enabled != 0u {
+        let bloom = textureSample(bloom_texture, hdr_sampler, uv).rgb;
+        color = color + bloom * composition_params.bloom_intensity;
+    }
 
     if (composition_params.tone_mapping_enabled != 0u) {
         color = aces_tonemap(color);

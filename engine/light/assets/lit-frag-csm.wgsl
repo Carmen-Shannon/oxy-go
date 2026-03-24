@@ -89,6 +89,7 @@ struct MaterialParams {
 //@oxy:inject LIGHT_TYPE_DIRECTIONAL u32 light_type_directional
 //@oxy:inject LIGHT_TYPE_POINT u32 light_type_point
 //@oxy:inject LIGHT_TYPE_SPOT u32 light_type_spot
+//@oxy:inject TILE_SIZE u32 tile_size
 
 // ── Attenuation ────────────────────────────────────────────────────
 fn attenuation(distance: f32, light_range: f32) -> f32 {
@@ -150,6 +151,8 @@ fn sample_single_cascade(idx: u32, offset_pos: vec3<f32>) -> f32 {
     // Offsets are applied in cascade-local UV space (where texel_size is correct),
     // then each sample point is converted to atlas UV individually to avoid 2:1
     // horizontal asymmetry and cross-cascade bleeding.
+    let depth_range = c.shadow_far - c.shadow_near;
+    let ndc_bias = csm_data.bias / depth_range;
     let texel_scale = csm_data.texel_size * csm_data.pcf_radius;
     var shadow = 0.0;
     for (var i = 0u; i < PCF_SAMPLES; i = i + 1u) {
@@ -159,7 +162,7 @@ fn sample_single_cascade(idx: u32, offset_pos: vec3<f32>) -> f32 {
         shadow += textureSampleCompareLevel(
             shadow_texture, shadow_sampler,
             vec2<f32>(sample_atlas_u, sample_uv.y),
-            ref_depth - csm_data.bias,
+            ref_depth - ndc_bias,
         );
     }
     shadow /= f32(PCF_SAMPLES);
@@ -208,7 +211,7 @@ fn sample_shadow_csm(world_pos: vec3<f32>, normal: vec3<f32>, light_dir: vec3<f3
 
 // sample_shadow_spot projects the fragment into the spot light's shadow map and
 // returns the PCF shadow factor (0.0 = fully shadowed, 1.0 = fully lit).
-fn sample_shadow_spot(frag_pos: vec3<f32>, entry: LightShadowEntry) -> f32 {
+fn sample_shadow_spot(frag_pos: vec3<f32>, entry: LightShadowEntry, normal: vec3<f32>, light_dir: vec3<f32>) -> f32 {
     let light_clip = entry.light_vp * vec4<f32>(frag_pos, 1.0);
     let ndc = light_clip.xyz / light_clip.w;
 
@@ -222,7 +225,8 @@ fn sample_shadow_spot(frag_pos: vec3<f32>, entry: LightShadowEntry) -> f32 {
         return 1.0;
     }
 
-    let ref_depth = ndc.z - entry.bias;
+    let NdotL = max(dot(normal, light_dir), 0.0);
+    let ref_depth = ndc.z - entry.bias * (1.0 + 1.0 * (1.0 - NdotL));
 
     // Tile pixel width from atlas rect: atlas_width_px * atlas_rect.z.
     let atlas_w = f32(textureDimensions(spot_shadow_texture).x);
@@ -250,7 +254,7 @@ fn sample_shadow_spot(frag_pos: vec3<f32>, entry: LightShadowEntry) -> f32 {
     return shadow;
 }
 
-fn sample_shadow_point(frag_pos: vec3<f32>, light_pos: vec3<f32>, shadow_index: u32) -> f32 {
+fn sample_shadow_point(frag_pos: vec3<f32>, light_pos: vec3<f32>, shadow_index: u32, normal: vec3<f32>) -> f32 {
     let dir = frag_pos - light_pos;
     let abs_dir = abs(dir);
 
@@ -265,7 +269,8 @@ fn sample_shadow_point(frag_pos: vec3<f32>, light_pos: vec3<f32>, shadow_index: 
     }
 
     let entry = light_shadow_entries[shadow_index + face_index];
-    return sample_shadow_spot(frag_pos, entry);
+    let point_light_dir = normalize(light_pos - frag_pos);
+    return sample_shadow_spot(frag_pos, entry, normal, point_light_dir);
 }
 
 // ── PBR BRDF ───────────────────────────────────────────────────────
@@ -390,8 +395,8 @@ fn fs_main(in: FragmentInput) -> @location(0) vec4<f32> {
 
     // ── Forward+ tiled light loop ──────────────────────────────────
     let frag_coord = vec2<u32>(in.position.xy);
-    let tile_x = frag_coord.x / 16u;
-    let tile_y = frag_coord.y / 16u;
+    let tile_x = frag_coord.x / TILE_SIZE;
+    let tile_y = frag_coord.y / TILE_SIZE;
     let tile_index = tile_y * tile_uniforms.tile_count_x + tile_x;
 
     let num_tile_lights = tile_counts[tile_index];
@@ -416,11 +421,12 @@ fn fs_main(in: FragmentInput) -> @location(0) vec4<f32> {
 
         if light.light_type == LIGHT_TYPE_SPOT && light.shadow_index != 0xFFFFFFFFu {
             let entry = light_shadow_entries[light.shadow_index];
-            contribution *= sample_shadow_spot(in.world_position, entry);
+            let spot_light_dir = normalize(light.position - in.world_position);
+            contribution *= sample_shadow_spot(in.world_position, entry, normal, spot_light_dir);
         }
 
         if light.light_type == LIGHT_TYPE_POINT && light.shadow_index != 0xFFFFFFFFu {
-            contribution *= sample_shadow_point(in.world_position, light.position, light.shadow_index);
+            contribution *= sample_shadow_point(in.world_position, light.position, light.shadow_index, normal);
         }
 
         total_light += contribution;

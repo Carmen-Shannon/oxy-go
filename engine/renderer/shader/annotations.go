@@ -239,6 +239,15 @@ const (
 	// annotationArgContactShadowParams identifies the ContactShadowParams struct for the contact shadow compute shader.
 	// Source: engine/light/assets/contact-shadow-params.wgsl
 	annotationArgContactShadowParams AnnotationArg = "contact_shadow_params"
+
+	// annotationArgLuminanceParams identifies the LuminanceParams struct for the luminance compute shader.
+	// Source: engine/light/assets/luminance-params.wgsl
+	annotationArgLuminanceParams AnnotationArg = "luminance_params"
+
+	// annotationArgBloomParams identifies the GPUBloomParams struct type used by the bloom
+	// downsample compute shader for threshold configuration.
+	// Source: engine/light/assets/bloom-params.wgsl
+	annotationArgBloomParams AnnotationArg = "bloom_params"
 )
 
 // ── Address space arguments ────────────────────────────────────────────────────
@@ -381,6 +390,10 @@ const (
 	// spot lights in the GPU Light struct's type field.
 	// Go source: engine/light/light.go — LightTypeSpot iota value.
 	annotationArgInjectLightTypeSpot AnnotationArg = "light_type_spot"
+
+	// annotationArgInjectLuminanceWorkgroupSize injects the luminance compute workgroup tile dimension.
+	// Go source: engine/light/composition_handler.go — CompositionHandler.LuminanceWorkgroupSize().
+	annotationArgInjectLuminanceWorkgroupSize AnnotationArg = "luminance_workgroup_size"
 )
 
 // ── Material binding role arguments ────────────────────────────────────────────
@@ -470,6 +483,7 @@ var validInjectionKeys = []AnnotationArg{
 	annotationArgInjectLightTypeDirectional,
 	annotationArgInjectLightTypePoint,
 	annotationArgInjectLightTypeSpot,
+	annotationArgInjectLuminanceWorkgroupSize,
 }
 
 var validWGSLTypes = []string{"u32", "f32", "i32"}
@@ -510,6 +524,8 @@ var validStructTypes = []AnnotationArg{
 	annotationArgCompositionParams,
 	annotationArgSSRParams,
 	annotationArgContactShadowParams,
+	annotationArgLuminanceParams,
+	annotationArgBloomParams,
 }
 
 // validAddressSpaces lists all AnnotationArg values that are accepted as address

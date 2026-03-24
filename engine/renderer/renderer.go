@@ -14,6 +14,22 @@ import (
 	"github.com/cogentcore/webgpu/wgpu"
 )
 
+// ComputeDispatch groups a compute pipeline key, its bind group provider, and
+// the workgroup dispatch dimensions for use with DispatchComputeBatch.
+type ComputeDispatch struct {
+	PipelineKey    string
+	Provider       bind_group_provider.BindGroupProvider
+	WorkGroupCount [3]uint32
+}
+
+// ComputeDispatchEntry is the resolved form of ComputeDispatch used between
+// the renderer impl and the backend — the pipeline key has been resolved to a Pipeline object.
+type ComputeDispatchEntry struct {
+	Pipeline       pipeline.Pipeline
+	Provider       bind_group_provider.BindGroupProvider
+	WorkGroupCount [3]uint32
+}
+
 // Renderer defines the interface for the rendering system.
 //
 // This is a high-level API designed to simplify rendering tasks into a streamlined and idiomatic flow.
@@ -192,7 +208,7 @@ type Renderer interface {
 
 	// BeginComputeFrame creates a single command encoder for batching all compute dispatches
 	// within a frame into one GPU submission. Must be paired with EndComputeFrame after all
-	// DispatchCompute calls for the frame.
+	// DispatchComputeBatch calls for the frame.
 	//
 	// Returns:
 	//   - error: an error if the command encoder could not be created
@@ -200,17 +216,17 @@ type Renderer interface {
 
 	// EndComputeFrame finishes the batched compute command encoder and submits the resulting
 	// command buffer to the GPU queue. Must be called after BeginComputeFrame and all
-	// DispatchCompute calls for the frame.
+	// DispatchComputeBatch calls for the frame.
 	EndComputeFrame()
 
-	// DispatchCompute looks up the cached compute Pipeline by key, then encodes a compute pass
-	// within the current batched compute frame started by BeginComputeFrame.
+	// DispatchComputeBatch encodes all dispatches in the slice into a single compute pass.
+	// Within the pass, SetPipeline is called only when the PipelineKey changes between
+	// consecutive entries, reducing pass-boundary overhead. All dispatches must be within
+	// an open BeginComputeFrame/EndComputeFrame block.
 	//
 	// Parameters:
-	//   - pipelineKey: the unique identifier for the cached compute Pipeline to use
-	//   - computeProvider: the BindGroupProvider whose BindGroup will be set on the compute pass
-	//   - workGroupCount: the number of workgroups to dispatch in the x, y, and z dimensions
-	DispatchCompute(pipelineKey string, computeProvider bind_group_provider.BindGroupProvider, workGroupCount [3]uint32)
+	//   - dispatches: ordered slice of ComputeDispatch entries to encode
+	DispatchComputeBatch(dispatches []ComputeDispatch)
 
 	// BeginFrame acquires the swapchain texture and begins the main render pass.
 	// Must be paired with EndFrame after all DrawCall invocations within a single frame.
@@ -422,10 +438,8 @@ type Renderer interface {
 	//   - blurredTex: the underlying blurred SSAO texture
 	//   - scratchView: texture view for the scratch blur texture
 	//   - scratchTex: the underlying scratch blur texture
-	//   - noiseView: texture view for the 4×4 noise texture
-	//   - noiseTex: the underlying noise texture
 	//   - err: an error if texture creation fails
-	CreateSSAOTextures(width, height int) (rawView *wgpu.TextureView, rawTex *wgpu.Texture, blurredView *wgpu.TextureView, blurredTex *wgpu.Texture, scratchView *wgpu.TextureView, scratchTex *wgpu.Texture, noiseView *wgpu.TextureView, noiseTex *wgpu.Texture, err error)
+	CreateSSAOTextures(width, height int) (rawView *wgpu.TextureView, rawTex *wgpu.Texture, blurredView *wgpu.TextureView, blurredTex *wgpu.Texture, scratchView *wgpu.TextureView, scratchTex *wgpu.Texture, err error)
 
 	// BeginHDRFrame creates a command encoder and begins a render pass targeting an
 	// offscreen RGBA16Float HDR texture instead of the swapchain. When MSAA is active,
@@ -503,6 +517,36 @@ type Renderer interface {
 	//   - mipCount: the number of mip levels generated
 	//   - err: an error if texture creation fails
 	CreateHiZTextures(width, height int) (hizView *wgpu.TextureView, hizTex *wgpu.Texture, mipReadViews []*wgpu.TextureView, mipStorageViews []*wgpu.TextureView, mipCount int, err error)
+
+	// CreateBloomTextures creates two RGBA16Float mip chain textures for bloom
+	// processing — a downsample chain and an upsample chain — each with per-mip
+	// read views and storage views. The mip count is capped at 6.
+	//
+	// Parameters:
+	//   - width: the width for mip 0 (should be half screen width)
+	//   - height: the height for mip 0 (should be half screen height)
+	//
+	// Returns:
+	//   - downTex: the downsample chain texture
+	//   - downReadViews: per-mip read views for the downsample chain
+	//   - downStorageViews: per-mip storage views for the downsample chain
+	//   - upTex: the upsample chain texture
+	//   - upReadViews: per-mip read views for the upsample chain
+	//   - upStorageViews: per-mip storage views for the upsample chain
+	//   - upMip0View: mip 0 read view of the upsample chain (final bloom output)
+	//   - mipCount: the number of mip levels created
+	//   - err: error if texture creation fails
+	CreateBloomTextures(width, height int) (
+		downTex *wgpu.Texture,
+		downReadViews []*wgpu.TextureView,
+		downStorageViews []*wgpu.TextureView,
+		upTex *wgpu.Texture,
+		upReadViews []*wgpu.TextureView,
+		upStorageViews []*wgpu.TextureView,
+		upMip0View *wgpu.TextureView,
+		mipCount int,
+		err error,
+	)
 
 	// RegisterCompositionPipeline registers a render pipeline for the fullscreen
 	// composition / tone mapping pass and caches it by PipelineKey.
@@ -684,16 +728,23 @@ func (r *renderer) WriteTexture(tex *wgpu.Texture, data []byte, width, height, b
 	r.backend.WriteTexture(tex, data, width, height, bytesPerRow)
 }
 
-func (r *renderer) DispatchCompute(pipelineKey string, computeProvider bind_group_provider.BindGroupProvider, workGroupCount [3]uint32) {
+func (r *renderer) DispatchComputeBatch(dispatches []ComputeDispatch) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	p, exists := r.pipelineCache[pipelineKey]
-	if !exists {
-		return
+	entries := make([]ComputeDispatchEntry, 0, len(dispatches))
+	for _, d := range dispatches {
+		p, exists := r.pipelineCache[d.PipelineKey]
+		if !exists {
+			continue
+		}
+		entries = append(entries, ComputeDispatchEntry{
+			Pipeline:       p,
+			Provider:       d.Provider,
+			WorkGroupCount: d.WorkGroupCount,
+		})
 	}
+	r.mu.Unlock()
 
-	r.backend.DispatchCompute(p, computeProvider, workGroupCount)
+	r.backend.DispatchComputeBatch(entries)
 }
 
 func (r *renderer) DrawCall(pipelineKey string, meshProvider bind_group_provider.BindGroupProvider, instanceCount uint32, bindGroups []bind_group_provider.BindGroupProvider) error {
@@ -831,7 +882,7 @@ func (r *renderer) RegisterGBufferPipeline(p pipeline.Pipeline) error {
 	return nil
 }
 
-func (r *renderer) CreateSSAOTextures(width, height int) (rawView *wgpu.TextureView, rawTex *wgpu.Texture, blurredView *wgpu.TextureView, blurredTex *wgpu.Texture, scratchView *wgpu.TextureView, scratchTex *wgpu.Texture, noiseView *wgpu.TextureView, noiseTex *wgpu.Texture, err error) {
+func (r *renderer) CreateSSAOTextures(width, height int) (rawView *wgpu.TextureView, rawTex *wgpu.Texture, blurredView *wgpu.TextureView, blurredTex *wgpu.Texture, scratchView *wgpu.TextureView, scratchTex *wgpu.Texture, err error) {
 	return r.backend.CreateSSAOTextures(width, height)
 }
 
@@ -853,6 +904,20 @@ func (r *renderer) CreateContactShadowTextures(width, height int) (csView *wgpu.
 
 func (r *renderer) CreateHiZTextures(width, height int) (hizView *wgpu.TextureView, hizTex *wgpu.Texture, mipReadViews []*wgpu.TextureView, mipStorageViews []*wgpu.TextureView, mipCount int, err error) {
 	return r.backend.CreateHiZTextures(width, height)
+}
+
+func (r *renderer) CreateBloomTextures(width, height int) (
+	downTex *wgpu.Texture,
+	downReadViews []*wgpu.TextureView,
+	downStorageViews []*wgpu.TextureView,
+	upTex *wgpu.Texture,
+	upReadViews []*wgpu.TextureView,
+	upStorageViews []*wgpu.TextureView,
+	upMip0View *wgpu.TextureView,
+	mipCount int,
+	err error,
+) {
+	return r.backend.CreateBloomTextures(width, height)
 }
 
 func (r *renderer) RegisterCompositionPipeline(p pipeline.Pipeline) error {

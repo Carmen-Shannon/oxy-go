@@ -228,3 +228,277 @@ func (suite *compositionHandlerTest) TestResize() {
 		suite.Equal(1080, suite.handler.ScreenHeight())
 	})
 }
+
+func (suite *compositionHandlerTest) TestAutoExposureEnabled() {
+	suite.Run("should return false by default", func() {
+		suite.Equal(false, suite.handler.AutoExposureEnabled())
+	})
+}
+
+func (suite *compositionHandlerTest) TestSetAutoExposureEnabled() {
+	suite.Run("should update the auto exposure enabled state", func() {
+		suite.handler.SetAutoExposureEnabled(true)
+		suite.Equal(true, suite.handler.AutoExposureEnabled())
+	})
+}
+
+func (suite *compositionHandlerTest) TestAdaptSpeed() {
+	suite.Run("should return the default adapt speed", func() {
+		suite.Equal(float32(1.0), suite.handler.AdaptSpeed())
+	})
+}
+
+func (suite *compositionHandlerTest) TestSetAdaptSpeed() {
+	suite.Run("should update the adapt speed", func() {
+		suite.handler.SetAdaptSpeed(2.0)
+		suite.Equal(float32(2.0), suite.handler.AdaptSpeed())
+	})
+}
+
+func (suite *compositionHandlerTest) TestMinExposure() {
+	suite.Run("should return the default min exposure", func() {
+		suite.Equal(float32(0.1), suite.handler.MinExposure())
+	})
+}
+
+func (suite *compositionHandlerTest) TestSetMinExposure() {
+	suite.Run("should update the min exposure", func() {
+		suite.handler.SetMinExposure(0.5)
+		suite.Equal(float32(0.5), suite.handler.MinExposure())
+	})
+}
+
+func (suite *compositionHandlerTest) TestMaxExposure() {
+	suite.Run("should return the default max exposure", func() {
+		suite.Equal(float32(10.0), suite.handler.MaxExposure())
+	})
+}
+
+func (suite *compositionHandlerTest) TestSetMaxExposure() {
+	suite.Run("should update the max exposure", func() {
+		suite.handler.SetMaxExposure(20.0)
+		suite.Equal(float32(20.0), suite.handler.MaxExposure())
+	})
+}
+
+func (suite *compositionHandlerTest) TestLuminanceWorkgroupSize() {
+	suite.Run("should return the default luminance workgroup size", func() {
+		suite.Equal(16, suite.handler.LuminanceWorkgroupSize())
+	})
+}
+
+func (suite *compositionHandlerTest) TestExposureBuffer() {
+	suite.Run("should return nil by default", func() {
+		suite.Nil(suite.handler.ExposureBuffer())
+	})
+}
+
+func (suite *compositionHandlerTest) TestSetExposureBuffer() {
+	suite.Run("should update the exposure buffer", func() {
+		suite.handler.SetExposureBuffer(nil)
+		suite.Nil(suite.handler.ExposureBuffer())
+	})
+}
+
+func (suite *compositionHandlerTest) TestNewCompositionHandlerWithAutoExposureOptions() {
+	suite.Run("should create handler with auto exposure enabled", func() {
+		h := light.NewCompositionHandler(
+			light.WithAutoExposure(true),
+		)
+		suite.Equal(true, h.AutoExposureEnabled())
+	})
+
+	suite.Run("should create handler with custom adapt speed", func() {
+		h := light.NewCompositionHandler(
+			light.WithAdaptSpeed(3.0),
+		)
+		suite.Equal(float32(3.0), h.AdaptSpeed())
+	})
+
+	suite.Run("should create handler with custom min exposure", func() {
+		h := light.NewCompositionHandler(
+			light.WithMinExposure(0.2),
+		)
+		suite.Equal(float32(0.2), h.MinExposure())
+	})
+
+	suite.Run("should create handler with custom max exposure", func() {
+		h := light.NewCompositionHandler(
+			light.WithMaxExposure(15.0),
+		)
+		suite.Equal(float32(15.0), h.MaxExposure())
+	})
+
+	suite.Run("should create handler with custom luminance workgroup size", func() {
+		h := light.NewCompositionHandler(
+			light.WithLuminanceWorkgroupSize(8),
+		)
+		suite.Equal(8, h.LuminanceWorkgroupSize())
+	})
+}
+
+func (suite *compositionHandlerTest) TestBloomEnabled() {
+	suite.Run("should return false by default", func() {
+		suite.Equal(false, suite.handler.BloomEnabled())
+	})
+}
+
+func (suite *compositionHandlerTest) TestSetBloomEnabled() {
+	suite.Run("should update the bloom enabled state", func() {
+		suite.handler.SetBloomEnabled(true)
+		suite.Equal(true, suite.handler.BloomEnabled())
+	})
+}
+
+func (suite *compositionHandlerTest) TestBloomThreshold() {
+	suite.Run("should return the default bloom threshold", func() {
+		suite.Equal(float32(1.0), suite.handler.BloomThreshold())
+	})
+}
+
+func (suite *compositionHandlerTest) TestSetBloomThreshold() {
+	suite.Run("should update the bloom threshold", func() {
+		suite.handler.SetBloomThreshold(0.5)
+		suite.Equal(float32(0.5), suite.handler.BloomThreshold())
+	})
+}
+
+func (suite *compositionHandlerTest) TestBloomIntensity() {
+	suite.Run("should return the default bloom intensity", func() {
+		suite.Equal(float32(0.5), suite.handler.BloomIntensity())
+	})
+}
+
+func (suite *compositionHandlerTest) TestSetBloomIntensity() {
+	suite.Run("should update the bloom intensity", func() {
+		suite.handler.SetBloomIntensity(0.8)
+		suite.Equal(float32(0.8), suite.handler.BloomIntensity())
+	})
+}
+
+func (suite *compositionHandlerTest) TestBloomMipCount() {
+	suite.Run("should return zero by default", func() {
+		suite.Equal(0, suite.handler.BloomMipCount())
+	})
+}
+
+func (suite *compositionHandlerTest) TestSetBloomMipCount() {
+	suite.Run("should update the bloom mip count", func() {
+		suite.handler.SetBloomMipCount(5)
+		suite.Equal(5, suite.handler.BloomMipCount())
+	})
+}
+
+func (suite *compositionHandlerTest) TestBloomDownTexture() {
+	suite.Run("should return nil by default", func() {
+		suite.Nil(suite.handler.BloomDownTexture())
+	})
+}
+
+func (suite *compositionHandlerTest) TestSetBloomDownTexture() {
+	suite.Run("should update the bloom down texture", func() {
+		suite.handler.SetBloomDownTexture(nil)
+		suite.Nil(suite.handler.BloomDownTexture())
+	})
+}
+
+func (suite *compositionHandlerTest) TestBloomDownReadViews() {
+	suite.Run("should return nil by default", func() {
+		suite.Nil(suite.handler.BloomDownReadViews())
+	})
+}
+
+func (suite *compositionHandlerTest) TestSetBloomDownReadViews() {
+	suite.Run("should update the bloom down read views", func() {
+		suite.handler.SetBloomDownReadViews(nil)
+		suite.Nil(suite.handler.BloomDownReadViews())
+	})
+}
+
+func (suite *compositionHandlerTest) TestBloomDownStorageViews() {
+	suite.Run("should return nil by default", func() {
+		suite.Nil(suite.handler.BloomDownStorageViews())
+	})
+}
+
+func (suite *compositionHandlerTest) TestSetBloomDownStorageViews() {
+	suite.Run("should update the bloom down storage views", func() {
+		suite.handler.SetBloomDownStorageViews(nil)
+		suite.Nil(suite.handler.BloomDownStorageViews())
+	})
+}
+
+func (suite *compositionHandlerTest) TestBloomUpTexture() {
+	suite.Run("should return nil by default", func() {
+		suite.Nil(suite.handler.BloomUpTexture())
+	})
+}
+
+func (suite *compositionHandlerTest) TestSetBloomUpTexture() {
+	suite.Run("should update the bloom up texture", func() {
+		suite.handler.SetBloomUpTexture(nil)
+		suite.Nil(suite.handler.BloomUpTexture())
+	})
+}
+
+func (suite *compositionHandlerTest) TestBloomUpReadViews() {
+	suite.Run("should return nil by default", func() {
+		suite.Nil(suite.handler.BloomUpReadViews())
+	})
+}
+
+func (suite *compositionHandlerTest) TestSetBloomUpReadViews() {
+	suite.Run("should update the bloom up read views", func() {
+		suite.handler.SetBloomUpReadViews(nil)
+		suite.Nil(suite.handler.BloomUpReadViews())
+	})
+}
+
+func (suite *compositionHandlerTest) TestBloomUpStorageViews() {
+	suite.Run("should return nil by default", func() {
+		suite.Nil(suite.handler.BloomUpStorageViews())
+	})
+}
+
+func (suite *compositionHandlerTest) TestSetBloomUpStorageViews() {
+	suite.Run("should update the bloom up storage views", func() {
+		suite.handler.SetBloomUpStorageViews(nil)
+		suite.Nil(suite.handler.BloomUpStorageViews())
+	})
+}
+
+func (suite *compositionHandlerTest) TestBloomUpMip0View() {
+	suite.Run("should return nil by default", func() {
+		suite.Nil(suite.handler.BloomUpMip0View())
+	})
+}
+
+func (suite *compositionHandlerTest) TestSetBloomUpMip0View() {
+	suite.Run("should update the bloom up mip0 view", func() {
+		suite.handler.SetBloomUpMip0View(nil)
+		suite.Nil(suite.handler.BloomUpMip0View())
+	})
+}
+
+func (suite *compositionHandlerTest) TestNewCompositionHandlerWithBloomOptions() {
+	suite.Run("should create handler with bloom options applied", func() {
+		h := light.NewCompositionHandler(
+			light.WithBloomEnabled(true),
+			light.WithBloomThreshold(0.8),
+			light.WithBloomIntensity(0.6),
+		)
+		suite.Equal(true, h.BloomEnabled())
+		suite.Equal(float32(0.8), h.BloomThreshold())
+		suite.Equal(float32(0.6), h.BloomIntensity())
+	})
+}
+
+func (suite *compositionHandlerTest) TestNewCompositionHandlerBloomDefaults() {
+	suite.Run("should have correct bloom defaults with no bloom options", func() {
+		h := light.NewCompositionHandler()
+		suite.Equal(false, h.BloomEnabled())
+		suite.Equal(float32(1.0), h.BloomThreshold())
+		suite.Equal(float32(0.5), h.BloomIntensity())
+		suite.Equal(0, h.BloomMipCount())
+	})
+}

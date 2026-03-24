@@ -22,6 +22,7 @@ import (
 	model_mocks "github.com/Carmen-Shannon/oxy-go/engine/model/mocks"
 	"github.com/Carmen-Shannon/oxy-go/engine/physics"
 	physics_mocks "github.com/Carmen-Shannon/oxy-go/engine/physics/mocks"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/animator"
 	animator_mocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/animator/mocks"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
@@ -61,46 +62,12 @@ func (suite *sceneImplTest) SetupSuite() {
 func (suite *sceneImplTest) SetupSubTest() {
 	suite.rendererMock = renderer_mocks.NewMockRenderer(suite.T())
 	suite.scene = &scene{
-		mu:           &sync.RWMutex{},
-		r:            suite.rendererMock,
-		lightHandler: light.NewLightingHandler(),
-		maxBonesGPU:  64,
+		mu:                     &sync.RWMutex{},
+		r:                      suite.rendererMock,
+		lightHandler:           light.NewLightingHandler(),
+		maxBonesGPU:            64,
+		drawGroupProvidersPool: make(map[int]bind_group_provider.BindGroupProvider),
 	}
-}
-
-func (suite *sceneImplTest) TestFloat32ToFloat16Bits() {
-	suite.Run("zero converts to 0x0000", func() {
-		suite.Equal(uint16(0x0000), float32ToFloat16Bits(0.0))
-	})
-
-	suite.Run("one converts to 0x3C00", func() {
-		suite.Equal(uint16(0x3C00), float32ToFloat16Bits(1.0))
-	})
-
-	suite.Run("negative one converts to 0xBC00", func() {
-		suite.Equal(uint16(0xBC00), float32ToFloat16Bits(-1.0))
-	})
-
-	suite.Run("max float16 65504 converts to 0x7BFF", func() {
-		suite.Equal(uint16(0x7BFF), float32ToFloat16Bits(65504.0))
-	})
-
-	suite.Run("positive infinity has all exponent bits set", func() {
-		result := float32ToFloat16Bits(float32(math.Inf(1)))
-		suite.Equal(uint16(0x7C00), result)
-	})
-}
-
-func (suite *sceneImplTest) TestGenerateSSAONoise() {
-	suite.Run("returns 128 bytes", func() {
-		buf := generateSSAONoise()
-		suite.Len(buf, 128)
-	})
-
-	suite.Run("all bytes are finite float16 patterns", func() {
-		buf := generateSSAONoise()
-		suite.Equal(128, len(buf))
-	})
 }
 
 func (suite *sceneImplTest) TestGenerateSSAOKernel() {
@@ -284,6 +251,7 @@ func (suite *sceneImplTest) TestResize() {
 
 		suite.rendererMock.EXPECT().Resize(800, 600).Return().Once()
 
+		suite.scene.tileBufferCapacity = math.MaxInt32
 		suite.scene.Resize(800, 600)
 
 		suite.Equal(800, suite.scene.screenWidth)
@@ -729,7 +697,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 
 		const wgslArrayIndirect = `// Test fixture: minimal compute shader with array<indirect_args> binding.
 //@oxy:include indirect_args
-//@oxy:group 0 3 storage_read_write indirect_buffer array<indirect_args>
+//@oxy:group 0 3 storage_read_write indirect_buf array<indirect_args>
 
 @compute @workgroup_size(64)
 fn main() {}`
@@ -828,34 +796,34 @@ func (suite *sceneImplTest) TestPrepareSSAO() {
 		suite.NotPanics(func() { suite.scene.PrepareSSAO() })
 	})
 
-	suite.Run("BeginComputeFrame error returns early", func() {
+	suite.Run("full resolution nil controller both lookups dispatches succeed", func() {
 		suite.scene.lightHandler.SSAOHandler().SetEnabled(true)
 
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().ViewProjectionMatrix().Return([16]float32{}).Twice()
-		camMock.EXPECT().Controller().Return(nil).Once()
+		camMock.EXPECT().Controller().Return(nil).Twice()
+		camMock.EXPECT().Fov().Return(float32(1.0)).Once()
 		suite.scene.cam = camMock
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().Pipeline(mock.Anything).Return(nil).Once()
-		suite.rendererMock.EXPECT().BeginComputeFrame().Return(errors.New("fail")).Once()
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.Anything).Return().Times(3)
 
 		suite.NotPanics(func() { suite.scene.PrepareSSAO() })
 	})
 
-	suite.Run("full resolution nil controller dispatches succeed", func() {
+	suite.Run("full resolution nil controller second lookup dispatches succeed", func() {
 		suite.scene.lightHandler.SSAOHandler().SetEnabled(true)
 
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().ViewProjectionMatrix().Return([16]float32{}).Twice()
-		camMock.EXPECT().Controller().Return(nil).Once()
+		camMock.EXPECT().Controller().Return(nil).Twice()
+		camMock.EXPECT().Fov().Return(float32(1.0)).Once()
 		suite.scene.cam = camMock
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().Pipeline(mock.Anything).Return(nil).Once()
-		suite.rendererMock.EXPECT().BeginComputeFrame().Return(nil).Once()
-		suite.rendererMock.EXPECT().DispatchCompute(mock.Anything, mock.Anything, mock.Anything).Return().Times(3)
-		suite.rendererMock.EXPECT().EndComputeFrame().Return().Once()
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.Anything).Return().Times(3)
 
 		suite.NotPanics(func() { suite.scene.PrepareSSAO() })
 	})
@@ -866,17 +834,17 @@ func (suite *sceneImplTest) TestPrepareSSAO() {
 
 		ctrl := camera_mocks.NewMockCameraController(suite.T())
 		ctrl.EXPECT().Position().Return(float32(1), float32(2), float32(3)).Once()
+		ctrl.EXPECT().Radius().Return(float32(5.0)).Once()
 
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().ViewProjectionMatrix().Return([16]float32{}).Twice()
-		camMock.EXPECT().Controller().Return(ctrl).Once()
+		camMock.EXPECT().Controller().Return(ctrl).Twice()
+		camMock.EXPECT().Fov().Return(float32(1.0)).Once()
 		suite.scene.cam = camMock
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().Pipeline(mock.Anything).Return(nil).Once()
-		suite.rendererMock.EXPECT().BeginComputeFrame().Return(nil).Once()
-		suite.rendererMock.EXPECT().DispatchCompute(mock.Anything, mock.Anything, mock.Anything).Return().Times(3)
-		suite.rendererMock.EXPECT().EndComputeFrame().Return().Once()
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.Anything).Return().Times(3)
 
 		suite.NotPanics(func() { suite.scene.PrepareSSAO() })
 	})
@@ -945,7 +913,7 @@ func (suite *sceneImplTest) TestPrepareContactShadows() {
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().Pipeline(mock.Anything).Return(nil).Once()
 		suite.rendererMock.EXPECT().BeginComputeFrame().Return(nil).Once()
-		suite.rendererMock.EXPECT().DispatchCompute(mock.Anything, mock.Anything, mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndComputeFrame().Return().Once()
 
 		suite.NotPanics(func() { suite.scene.PrepareContactShadows() })
@@ -986,7 +954,7 @@ func (suite *sceneImplTest) TestPrepareSSR() {
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().BeginComputeFrame().Return(nil).Once()
 		suite.rendererMock.EXPECT().Pipeline(mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().DispatchCompute(mock.Anything, mock.Anything, mock.Anything).Return().Times(2)
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.Anything).Return().Twice()
 		suite.rendererMock.EXPECT().EndComputeFrame().Return().Once()
 
 		suite.NotPanics(func() { suite.scene.PrepareSSR() })
@@ -1006,7 +974,7 @@ func (suite *sceneImplTest) TestPrepareSSR() {
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().BeginComputeFrame().Return(nil).Once()
 		suite.rendererMock.EXPECT().Pipeline(mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().DispatchCompute(mock.Anything, mock.Anything, mock.Anything).Return().Times(3)
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.Anything).Return().Times(3)
 		suite.rendererMock.EXPECT().EndComputeFrame().Return().Once()
 
 		suite.NotPanics(func() { suite.scene.PrepareSSR() })
@@ -1063,18 +1031,15 @@ func (suite *sceneImplTest) TestBeginHDRFrame() {
 }
 
 func (suite *sceneImplTest) TestPrepareShadows() {
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. lightHandler disabled returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("disabled returns early", func() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. no lights / no entries Ã¢â€ â€™ bails at the bail check Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("no shadow work bails early", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 3. directional light, nil controller, Buffer(2)->nil, BeginShadowFrame error Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("directional light nil controller buffer2 nil BeginShadowFrame error", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -1105,7 +1070,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 4. directional light, non-nil controller, Buffer(2)->non-nil, no animators Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("directional light non-nil controller buffer2 non-nil cascades no animators", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -1141,12 +1105,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ CSM cascade inner-loop branch sub-tests (5-15) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-	// All share: enabled lightHandler, directional light, nil-controller camera, csmBGPMock with
-	// Buffer(2)->non-nil and Buffer(4)->nil. cascadeCount=2 Ã¢â€ â€™ every animator method is called
-	// once per cascade (Twice) unless the skip guard fires before calling subsequent methods.
-
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 5. csm cascade: first guard skips zero instance count Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("csm cascade: skips zero instance count animator", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -1185,7 +1143,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 6. csm cascade: nil model skips animator Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("csm cascade: skips nil model animator", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -1225,7 +1182,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 7. csm cascade: CastsShadows=false skips animator Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("csm cascade: skips animator with no cast shadows", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -1267,7 +1223,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 8. csm cascade: nil MeshProvider skips animator Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("csm cascade: skips animator with nil mesh provider", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -1310,7 +1265,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 9. csm cascade: empty pipeline key skips animator Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("csm cascade: skips animator with empty pipeline key", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -1356,7 +1310,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 10. csm cascade: culling disabled Ã¢â€ â€™ ShadowDrawCall Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("csm cascade: ShadowDrawCall when culling disabled", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -1407,7 +1360,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 11. csm cascade: culling enabled, empty compute key Ã¢â€ â€™ ShadowDrawCall Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("csm cascade: culling empty compute key falls back to ShadowDrawCall", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -1459,7 +1411,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 12. csm cascade: culling enabled, PipelineÃ¢â€ â€™nil Ã¢â€ â€™ ShadowDrawCall Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("csm cascade: culling nil Pipeline falls back to ShadowDrawCall", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -1512,7 +1463,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 13. csm cascade: culling enabled, ShaderÃ¢â€ â€™nil Ã¢â€ â€™ ShadowDrawCall Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("csm cascade: culling nil Shader falls back to ShadowDrawCall", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -1568,7 +1518,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 14. csm cascade: IndirectBufferÃ¢â€ â€™nil Ã¢â€ â€™ ShadowDrawCall Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("csm cascade: indirect buffer nil falls back to ShadowDrawCall", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -1631,7 +1580,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 15. csm cascade: IndirectBufferÃ¢â€ â€™non-nil Ã¢â€ â€™ ShadowDrawCallIndirect Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("csm cascade: ShadowDrawCallIndirect when indirect available", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -1694,14 +1642,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ Spot depth-pass sub-tests (16-22) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-	// Setup: one spot light (no directional), AtlasSlots=1, AtlasCols=1.
-	// Shadow search loop: spot light evaluated (Enabled, CastsShadows, Type) Ã¢â€ â€™ not directional Ã¢â€ â€™
-	// shadowLight=nil. Spot loop: same light passes (Enabled, CastsShadows, Type again + VP methods).
-	// Total Enabled/CastsShadows/Type per spot light: Twice() each.
-	// Depth pass loop runs once (1 ShadowTypeSpot entry). No cam needed (CSM block skipped).
-
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 16. spot depth pass: skips zero instance count animator Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("spot depth pass: skips zero instance count animator", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -1733,7 +1673,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 17. spot depth pass: skips nil model animator Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("spot depth pass: skips nil model animator", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -1766,7 +1705,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 18. spot depth pass: CastsShadows=false skips animator Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("spot depth pass: skips animator with no cast shadows", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -1801,7 +1739,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 19. spot depth pass: nil MeshProvider skips animator Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("spot depth pass: skips animator with nil mesh provider", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -1837,7 +1774,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 20. spot depth pass: empty pipeline key skips animator Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("spot depth pass: skips animator with empty pipeline key", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -1876,7 +1812,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 21. spot depth pass: culling disabled Ã¢â€ â€™ ShadowDrawCall Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("spot depth pass: ShadowDrawCall when culling disabled", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -1920,7 +1855,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 22. spot depth pass: IndirectBufferÃ¢â€ â€™non-nil Ã¢â€ â€™ ShadowDrawCallIndirect Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("spot depth pass: ShadowDrawCallIndirect when indirect available", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -1976,16 +1910,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ Point cube-face depth-pass sub-tests (23-25) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-	// Setup: one point light, AtlasSlots=6, AtlasCols=6.
-	// Shadow search (Type=PointÃ¢â€°Â Directional): EnabledÃƒâ€”1, CastsShadowsÃƒâ€”1, TypeÃƒâ€”1.
-	// Spot loop (Type=PointÃ¢â€°Â Spot): EnabledÃƒâ€”1, CastsShadowsÃƒâ€”1, TypeÃƒâ€”1 Ã¢â€ â€™ continue.
-	// Point loop: EnabledÃƒâ€”1, CastsShadowsÃƒâ€”1, TypeÃƒâ€”1 Ã¢â€ â€™ enters body.
-	// Total per point light: EnabledÃƒâ€”3, CastsShadowsÃƒâ€”3, TypeÃƒâ€”3.
-	// VP computation: PositionÃƒâ€”1, RangeÃƒâ€”1, ShadowBiasÃƒâ€”6 (once per face).
-	// Cube face depth passes: 6 iterations.
-
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 23. point cube face: skips zero instance count animator Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("point cube face: skips zero instance count animator", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -2015,7 +1939,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 24. point cube face: culling disabled Ã¢â€ â€™ ShadowDrawCall Ãƒâ€”6 Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("point cube face: ShadowDrawCall when culling disabled", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -2057,7 +1980,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 25. point cube face: IndirectBufferÃ¢â€ â€™non-nil Ã¢â€ â€™ ShadowDrawCallIndirect Ãƒâ€”6 Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("point cube face: ShadowDrawCallIndirect when indirect available", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -2111,16 +2033,12 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 26. point cube face: break when atlas slots exhausted by second point light Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-	// Covers the `if slotIdx+5 >= maxSlots { break }` branch in the point VP loop.
-	// Two point lights; first fills all 6 slots (slotIdxÃ¢â€ â€™6), second triggers the break.
 	suite.Run("point cube face: break when slots exhausted", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
 		sh.SetLightShadowAtlasSlots(6)
 		sh.SetLightShadowAtlasCols(6)
 
-		// First point light: processed normally in all three loops.
 		pl1 := light_mocks.NewMockLight(suite.T())
 		pl1.EXPECT().Enabled().Return(true).Times(3)
 		pl1.EXPECT().CastsShadows().Return(true).Times(3)
@@ -2130,8 +2048,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		pl1.EXPECT().ShadowBias().Return(float32(0.005)).Times(6)
 		suite.scene.lightHandler.AddLight(pl1)
 
-		// Second point light: seen in shadow search loop and spot loop,
-		// then hits the break in the point loop (slotIdx+5=11 >= maxSlots=6).
 		pl2 := light_mocks.NewMockLight(suite.T())
 		pl2.EXPECT().Enabled().Return(true).Twice()
 		pl2.EXPECT().CastsShadows().Return(true).Twice()
@@ -2147,8 +2063,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 27. directional + spot: shadow entry buffer written when Buffer(4) non-nil Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-	// Exercises the `csmShadowLitBGP.Buffer(4) != nil && len(entries) > 0` true branch.
 	suite.Run("directional and spot: writes shadow entry buffer when Buffer4 non-nil", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -2160,8 +2074,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		csmBGPMock.EXPECT().Buffer(2).Return(&wgpu.Buffer{}).Once()
 		csmBGPMock.EXPECT().Buffer(4).Return(&wgpu.Buffer{}).Once()
 
-		// Directional light (first in list; found immediately in shadow search loop).
-		// Also iterated in spot loop (TypeÃ¢â€°Â Spot Ã¢â€ â€™ continue).
 		dl := light_mocks.NewMockLight(suite.T())
 		dl.EXPECT().Enabled().Return(true).Twice()
 		dl.EXPECT().CastsShadows().Return(true).Twice()
@@ -2170,8 +2082,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		dl.EXPECT().ShadowBias().Return(float32(0.005)).Once()
 		suite.scene.lightHandler.AddLight(dl)
 
-		// Spot light (second in list; not reached in shadow search loop due to break).
-		// Evaluated in spot loop only.
 		sl := light_mocks.NewMockLight(suite.T())
 		sl.EXPECT().Enabled().Return(true).Once()
 		sl.EXPECT().CastsShadows().Return(true).Once()
@@ -2191,7 +2101,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		camMock.EXPECT().ViewMatrix().Return([16]float32{}).Once()
 		suite.scene.cam = camMock
 
-		// 2 CSM cascade depth passes + 1 spot depth pass = 3 total.
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
 		suite.rendererMock.EXPECT().BeginShadowDepthPass(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Times(3)
@@ -2201,25 +2110,17 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 28. point loop: non-point light hits the continue branch Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-	// Covers `if !l.Enabled() || !l.CastsShadows() || l.Type() != light.LightTypePoint { continue }`
-	// by including a light with CastsShadows=false that enters the point loop (slotIdx+5 < maxSlots)
-	// and is skipped via the type/casting check, before a real point light is processed.
 	suite.Run("point loop: non-point light continue before point light processes", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
 		sh.SetLightShadowAtlasSlots(6)
 		sh.SetLightShadowAtlasCols(6)
 
-		// A non-casting spot light: CastsShadows=false makes it skip in shadow-search,
-		// spot loop, AND point loop (all via short-circuit on !CastsShadows), covering the
-		// point-loop `continue` branch (line 895-896 in scene.go).
 		sl := light_mocks.NewMockLight(suite.T())
 		sl.EXPECT().Enabled().Return(true).Times(3)
 		sl.EXPECT().CastsShadows().Return(false).Times(3)
 		suite.scene.lightHandler.AddLight(sl)
 
-		// A real point light that is processed after the spot light continues.
 		pl := light_mocks.NewMockLight(suite.T())
 		pl.EXPECT().Enabled().Return(true).Times(3)
 		pl.EXPECT().CastsShadows().Return(true).Times(3)
@@ -2238,11 +2139,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 29-31. Point cube face depth-pass: remaining inner-loop skip branches Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-	// These cover the same branches as spot sub-tests 17-20 but inside the point cube face loop.
-	// Each branch fires once per cube face (6 times total per animator method).
-
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 29. point cube face depth pass: skips nil model animator Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("point cube face depth pass: skips nil model animator", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -2273,7 +2169,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 30. point cube face depth pass: skips animator with nil mesh provider Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("point cube face depth pass: skips animator with nil mesh provider", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -2307,7 +2202,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 31. point cube face depth pass: skips animator with empty pipeline key Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("point cube face depth pass: skips animator with empty pipeline key", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		sh := suite.scene.lightHandler.ShadowHandler()
@@ -2346,19 +2240,15 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 }
 
 func (suite *sceneImplTest) TestPrepareLightCulling() {
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. disabled returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("disabled returns early", func() {
 		suite.NotPanics(func() { suite.scene.PrepareLightCulling() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. nil cam returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("nil cam returns early", func() {
 		suite.scene.lightHandler.SetEnabled(true)
-		// cam is nil by default in SetupSubTest
 		suite.NotPanics(func() { suite.scene.PrepareLightCulling() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 3. begin compute error returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("begin compute error returns early", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		suite.scene.lightHandler.Resize(800, 600)
@@ -2374,13 +2264,12 @@ func (suite *sceneImplTest) TestPrepareLightCulling() {
 		camMock.EXPECT().Far().Return(float32(1000.0)).Once()
 		suite.scene.cam = camMock
 
-		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Twice()
 		suite.rendererMock.EXPECT().BeginComputeFrame().Return(errors.New("fail")).Once()
 
 		suite.NotPanics(func() { suite.scene.PrepareLightCulling() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 4. full cull dispatch with enabled light Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("full cull dispatch with enabled light", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		suite.scene.lightHandler.Resize(800, 600)
@@ -2396,9 +2285,9 @@ func (suite *sceneImplTest) TestPrepareLightCulling() {
 		camMock.EXPECT().Far().Return(float32(1000.0)).Once()
 		suite.scene.cam = camMock
 
-		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Twice()
 		suite.rendererMock.EXPECT().BeginComputeFrame().Return(nil).Once()
-		suite.rendererMock.EXPECT().DispatchCompute(mock.Anything, mock.Anything, mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndComputeFrame().Return().Once()
 
 		suite.NotPanics(func() { suite.scene.PrepareLightCulling() })
@@ -2406,12 +2295,10 @@ func (suite *sceneImplTest) TestPrepareLightCulling() {
 }
 
 func (suite *sceneImplTest) TestCountEphemeral() {
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. nil pool returns zero Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("nil pool returns zero", func() {
 		suite.Equal(0, suite.scene.CountEphemeral())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. pool with animator returns instance count Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("pool with animator returns instance count", func() {
 		animMock := animator_mocks.NewMockAnimator(suite.T())
 		animMock.EXPECT().InstanceCount().Return(uint32(3)).Once()
@@ -2425,7 +2312,6 @@ func (suite *sceneImplTest) TestCountEphemeral() {
 		suite.Equal(3, suite.scene.CountEphemeral())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 3. pool with multiple animators sums counts Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("pool with multiple animators sums counts", func() {
 		animMock1 := animator_mocks.NewMockAnimator(suite.T())
 		animMock1.EXPECT().InstanceCount().Return(uint32(2)).Once()
@@ -2443,14 +2329,12 @@ func (suite *sceneImplTest) TestCountEphemeral() {
 }
 
 func (suite *sceneImplTest) TestAddGameObject() {
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. nil model panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("nil model panics", func() {
 		objMock := game_object_mocks.NewMockGameObject(suite.T())
 		objMock.EXPECT().Model().Return(nil).Once()
 		suite.Panics(func() { suite.scene.AddGameObject(objMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. non-skinned non-lit new model createAnimator Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("non-skinned non-lit new model createAnimator", func() {
 		suite.scene.buildInjectionMap()
 		suite.scene.animatorPool = make(map[model.Model][]animator.Animator)
@@ -2483,7 +2367,6 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		suite.Len(suite.scene.animatorPool, 1)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 3. non-skinned lit uses lit shaders Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("non-skinned lit uses lit shaders", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		suite.scene.buildInjectionMap()
@@ -2517,7 +2400,6 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		suite.NotPanics(func() { suite.scene.AddGameObject(objMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 4. skinned non-lit uses skeletal shaders Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("skinned non-lit uses skeletal shaders", func() {
 		suite.scene.buildInjectionMap()
 		suite.scene.animatorPool = make(map[model.Model][]animator.Animator)
@@ -2550,7 +2432,6 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		suite.NotPanics(func() { suite.scene.AddGameObject(objMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 5. skinned lit uses lit-skinned shaders Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("skinned lit uses lit-skinned shaders", func() {
 		suite.scene.lightHandler.SetEnabled(true)
 		suite.scene.buildInjectionMap()
@@ -2584,7 +2465,6 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		suite.NotPanics(func() { suite.scene.AddGameObject(objMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 6. full pool creates new animator Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("full pool creates new animator", func() {
 		suite.scene.buildInjectionMap()
 		suite.scene.instanceLookup = make(map[animator.Animator]map[uint32]uint64)
@@ -2621,7 +2501,6 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		suite.NotPanics(func() { suite.scene.AddGameObject(objMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 7. AddInstance error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("AddInstance error panics", func() {
 		suite.scene.buildInjectionMap()
 		suite.scene.animatorPool = make(map[model.Model][]animator.Animator)
@@ -2649,7 +2528,6 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		suite.Panics(func() { suite.scene.AddGameObject(objMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 8. ephemeral obj skips registry Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("ephemeral obj skips registry", func() {
 		suite.scene.buildInjectionMap()
 		suite.scene.animatorPool = make(map[model.Model][]animator.Animator)
@@ -2683,7 +2561,6 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		suite.Empty(suite.scene.registry)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 9. obj with light tracks it Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("obj with light tracks it", func() {
 		suite.scene.buildInjectionMap()
 		suite.scene.animatorPool = make(map[model.Model][]animator.Animator)
@@ -2720,7 +2597,6 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		suite.Len(suite.scene.lightHandler.Lights(), 1)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 10. physics gpuReady=true pre-set sync maps Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("physics gpuReady=true pre-set sync maps", func() {
 		suite.scene.buildInjectionMap()
 		suite.scene.instanceLookup = make(map[animator.Animator]map[uint32]uint64)
@@ -2762,7 +2638,6 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		suite.NotPanics(func() { suite.scene.AddGameObject(objMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 11. physics gpuReady=false nil sync maps triggers initPhysics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("physics gpuReady=false nil sync maps triggers initPhysics", func() {
 		suite.scene.buildInjectionMap()
 
@@ -2815,7 +2690,6 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		suite.True(suite.scene.physicsGPUReady)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 12. physics kinematic triggers bone particle group early return Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("physics kinematic triggers bone particle group early return", func() {
 		suite.scene.buildInjectionMap()
 		suite.scene.instanceLookup = make(map[animator.Animator]map[uint32]uint64)
@@ -2861,12 +2735,10 @@ func (suite *sceneImplTest) TestAddGameObject() {
 }
 
 func (suite *sceneImplTest) TestRemoveGameObject() {
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. id not in registry returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("id not in registry returns early", func() {
 		suite.NotPanics(func() { suite.scene.RemoveGameObject(1) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. id in registry no light no anim no physics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("id in registry no light no anim no physics", func() {
 		objMock := game_object_mocks.NewMockGameObject(suite.T())
 		objMock.EXPECT().Light().Return(nil).Once()
@@ -2878,7 +2750,6 @@ func (suite *sceneImplTest) TestRemoveGameObject() {
 		suite.Empty(suite.scene.registry)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 3. has light obj in lightObjects removes it Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("has light obj in lightObjects removes it", func() {
 		l := light.NewLight(light.LightTypePoint)
 		suite.scene.lightHandler.AddLight(l)
@@ -2894,7 +2765,6 @@ func (suite *sceneImplTest) TestRemoveGameObject() {
 		suite.Empty(suite.scene.lightObjects)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 4. anim non-nil removedIdx negative skips swap Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("anim non-nil removedIdx negative skips swap", func() {
 		animMock := animator_mocks.NewMockAnimator(suite.T())
 
@@ -2908,7 +2778,6 @@ func (suite *sceneImplTest) TestRemoveGameObject() {
 		suite.NotPanics(func() { suite.scene.RemoveGameObject(1) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 5. anim non-nil removedIdx zero lut nil swapped false Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("anim non-nil removedIdx zero lut nil swapped false", func() {
 		animMock := animator_mocks.NewMockAnimator(suite.T())
 		animMock.EXPECT().RemoveInstance(uint32(0)).Return(uint32(0), false).Once()
@@ -2924,7 +2793,6 @@ func (suite *sceneImplTest) TestRemoveGameObject() {
 		suite.NotPanics(func() { suite.scene.RemoveGameObject(1) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 6. anim non-nil lut non-nil swapped false deletes from lut Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("anim non-nil lut non-nil swapped false deletes from lut", func() {
 		animMock := animator_mocks.NewMockAnimator(suite.T())
 		animMock.EXPECT().RemoveInstance(uint32(0)).Return(uint32(0), false).Once()
@@ -2944,7 +2812,6 @@ func (suite *sceneImplTest) TestRemoveGameObject() {
 		suite.Empty(suite.scene.instanceLookup[animMock])
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 7. full swap path swappedObjID in registry updates instance id Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("full swap path swappedObjID in registry updates instance id", func() {
 		animMock := animator_mocks.NewMockAnimator(suite.T())
 		animMock.EXPECT().RemoveInstance(uint32(0)).Return(uint32(1), true).Once()
@@ -2968,7 +2835,6 @@ func (suite *sceneImplTest) TestRemoveGameObject() {
 		suite.Equal(uint64(2), suite.scene.instanceLookup[animMock][uint32(0)])
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 8. physics non-nil calls RemoveBody Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("physics non-nil calls RemoveBody", func() {
 		objMock := game_object_mocks.NewMockGameObject(suite.T())
 		objMock.EXPECT().Light().Return(nil).Once()
@@ -2983,9 +2849,7 @@ func (suite *sceneImplTest) TestRemoveGameObject() {
 }
 
 func (suite *sceneImplTest) TestPrepareCompute() {
-	// Ã¢â€â‚¬Ã¢â€â‚¬ Camera section Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. cam nil camBGP skips WriteBuffers Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("cam nil camBGP skips WriteBuffers", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -2996,7 +2860,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. cam non-nil camBGP nil controller writes uniform Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("cam non-nil camBGP nil controller writes uniform", func() {
 		camBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		camMock := camera_mocks.NewMockCamera(suite.T())
@@ -3011,7 +2874,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 3. cam non-nil camBGP non-nil controller writes position Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("cam non-nil camBGP non-nil controller writes position", func() {
 		ctrl := camera_mocks.NewMockCameraController(suite.T())
 		ctrl.EXPECT().Position().Return(float32(1), float32(2), float32(3)).Once()
@@ -3028,9 +2890,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ Light object sync section Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 4. light object enabled syncs position Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("light object enabled syncs position", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3048,7 +2907,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 5. light object disabled skips sync Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("light object disabled skips sync", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3064,7 +2922,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 6. light object nil light skips Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("light object nil light skips", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3078,9 +2935,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ Light buffer section Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 7. light handler enabled single binding write Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("light handler enabled single binding write", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3100,7 +2954,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 8. light handler enabled two bindings when data over 16 Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("light handler enabled two bindings when data over 16", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3120,7 +2973,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 9. light sort triggers when rawLights exceeds MaxGPULights Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("light sort triggers when rawLights exceeds MaxGPULights", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3143,7 +2995,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 10. light sort non-nil controller uses camera position Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("light sort non-nil controller uses camera position", func() {
 		ctrl := camera_mocks.NewMockCameraController(suite.T())
 		ctrl.EXPECT().Position().Return(float32(5), float32(5), float32(5)).Once()
@@ -3168,9 +3019,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ Phase 1 (parallel prep) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 11. phase1 zero instance count skipped Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("phase1 zero instance count skipped", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3185,7 +3033,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 12. phase1 nil model skipped Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("phase1 nil model skipped", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3203,7 +3050,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 13. phase1 empty compute key skipped Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("phase1 empty compute key skipped", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3224,7 +3070,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 14. phase1 nil pipeline skipped Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("phase1 nil pipeline skipped", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3246,7 +3091,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 15. phase1 nil shader skipped Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("phase1 nil shader skipped", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3270,7 +3114,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 16. phase1 full path culling disabled no SetFrustumPlanes Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("phase1 full path culling disabled no SetFrustumPlanes", func() {
 		suite.scene.cullingDisabled = true
 		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
@@ -3300,13 +3143,14 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		animMock.EXPECT().Flush(mock.Anything, mock.Anything, mock.Anything).Return(uint32(1)).Once()
 		animMock.EXPECT().ComputeBindGroupProvider().Return(computeBGP).Once()
 		suite.rendererMock.EXPECT().Pipeline("pc16-key").Return(realPipe).Times(2)
-		suite.rendererMock.EXPECT().DispatchCompute("pc16-key", computeBGP, mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.MatchedBy(func(d []renderer.ComputeDispatch) bool {
+			return len(d) == 1 && d[0].PipelineKey == "pc16-key" && d[0].Provider == computeBGP
+		})).Return().Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 17. phase1 full path culling enabled calls SetFrustumPlanes and ResetIndirectArgs Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("phase1 full path culling enabled calls SetFrustumPlanes and ResetIndirectArgs", func() {
 		suite.scene.cullingDisabled = false
 		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
@@ -3341,15 +3185,14 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		animMock.EXPECT().StagedWriteData().Return(nil).Once()
 		animMock.EXPECT().ComputeBindGroupProvider().Return(computeBGP).Once()
 		suite.rendererMock.EXPECT().Pipeline("pc17-key").Return(realPipe).Times(3)
-		suite.rendererMock.EXPECT().DispatchCompute("pc17-key", computeBGP, mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.MatchedBy(func(d []renderer.ComputeDispatch) bool {
+			return len(d) == 1 && d[0].PipelineKey == "pc17-key" && d[0].Provider == computeBGP
+		})).Return().Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ Phase 2 targeted Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 18. phase2 culling nil model falls through to StagedWriteData Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("phase2 culling nil model falls through to StagedWriteData", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3367,7 +3210,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 19. phase2 culling nil mesh provider falls through to StagedWriteData Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("phase2 culling nil mesh provider falls through to StagedWriteData", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3388,7 +3230,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 20. phase2 culling empty key continue skips StagedWriteData Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("phase2 culling empty key continue skips StagedWriteData", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3409,7 +3250,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 21. phase2 culling nil pipeline continue skips StagedWriteData Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("phase2 culling nil pipeline continue skips StagedWriteData", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3431,7 +3271,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 22. phase2 culling nil shader continue skips StagedWriteData Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("phase2 culling nil shader continue skips StagedWriteData", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3455,7 +3294,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 23. phase2 culling valid calls ResetIndirectArgs StagedWriteData and triggers WriteBuffers
 	suite.Run("phase2 culling valid calls ResetIndirectArgs StagedWriteData and triggers WriteBuffers", func() {
 		suite.scene.cullingDisabled = false
 		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
@@ -3493,13 +3331,14 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		animMock.EXPECT().ComputeBindGroupProvider().Return(computeBGP).Once()
 		suite.rendererMock.EXPECT().Pipeline("k23").Return(realPipe).Times(3)
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
-		suite.rendererMock.EXPECT().DispatchCompute("k23", computeBGP, mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.MatchedBy(func(d []renderer.ComputeDispatch) bool {
+			return len(d) == 1 && d[0].PipelineKey == "k23" && d[0].Provider == computeBGP
+		})).Return().Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 24. phase2 non-empty StagedWriteData calls WriteBuffers Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("phase2 non-empty StagedWriteData calls WriteBuffers", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3521,9 +3360,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ Physics block Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 25. physics nil skips block Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("physics nil skips block", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3535,7 +3371,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 26. physics Enabled false skips Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("physics Enabled false skips", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3549,7 +3384,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 27. physics Enabled ReadbackPending false substeps 0 no physWrites Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("physics Enabled ReadbackPending false substeps 0 no physWrites", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3566,7 +3400,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 28. physics substeps 0 with physWrites calls WriteBuffers Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("physics substeps 0 with physWrites calls WriteBuffers", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3584,7 +3417,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 29. physics physicsSyncWrites appended on substeps 0 Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("physics physicsSyncWrites appended on substeps 0", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3604,7 +3436,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.Len(suite.scene.physicsSyncWrites, 0)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 30. physics ReadbackPending true BodiesCount 0 no ReadMappedBuffer Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("physics ReadbackPending true BodiesCount 0 no ReadMappedBuffer", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3623,7 +3454,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 31. physics ReadbackPending true ReadMappedBuffer error no ProcessReadback Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("physics ReadbackPending true ReadMappedBuffer error no ProcessReadback", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3645,7 +3475,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 32. physics ReadbackPending true ReadMappedBuffer success calls ProcessReadback Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("physics ReadbackPending true ReadMappedBuffer success calls ProcessReadback", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3669,7 +3498,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 33. physics substeps 1 dispatches 8 stages Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("physics substeps 1 dispatches 8 stages", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3693,12 +3521,11 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		phMock.EXPECT().ConsumeReadbackRequest().Return(false).Once()
 		suite.rendererMock.EXPECT().Pipeline("phys_key").Return(nil).Times(8)
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Times(2)
-		suite.rendererMock.EXPECT().DispatchCompute("phys_key", stageBGP, [3]uint32{1, 1, 1}).Return().Times(8)
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.Anything).Return().Times(8)
 		suite.scene.physicsHandler = phMock
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 34. physics substeps 1 physDispatchGroups nil shader returns 1 1 1 Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("physics substeps 1 physDispatchGroups nil shader returns 1 1 1", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3724,12 +3551,11 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		phMock.EXPECT().ConsumeReadbackRequest().Return(false).Once()
 		suite.rendererMock.EXPECT().Pipeline("phys_key").Return(mockPipe).Times(8)
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Times(2)
-		suite.rendererMock.EXPECT().DispatchCompute("phys_key", stageBGP, [3]uint32{1, 1, 1}).Return().Times(8)
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.Anything).Return().Times(8)
 		suite.scene.physicsHandler = phMock
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 35. physics physicsSyncGroup dispatches sync after substeps Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("physics physicsSyncGroup dispatches sync after substeps", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3755,12 +3581,11 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		phMock.EXPECT().ConsumeReadbackRequest().Return(false).Once()
 		suite.rendererMock.EXPECT().Pipeline("phys_key").Return(nil).Times(9)
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Times(2)
-		suite.rendererMock.EXPECT().DispatchCompute(mock.Anything, mock.Anything, mock.Anything).Return().Times(9)
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.Anything).Return().Times(9)
 		suite.scene.physicsHandler = phMock
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 36. physics ConsumeReadbackRequest true StagingBuffer nil no CopyBufferToBuffer Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("physics ConsumeReadbackRequest true StagingBuffer nil no CopyBufferToBuffer", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3785,12 +3610,11 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		phMock.EXPECT().StagingBuffer().Return(nil).Once()
 		suite.rendererMock.EXPECT().Pipeline("phys_key").Return(nil).Times(8)
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Times(2)
-		suite.rendererMock.EXPECT().DispatchCompute("phys_key", stageBGP, [3]uint32{1, 1, 1}).Return().Times(8)
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.Anything).Return().Times(8)
 		suite.scene.physicsHandler = phMock
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 37. physics ConsumeReadbackRequest true StagingBuffer non-nil calls CopyBufferToBuffer Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("physics ConsumeReadbackRequest true StagingBuffer non-nil calls CopyBufferToBuffer", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3817,15 +3641,12 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		phMock.EXPECT().StagingBuffer().Return(stagingBuf).Once()
 		suite.rendererMock.EXPECT().Pipeline("phys_key").Return(nil).Times(8)
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Times(2)
-		suite.rendererMock.EXPECT().DispatchCompute("phys_key", stageBGP, [3]uint32{1, 1, 1}).Return().Times(8)
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.Anything).Return().Times(8)
 		suite.rendererMock.EXPECT().CopyBufferToBuffer(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.scene.physicsHandler = phMock
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ Bone particle dispatch Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 38. bone particle physicsHandler nil skips Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("bone particle physicsHandler nil skips", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3841,7 +3662,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 39. bone particle empty groups skips Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("bone particle empty groups skips", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3854,7 +3674,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 40. bone particle nil boneUpdatePipe skips DispatchCompute Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("bone particle nil boneUpdatePipe skips DispatchCompute", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3874,7 +3693,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 41. bone particle nil boneUpdateShader skips Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("bone particle nil boneUpdateShader skips", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3896,7 +3714,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 42. bone particle valid shader dispatches per group Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("bone particle valid shader dispatches per group", func() {
 		suite.scene.buildInjectionMap()
 		realBoneShader := shader.NewShader("_bone_pc42", shader.ShaderTypeCompute,
@@ -3923,12 +3740,14 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		phMock.EXPECT().PipelineKey("bone_update").Return("bone_key42").Once()
 		suite.scene.physicsHandler = phMock
 		suite.rendererMock.EXPECT().Pipeline("bone_key42").Return(realBonePipe).Once()
-		suite.rendererMock.EXPECT().DispatchCompute("bone_key42", bgp1, [3]uint32{1, 1, 1}).Return().Once()
-		suite.rendererMock.EXPECT().DispatchCompute("bone_key42", bgp2, [3]uint32{1, 1, 1}).Return().Once()
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.MatchedBy(func(d []renderer.ComputeDispatch) bool {
+			return len(d) == 2 &&
+				d[0].PipelineKey == "bone_key42" && d[0].Provider == bgp1 &&
+				d[1].PipelineKey == "bone_key42" && d[1].Provider == bgp2
+		})).Return().Once()
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 43. physDispatchGroups xSize zero guard and groups zero guard Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("physDispatchGroups xSize zero guard and groups zero guard", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3956,12 +3775,11 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		phMock.EXPECT().ConsumeReadbackRequest().Return(false).Once()
 		suite.rendererMock.EXPECT().Pipeline("phys_key43").Return(mockPhysPipe).Times(8)
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Times(2)
-		suite.rendererMock.EXPECT().DispatchCompute("phys_key43", stageBGP, mock.Anything).Return().Times(8)
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.Anything).Return().Times(8)
 		suite.scene.physicsHandler = phMock
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 44. animator dispatch xSize zero guard Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("animator dispatch xSize zero guard", func() {
 		suite.scene.cullingDisabled = true
 		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
@@ -3988,13 +3806,15 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		animMock.EXPECT().Flush(mock.Anything, mock.Anything, mock.Anything).Return(uint32(2)).Once()
 		animMock.EXPECT().ComputeBindGroupProvider().Return(computeBGP).Once()
 		suite.rendererMock.EXPECT().Pipeline("k44").Return(mockPipe).Times(2)
-		suite.rendererMock.EXPECT().DispatchCompute("k44", computeBGP, [3]uint32{2, 1, 1}).Return().Once()
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.MatchedBy(func(d []renderer.ComputeDispatch) bool {
+			return len(d) == 1 && d[0].PipelineKey == "k44" && d[0].Provider == computeBGP &&
+				d[0].WorkGroupCount == [3]uint32{2, 1, 1}
+		})).Return().Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 45. bone particle dispatch xSize zero guard and groups zero guard Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("bone particle dispatch xSize zero guard and groups zero guard", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -4017,12 +3837,14 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		phMock.EXPECT().PipelineKey("bone_update").Return("bone_key45").Once()
 		suite.scene.physicsHandler = phMock
 		suite.rendererMock.EXPECT().Pipeline("bone_key45").Return(mockBonePipe).Once()
-		suite.rendererMock.EXPECT().DispatchCompute("bone_key45", bgp1, [3]uint32{1, 1, 1}).Return().Once()
-		suite.rendererMock.EXPECT().DispatchCompute("bone_key45", bgp2, [3]uint32{5, 1, 1}).Return().Once()
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.MatchedBy(func(d []renderer.ComputeDispatch) bool {
+			return len(d) == 2 &&
+				d[0].PipelineKey == "bone_key45" && d[0].Provider == bgp1 && d[0].WorkGroupCount == [3]uint32{1, 1, 1} &&
+				d[1].PipelineKey == "bone_key45" && d[1].Provider == bgp2 && d[1].WorkGroupCount == [3]uint32{5, 1, 1}
+		})).Return().Once()
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 46. light sort directional light returns MaxFloat32 importance Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("light sort directional light returns MaxFloat32 importance", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -4045,7 +3867,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 47. light sort comparison branches impA greater and impA less than Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("light sort comparison branches impA greater and impA less than", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -4054,9 +3875,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		camMock.EXPECT().Controller().Return(nil).Once()
 		suite.scene.cam = camMock
 		suite.scene.writePool = []bind_group_provider.BufferWrite{}
-		// l1 nearest (dist2=1, importance=10), l2 medium (dist2=25, importance=0.4),
-		// l3 farthest (dist2=100, importance=0.1). Input order {l3,l1,l2} ensures the
-		// sort must compare impA<impB (return 1) and impA>impB (return -1).
 		l1 := light.NewLight(light.LightTypePoint)
 		l1.SetPosition(0, 0, 1)
 		l2 := light.NewLight(light.LightTypePoint)
@@ -4075,7 +3893,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 48. light sort equal importance returns zero Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("light sort equal importance returns zero", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -4098,7 +3915,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 49. phase1 goroutine covers boneBinding and modelBinding annotation arms Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("phase1 goroutine covers boneBinding and modelBinding annotation arms", func() {
 		suite.scene.cullingDisabled = true
 		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
@@ -4133,20 +3949,21 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		animMock.EXPECT().Flush(mock.Anything, mock.Anything, mock.Anything).Return(uint32(2)).Once()
 		animMock.EXPECT().ComputeBindGroupProvider().Return(computeBGP).Once()
 		suite.rendererMock.EXPECT().Pipeline("bone-model-key").Return(mockPipe).Times(2)
-		suite.rendererMock.EXPECT().DispatchCompute("bone-model-key", computeBGP, [3]uint32{1, 1, 1}).Return().Once()
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.MatchedBy(func(d []renderer.ComputeDispatch) bool {
+			return len(d) == 1 && d[0].PipelineKey == "bone-model-key" && d[0].Provider == computeBGP &&
+				d[0].WorkGroupCount == [3]uint32{1, 1, 1}
+		})).Return().Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 }
 func (suite *sceneImplTest) TestDrawCalls() {
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. empty pool returns nil Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("empty pool returns nil", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. zero instance count skipped Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("zero instance count skipped", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		animMock := animator_mocks.NewMockAnimator(suite.T())
@@ -4156,7 +3973,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 3. nil model skipped Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("nil model skipped", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		animMock := animator_mocks.NewMockAnimator(suite.T())
@@ -4167,7 +3983,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 4. nil mesh provider skipped Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("nil mesh provider skipped", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		mockModel := model_mocks.NewMockModel(suite.T())
@@ -4180,7 +3995,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 5. empty render materials skipped Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("empty render materials skipped", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
@@ -4195,7 +4009,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 6. empty pipeline key skipped Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("empty pipeline key skipped", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
@@ -4212,7 +4025,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 7. nil pipeline skipped Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("nil pipeline skipped", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
@@ -4230,7 +4042,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 8. nil vertex shader skipped Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("nil vertex shader skipped", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
@@ -4250,7 +4061,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 9. direct draw call empty decls no frag shader Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("direct draw call empty decls no frag shader", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
@@ -4275,7 +4085,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 10. direct draw call with frag shader empty decls Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("direct draw call with frag shader empty decls", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
@@ -4302,7 +4111,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 11. draw call error propagated Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("draw call error propagated", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
@@ -4327,7 +4135,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.Error(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 12. culling enabled empty compute key falls to DrawCall Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("culling enabled empty compute key falls to DrawCall", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
@@ -4354,7 +4161,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 13. culling enabled nil compute pipeline skips material Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("culling enabled nil compute pipeline skips material", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
@@ -4380,7 +4186,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 14. culling enabled nil indirect buffer falls to DrawCall Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("culling enabled nil indirect buffer falls to DrawCall", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
@@ -4412,7 +4217,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 15. culling enabled indirect buffer non-nil draws indirect Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("culling enabled indirect buffer non-nil draws indirect", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
@@ -4444,7 +4248,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 16. indirect draw call error propagated Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("indirect draw call error propagated", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
@@ -4476,7 +4279,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.Error(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 17. bind group camera provider resolves Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("bind group camera provider resolves", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		zero := 0
@@ -4511,7 +4313,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 18. bind group camera AnnotationTypeBindingGroup resolves Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("bind group camera AnnotationTypeBindingGroup resolves", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		zero := 0
@@ -4547,7 +4348,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 19. bind group animator provider resolves Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("bind group animator provider resolves", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		zero := 0
@@ -4580,7 +4380,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 20. bind group InstanceData AnnotationTypeBindingGroup resolves Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("bind group InstanceData AnnotationTypeBindingGroup resolves", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		zero := 0
@@ -4614,7 +4413,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 21. skip material when provider nil for a group Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("skip material when provider nil for a group", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		zero := 0
@@ -4643,7 +4441,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 22. material provider non-nil returns mat.Provider(g) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("material provider non-nil returns mat.Provider(g)", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		zero := 0
@@ -4676,7 +4473,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 23. material provider nil falls to mat.BindGroupProvider Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("material provider nil falls to mat.BindGroupProvider", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		zero := 0
@@ -4710,7 +4506,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 24. lights provider enabled resolves lightsBGP Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("lights provider enabled resolves lightsBGP", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		zero := 0
@@ -4746,8 +4541,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 25. lights provider disabled resolves nil Ã¢â€ â€™ skipMaterial Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-	suite.Run("lights provider disabled resolves nil Ã¢â€ â€™ skipMaterial", func() {
+	suite.Run("lights provider disabled resolves nil ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ skipMaterial", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		zero := 0
 		decl := shader.Annotation{
@@ -4778,7 +4572,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 26. shadow provider enabled resolves via ShadowHandler Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("shadow provider enabled resolves via ShadowHandler", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		zero := 0
@@ -4816,7 +4609,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 27. tiles provider enabled resolves tile_lit BGP Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("tiles provider enabled resolves tile_lit BGP", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		zero := 0
@@ -4852,7 +4644,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 28. effect provider non-nil resolves Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("effect provider non-nil resolves", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		zero := 0
@@ -4885,8 +4676,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 29. effect provider nil resolves nil Ã¢â€ â€™ skipMaterial Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-	suite.Run("effect provider nil resolves nil Ã¢â€ â€™ skipMaterial", func() {
+	suite.Run("effect provider nil resolves nil ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ skipMaterial", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		zero := 0
 		decl := shader.Annotation{
@@ -4915,7 +4705,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 30. SSAO provider enabled resolves via ssao_lit Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("SSAO provider enabled resolves via ssao_lit", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		zero := 0
@@ -4951,7 +4740,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 31. Light binding group enabled resolves Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("Light binding group enabled resolves", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		zero := 0
@@ -4988,7 +4776,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 32. ShadowUniform binding group enabled resolves Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("ShadowUniform binding group enabled resolves", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		zero := 0
@@ -5027,7 +4814,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 33. TileUniforms binding group enabled resolves Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("TileUniforms binding group enabled resolves", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		zero := 0
@@ -5064,7 +4850,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 34. OverlayParams binding group mat.BindGroupProvider non-nil Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("OverlayParams binding group mat.BindGroupProvider non-nil", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		zero := 0
@@ -5098,7 +4883,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 35. OverlayParams binding group nil mat BGP falls to mdl.EffectProvider Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("OverlayParams binding group nil mat BGP falls to mdl.EffectProvider", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		zero := 0
@@ -5133,7 +4917,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 36. EffectParams binding group mdl.EffectProvider non-nil Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("EffectParams binding group mdl.EffectProvider non-nil", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		zero := 0
@@ -5167,7 +4950,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 37. EffectParams binding group nil EffectProvider falls to mat.Provider(g) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("EffectParams binding group nil EffectProvider falls to mat.Provider(g)", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		zero := 0
@@ -5202,7 +4984,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 38. duplicate group declaration skips second decl Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("duplicate group declaration skips second decl", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		zero := 0
@@ -5242,7 +5023,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 39. multiple groups highest g sets maxGroup Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("multiple groups highest g sets maxGroup", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		zero := 0
@@ -5285,7 +5065,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 40. AnnotationTypeBindingGroup array<camera> type arg unwraps and resolves camera Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("AnnotationTypeBindingGroup array<camera> unwraps to camera", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		zero := 0
@@ -5322,7 +5101,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 41. cs.Declarations IndirectArgs non-array binding sets indirectBinding Ã¢â€ â€™ DrawCall Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("culling cs.Declarations IndirectArgs non-array binding sets indirectBinding", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		csBinding := 3
@@ -5360,7 +5138,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 42. cs.Declarations IndirectArgs array-wrapped binding sets indirectBinding Ã¢â€ â€™ DrawCall Ã¢â€â‚¬
 	suite.Run("culling cs.Declarations IndirectArgs array-wrapped binding sets indirectBinding", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		csBinding := 3
@@ -5398,7 +5175,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 43. cs.Declarations IndirectArgs non-nil buffer Ã¢â€ â€™ DrawCallIndirect with binding 3 Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("culling cs.Declarations IndirectArgs non-nil buffer calls DrawCallIndirect with discovered binding", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		csBinding := 3
@@ -5437,7 +5213,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 44. decl with nil Group is skipped in provider scan Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("decl with nil Group is skipped in provider scan", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		mapKey := model_mocks.NewMockModel(suite.T())
@@ -5563,7 +5338,6 @@ func (suite *sceneImplTest) TestWithComputeWorkers() {
 }
 
 func (suite *sceneImplTest) TestWithLighting() {
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. sets lightHandler Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("sets lightHandler", func() {
 		s := &scene{mu: &sync.RWMutex{}}
 		mock := light_mocks.NewMockLightingHandler(suite.T())
@@ -5574,7 +5348,6 @@ func (suite *sceneImplTest) TestWithLighting() {
 }
 
 func (suite *sceneImplTest) TestWithPhysics() {
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. sets physicsHandler Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("sets physicsHandler", func() {
 		s := &scene{mu: &sync.RWMutex{}}
 		opt := WithPhysics()
@@ -5584,7 +5357,6 @@ func (suite *sceneImplTest) TestWithPhysics() {
 }
 
 func (suite *sceneImplTest) TestWithScreenSize() {
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. sets screenWidth and screenHeight Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("sets screenWidth and screenHeight", func() {
 		s := &scene{mu: &sync.RWMutex{}}
 		opt := WithScreenSize(1920, 1080)
@@ -5595,7 +5367,6 @@ func (suite *sceneImplTest) TestWithScreenSize() {
 }
 
 func (suite *sceneImplTest) TestWithMaxBonesGPU() {
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. valid value sets maxBonesGPU Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("valid value sets maxBonesGPU", func() {
 		s := &scene{mu: &sync.RWMutex{}}
 		opt := WithMaxBonesGPU(128)
@@ -5603,7 +5374,6 @@ func (suite *sceneImplTest) TestWithMaxBonesGPU() {
 		suite.Equal(uint64(128), s.maxBonesGPU)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. zero clamps to one Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("zero clamps to one", func() {
 		s := &scene{mu: &sync.RWMutex{}}
 		opt := WithMaxBonesGPU(0)
@@ -5640,7 +5410,6 @@ func (suite *sceneImplTest) TestNewScene() {
 }
 
 func (suite *sceneImplTest) TestInitSSAO() {
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. nil SSAOHandler returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("nil SSAOHandler returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		lhMock.EXPECT().SSAOHandler().Return(nil).Once()
@@ -5648,7 +5417,6 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.scene.initSSAO()
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. w zero returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("w zero returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		ssaoMock := light_mocks.NewMockSSAOHandler(suite.T())
@@ -5662,7 +5430,6 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.scene.initSSAO()
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 3. HalfResolution true + CreateSSAOTextures error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("HalfResolution true CreateSSAOTextures error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		ssaoMock := light_mocks.NewMockSSAOHandler(suite.T())
@@ -5677,12 +5444,10 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.rendererMock.EXPECT().CreateSSAOTextures(400, 300).
 			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), errors.New("tex err")).Once()
 		suite.Panics(func() { suite.scene.initSSAO() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 4. CreateSSAOTextures error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("CreateSSAOTextures error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		ssaoMock := light_mocks.NewMockSSAOHandler(suite.T())
@@ -5697,12 +5462,10 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.rendererMock.EXPECT().CreateSSAOTextures(800, 600).
 			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), errors.New("tex err")).Once()
 		suite.Panics(func() { suite.scene.initSSAO() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 5. CreateLinearSampler error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("CreateLinearSampler error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		ssaoMock := light_mocks.NewMockSSAOHandler(suite.T())
@@ -5717,7 +5480,6 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.rendererMock.EXPECT().CreateSSAOTextures(800, 600).
 			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil).Once()
 		ssaoMock.EXPECT().SetRawTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetRawTextureView(mock.Anything).Maybe()
@@ -5725,14 +5487,10 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		ssaoMock.EXPECT().SetBlurredTextureView(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTextureView(mock.Anything).Maybe()
-		ssaoMock.EXPECT().SetNoiseTexture(mock.Anything).Maybe()
-		ssaoMock.EXPECT().SetNoiseTextureView(mock.Anything).Maybe()
-		suite.rendererMock.EXPECT().WriteTexture(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
 		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil), errors.New("samp err")).Once()
 		suite.Panics(func() { suite.scene.initSSAO() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 6. RegisterPipelines ssao_compute error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("RegisterPipelines ssao_compute error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		ssaoMock := light_mocks.NewMockSSAOHandler(suite.T())
@@ -5748,7 +5506,6 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.rendererMock.EXPECT().CreateSSAOTextures(800, 600).
 			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil).Once()
 		ssaoMock.EXPECT().SetRawTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetRawTextureView(mock.Anything).Maybe()
@@ -5756,16 +5513,12 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		ssaoMock.EXPECT().SetBlurredTextureView(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTextureView(mock.Anything).Maybe()
-		ssaoMock.EXPECT().SetNoiseTexture(mock.Anything).Maybe()
-		ssaoMock.EXPECT().SetNoiseTextureView(mock.Anything).Maybe()
-		suite.rendererMock.EXPECT().WriteTexture(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
 		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil), nil).Once()
 		ssaoMock.EXPECT().SetLinearSampler(mock.Anything).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(errors.New("reg err")).Once()
 		suite.Panics(func() { suite.scene.initSSAO() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 7. RegisterPipelines ssao_blur error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("RegisterPipelines ssao_blur error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		ssaoMock := light_mocks.NewMockSSAOHandler(suite.T())
@@ -5781,7 +5534,6 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.rendererMock.EXPECT().CreateSSAOTextures(800, 600).
 			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil).Once()
 		ssaoMock.EXPECT().SetRawTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetRawTextureView(mock.Anything).Maybe()
@@ -5789,9 +5541,6 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		ssaoMock.EXPECT().SetBlurredTextureView(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTextureView(mock.Anything).Maybe()
-		ssaoMock.EXPECT().SetNoiseTexture(mock.Anything).Maybe()
-		ssaoMock.EXPECT().SetNoiseTextureView(mock.Anything).Maybe()
-		suite.rendererMock.EXPECT().WriteTexture(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
 		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil), nil).Once()
 		ssaoMock.EXPECT().SetLinearSampler(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetPipelineKey("ssao_compute", "ssao_compute").Once()
@@ -5800,7 +5549,6 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.Panics(func() { suite.scene.initSSAO() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 8. InitBindGroup ssao_compute error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitBindGroup ssao_compute error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		ssaoMock := light_mocks.NewMockSSAOHandler(suite.T())
@@ -5816,7 +5564,6 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.rendererMock.EXPECT().CreateSSAOTextures(800, 600).
 			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil).Once()
 		ssaoMock.EXPECT().SetRawTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetRawTextureView(mock.Anything).Maybe()
@@ -5824,9 +5571,6 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		ssaoMock.EXPECT().SetBlurredTextureView(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTextureView(mock.Anything).Maybe()
-		ssaoMock.EXPECT().SetNoiseTexture(mock.Anything).Maybe()
-		ssaoMock.EXPECT().SetNoiseTextureView(mock.Anything).Maybe()
-		suite.rendererMock.EXPECT().WriteTexture(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
 		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil), nil).Once()
 		ssaoMock.EXPECT().SetLinearSampler(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetPipelineKey(mock.Anything, mock.Anything).Maybe()
@@ -5840,7 +5584,6 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.Panics(func() { suite.scene.initSSAO() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 9. InitBindGroup blur_h error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitBindGroup blur_h error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		ssaoMock := light_mocks.NewMockSSAOHandler(suite.T())
@@ -5856,7 +5599,6 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.rendererMock.EXPECT().CreateSSAOTextures(800, 600).
 			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil).Once()
 		ssaoMock.EXPECT().SetRawTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetRawTextureView(mock.Anything).Maybe()
@@ -5864,9 +5606,6 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		ssaoMock.EXPECT().SetBlurredTextureView(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTextureView(mock.Anything).Maybe()
-		ssaoMock.EXPECT().SetNoiseTexture(mock.Anything).Maybe()
-		ssaoMock.EXPECT().SetNoiseTextureView(mock.Anything).Maybe()
-		suite.rendererMock.EXPECT().WriteTexture(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
 		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil), nil).Once()
 		ssaoMock.EXPECT().SetLinearSampler(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetPipelineKey(mock.Anything, mock.Anything).Maybe()
@@ -5884,7 +5623,6 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.Panics(func() { suite.scene.initSSAO() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 10. InitBindGroup blur_v error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitBindGroup blur_v error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		ssaoMock := light_mocks.NewMockSSAOHandler(suite.T())
@@ -5900,7 +5638,6 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.rendererMock.EXPECT().CreateSSAOTextures(800, 600).
 			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil).Once()
 		ssaoMock.EXPECT().SetRawTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetRawTextureView(mock.Anything).Maybe()
@@ -5908,9 +5645,6 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		ssaoMock.EXPECT().SetBlurredTextureView(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTextureView(mock.Anything).Maybe()
-		ssaoMock.EXPECT().SetNoiseTexture(mock.Anything).Maybe()
-		ssaoMock.EXPECT().SetNoiseTextureView(mock.Anything).Maybe()
-		suite.rendererMock.EXPECT().WriteTexture(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
 		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil), nil).Once()
 		ssaoMock.EXPECT().SetLinearSampler(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetPipelineKey(mock.Anything, mock.Anything).Maybe()
@@ -5932,7 +5666,6 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.Panics(func() { suite.scene.initSSAO() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 11. full happy path HalfResolution false completes Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("full happy path HalfResolution false completes", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		ssaoMock := light_mocks.NewMockSSAOHandler(suite.T())
@@ -5948,7 +5681,6 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.rendererMock.EXPECT().CreateSSAOTextures(800, 600).
 			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil).Once()
 		ssaoMock.EXPECT().SetRawTexture(mock.Anything).Once()
 		ssaoMock.EXPECT().SetRawTextureView(mock.Anything).Once()
@@ -5956,9 +5688,6 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		ssaoMock.EXPECT().SetBlurredTextureView(mock.Anything).Once()
 		ssaoMock.EXPECT().SetScratchTexture(mock.Anything).Once()
 		ssaoMock.EXPECT().SetScratchTextureView(mock.Anything).Once()
-		ssaoMock.EXPECT().SetNoiseTexture(mock.Anything).Once()
-		ssaoMock.EXPECT().SetNoiseTextureView(mock.Anything).Once()
-		suite.rendererMock.EXPECT().WriteTexture(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Once()
 		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil), nil).Once()
 		ssaoMock.EXPECT().SetLinearSampler(mock.Anything).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Once()
@@ -5989,19 +5718,16 @@ func (suite *sceneImplTest) TestInitSSAO() {
 }
 
 func (suite *sceneImplTest) TestInitSSAOLitBindGroup() {
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. nil litFragmentShader returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("nil litFragmentShader returns early", func() {
 		suite.scene.initSSAOLitBindGroup(nil)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. no SSAO provider declaration returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("no SSAO provider declaration returns early", func() {
 		shaderMock := shader_mocks.NewMockShader(suite.T())
 		shaderMock.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		suite.scene.initSSAOLitBindGroup(shaderMock)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 3. ssaoReady true binds texture and sampler Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("ssaoReady true binds texture and sampler", func() {
 		ssaoGroupIdx := 6
 		ssaoDecl := shader.Annotation{
@@ -6042,7 +5768,6 @@ func (suite *sceneImplTest) TestInitSSAOLitBindGroup() {
 		suite.scene.initSSAOLitBindGroup(shaderMock)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 4. InitTextureView error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitTextureView error panics", func() {
 		ssaoGroupIdx := 6
 		ssaoDecl := shader.Annotation{
@@ -6074,7 +5799,6 @@ func (suite *sceneImplTest) TestInitSSAOLitBindGroup() {
 		suite.Panics(func() { suite.scene.initSSAOLitBindGroup(shaderMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 5. InitSampler error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitSampler error panics", func() {
 		ssaoGroupIdx := 6
 		ssaoDecl := shader.Annotation{
@@ -6108,7 +5832,6 @@ func (suite *sceneImplTest) TestInitSSAOLitBindGroup() {
 		suite.Panics(func() { suite.scene.initSSAOLitBindGroup(shaderMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 6. InitBindGroup error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitBindGroup error panics", func() {
 		ssaoGroupIdx := 6
 		ssaoDecl := shader.Annotation{
@@ -6145,7 +5868,6 @@ func (suite *sceneImplTest) TestInitSSAOLitBindGroup() {
 }
 
 func (suite *sceneImplTest) TestInitGBuffer() {
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. nil GBufferHandler returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("nil GBufferHandler returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		lhMock.EXPECT().GBufferHandler().Return(nil).Once()
@@ -6153,7 +5875,6 @@ func (suite *sceneImplTest) TestInitGBuffer() {
 		suite.scene.initGBuffer()
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. zero screen width returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("zero screen width returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		gbufMock := light_mocks.NewMockGBufferHandler(suite.T())
@@ -6164,7 +5885,6 @@ func (suite *sceneImplTest) TestInitGBuffer() {
 		suite.scene.initGBuffer()
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 3. zero screen height returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("zero screen height returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		gbufMock := light_mocks.NewMockGBufferHandler(suite.T())
@@ -6175,7 +5895,6 @@ func (suite *sceneImplTest) TestInitGBuffer() {
 		suite.scene.initGBuffer()
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 4. CreateGBufferTextures error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("CreateGBufferTextures error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		gbufMock := light_mocks.NewMockGBufferHandler(suite.T())
@@ -6190,7 +5909,6 @@ func (suite *sceneImplTest) TestInitGBuffer() {
 		suite.Panics(func() { suite.scene.initGBuffer() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 5. RegisterGBufferPipeline static error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("RegisterGBufferPipeline static error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		gbufMock := light_mocks.NewMockGBufferHandler(suite.T())
@@ -6214,7 +5932,6 @@ func (suite *sceneImplTest) TestInitGBuffer() {
 		suite.Panics(func() { suite.scene.initGBuffer() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 6. RegisterGBufferPipeline skinned error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("RegisterGBufferPipeline skinned error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		gbufMock := light_mocks.NewMockGBufferHandler(suite.T())
@@ -6239,7 +5956,6 @@ func (suite *sceneImplTest) TestInitGBuffer() {
 		suite.Panics(func() { suite.scene.initGBuffer() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 7. happy path completes all steps Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("happy path completes all steps", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		gbufMock := light_mocks.NewMockGBufferHandler(suite.T())
@@ -6269,7 +5985,6 @@ func (suite *sceneImplTest) TestInitGBuffer() {
 }
 
 func (suite *sceneImplTest) TestInitContactShadows() {
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. nil csHandler returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("nil csHandler returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		lhMock.EXPECT().ContactShadowHandler().Return(nil).Once()
@@ -6277,7 +5992,6 @@ func (suite *sceneImplTest) TestInitContactShadows() {
 		suite.scene.initContactShadows()
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. nil GBufferHandler returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("nil GBufferHandler returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		csMock := light_mocks.NewMockContactShadowHandler(suite.T())
@@ -6287,7 +6001,6 @@ func (suite *sceneImplTest) TestInitContactShadows() {
 		suite.scene.initContactShadows()
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 3. GBufferHandler not enabled returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("GBufferHandler not enabled returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		csMock := light_mocks.NewMockContactShadowHandler(suite.T())
@@ -6299,7 +6012,6 @@ func (suite *sceneImplTest) TestInitContactShadows() {
 		suite.scene.initContactShadows()
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 4. zero screen width returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("zero screen width returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		csMock := light_mocks.NewMockContactShadowHandler(suite.T())
@@ -6313,7 +6025,6 @@ func (suite *sceneImplTest) TestInitContactShadows() {
 		suite.scene.initContactShadows()
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 5. zero screen height returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("zero screen height returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		csMock := light_mocks.NewMockContactShadowHandler(suite.T())
@@ -6327,7 +6038,6 @@ func (suite *sceneImplTest) TestInitContactShadows() {
 		suite.scene.initContactShadows()
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 6. CreateContactShadowTextures error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("CreateContactShadowTextures error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		csMock := light_mocks.NewMockContactShadowHandler(suite.T())
@@ -6343,7 +6053,6 @@ func (suite *sceneImplTest) TestInitContactShadows() {
 		suite.Panics(func() { suite.scene.initContactShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 7. CreateLinearSampler error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("CreateLinearSampler error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		csMock := light_mocks.NewMockContactShadowHandler(suite.T())
@@ -6363,7 +6072,6 @@ func (suite *sceneImplTest) TestInitContactShadows() {
 		suite.Panics(func() { suite.scene.initContactShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 8. RegisterPipelines error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("RegisterPipelines error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		csMock := light_mocks.NewMockContactShadowHandler(suite.T())
@@ -6385,7 +6093,6 @@ func (suite *sceneImplTest) TestInitContactShadows() {
 		suite.Panics(func() { suite.scene.initContactShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 9. InitBindGroup error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitBindGroup error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		csMock := light_mocks.NewMockContactShadowHandler(suite.T())
@@ -6413,7 +6120,6 @@ func (suite *sceneImplTest) TestInitContactShadows() {
 		suite.Panics(func() { suite.scene.initContactShadows() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 10. happy path completes Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("happy path completes", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		csMock := light_mocks.NewMockContactShadowHandler(suite.T())
@@ -6443,19 +6149,16 @@ func (suite *sceneImplTest) TestInitContactShadows() {
 	})
 }
 func (suite *sceneImplTest) TestInitLightBindGroup() {
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. nil fragmentShader returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("nil fragmentShader returns early", func() {
 		suite.scene.initLightBindGroup(nil)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. no declarations Ã¢â‚¬â€ lightGroup stays -1 returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("no declarations returns early", func() {
 		shaderMock := shader_mocks.NewMockShader(suite.T())
 		shaderMock.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		suite.scene.initLightBindGroup(shaderMock)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 3. declaration with wrong type does not match Ã¢â‚¬â€ returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("declaration wrong type does not match returns early", func() {
 		shaderMock := shader_mocks.NewMockShader(suite.T())
 		lightGroupIdx := 3
@@ -6468,7 +6171,6 @@ func (suite *sceneImplTest) TestInitLightBindGroup() {
 		suite.scene.initLightBindGroup(shaderMock)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 4. matching declaration, no storage entries Ã¢â‚¬â€ InitBindGroup succeeds Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("no storage buffer entries InitBindGroup succeeds", func() {
 		shaderMock := shader_mocks.NewMockShader(suite.T())
 		lightGroupIdx := 3
@@ -6493,7 +6195,6 @@ func (suite *sceneImplTest) TestInitLightBindGroup() {
 		suite.scene.initLightBindGroup(shaderMock)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 5. ReadOnlyStorage entry populates sizeOverrides Ã¢â‚¬â€ InitBindGroup succeeds Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("storage buffer entry populates sizeOverrides InitBindGroup succeeds", func() {
 		shaderMock := shader_mocks.NewMockShader(suite.T())
 		lightGroupIdx := 3
@@ -6520,7 +6221,6 @@ func (suite *sceneImplTest) TestInitLightBindGroup() {
 		suite.scene.initLightBindGroup(shaderMock)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 6. InitBindGroup error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitBindGroup error panics", func() {
 		shaderMock := shader_mocks.NewMockShader(suite.T())
 		lightGroupIdx := 3
@@ -6545,10 +6245,6 @@ func (suite *sceneImplTest) TestInitLightBindGroup() {
 }
 
 func (suite *sceneImplTest) TestInitShadowMap() {
-	// newBaseHandlers creates a LightingHandler mock and ShadowHandler mock with the
-	// standard resolution/cascade count wired up. Both ShadowMapResolution and
-	// CascadeCount expectations are set to Once() so they are satisfied on the single
-	// call path at the top of initShadowMap.
 	newBaseHandlers := func() (*light_mocks.MockLightingHandler, *light_mocks.MockShadowHandler) {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		shMock := light_mocks.NewMockShadowHandler(suite.T())
@@ -6558,9 +6254,6 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		return lhMock, shMock
 	}
 
-	// setupThroughCascades wires the renderer and shader mocks for the standard
-	// happy path through the CSM cascade BGP loop (maxDim=0, cascades=2, res=1024,
-	// MaxGPULights=1, tileSize=256). Returns the two cascade bgp mocks.
 	setupThroughCascades := func(lhMock *light_mocks.MockLightingHandler, shMock *light_mocks.MockShadowHandler, shaderMock *shader_mocks.MockShader) {
 		suite.rendererMock.EXPECT().MaxTextureDimension2D().Return(uint32(0)).Once()
 		suite.rendererMock.EXPECT().CreateShadowDepthTexture(2048, 1024).Return(nil, nil, nil).Once()
@@ -6582,8 +6275,6 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		shMock.EXPECT().LightShadowTileSize().Return(256).Once()
 	}
 
-	// setupThroughStaticPipelines wires the spot atlas (6 slots, cols=3, rows=2,
-	// spotAtlasW=768, spotAtlasH=512) and the 3 static shadow depth pipelines.
 	setupThroughStaticPipelines := func(shMock *light_mocks.MockShadowHandler) {
 		shMock.EXPECT().SetLightShadowAtlasSlots(6).Once()
 		shMock.EXPECT().SetLightShadowAtlasCols(3).Once()
@@ -6601,22 +6292,18 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		shMock.EXPECT().SetPipelineKey(mock.Anything, mock.Anything).Times(3)
 	}
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. nil shadowVertShader returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("nil shadowVertShader returns early", func() {
 		suite.scene.initShadowMap(nil, nil)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. atlasW exceeds maxDim panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("atlasW exceeds maxDim panics", func() {
 		lhMock, _ := newBaseHandlers()
-		// atlasW=2*1024=2048, maxDim=1024 Ã¢â€ â€™ maxDim>0 && atlasW>maxDim Ã¢â€ â€™ panic
 		suite.rendererMock.EXPECT().MaxTextureDimension2D().Return(uint32(1024)).Once()
 		shaderMock := shader_mocks.NewMockShader(suite.T())
 		suite.scene.lightHandler = lhMock
 		suite.Panics(func() { suite.scene.initShadowMap(shaderMock, nil) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 3. CreateShadowDepthTexture CSM error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("CreateShadowDepthTexture CSM error panics", func() {
 		lhMock, _ := newBaseHandlers()
 		shaderMock := shader_mocks.NewMockShader(suite.T())
@@ -6626,7 +6313,6 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		suite.Panics(func() { suite.scene.initShadowMap(shaderMock, nil) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 4. CreateComparisonSampler error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("CreateComparisonSampler error panics", func() {
 		lhMock, shMock := newBaseHandlers()
 		shaderMock := shader_mocks.NewMockShader(suite.T())
@@ -6639,7 +6325,6 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		suite.Panics(func() { suite.scene.initShadowMap(shaderMock, nil) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 5. InitBindGroup CSM cascade error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitBindGroup CSM cascade error panics", func() {
 		lhMock, shMock := newBaseHandlers()
 		shaderMock := shader_mocks.NewMockShader(suite.T())
@@ -6659,7 +6344,6 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		suite.Panics(func() { suite.scene.initShadowMap(shaderMock, nil) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 6. uniform buffer entry populates sizeOverrides Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("uniform buffer entry populates sizeOverrides", func() {
 		lhMock, shMock := newBaseHandlers()
 		shaderMock := shader_mocks.NewMockShader(suite.T())
@@ -6696,11 +6380,9 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		suite.scene.initShadowMap(shaderMock, nil)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 7. maxDim > safeMaxTextureDim clamps effectiveMaxDim Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("maxDim greater than safeMaxTextureDim clamps effectiveMaxDim", func() {
 		lhMock, shMock := newBaseHandlers()
 		shaderMock := shader_mocks.NewMockShader(suite.T())
-		// 99999 > 8192 Ã¢â€ â€™ effectiveMaxDim clamped to 8192; atlasW=2048 Ã¢â€°Â¤ 99999 so no panic
 		suite.rendererMock.EXPECT().MaxTextureDimension2D().Return(uint32(99999)).Once()
 		suite.rendererMock.EXPECT().CreateShadowDepthTexture(2048, 1024).Return(nil, nil, nil).Once()
 		shMock.EXPECT().SetCSMAtlasTexture(mock.Anything).Once()
@@ -6718,14 +6400,12 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		shMock.EXPECT().Bgp("csm_data_1").Return(bgp1).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(bgp1, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 		lhMock.EXPECT().MaxGPULights().Return(1).Once()
-		// effectiveMaxDim clamped to 8192; maxTilesPerAxis=32; cols=3, rows=2, capacity=6
 		shMock.EXPECT().LightShadowTileSize().Return(256).Once()
 		setupThroughStaticPipelines(shMock)
 		suite.scene.lightHandler = lhMock
 		suite.scene.initShadowMap(shaderMock, nil)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 8. maxTilesPerAxis < 1 clamps to 1 and rows > maxTilesPerAxis clamps Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("large tileSize clamps maxTilesPerAxis to 1 and rows to maxTilesPerAxis", func() {
 		lhMock, shMock := newBaseHandlers()
 		shaderMock := shader_mocks.NewMockShader(suite.T())
@@ -6746,9 +6426,6 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		shMock.EXPECT().Bgp("csm_data_1").Return(bgp1).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(bgp1, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 		lhMock.EXPECT().MaxGPULights().Return(1).Once()
-		// tileSize=16384 > effectiveMaxDim=8192 Ã¢â€ â€™ maxTilesPerAxis=0 Ã¢â€ â€™ clamped to 1
-		// totalSlots=6, cols=min(3,1)=1, rows=ceil(6/1)=6 Ã¢â€ â€™ 6>1 Ã¢â€ â€™ rows clamped to 1
-		// atlasCapacity=1, spotAtlasW=16384, spotAtlasH=16384
 		shMock.EXPECT().LightShadowTileSize().Return(16384).Once()
 		shMock.EXPECT().SetLightShadowAtlasSlots(1).Once()
 		shMock.EXPECT().SetLightShadowAtlasCols(1).Once()
@@ -6765,7 +6442,6 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		suite.scene.initShadowMap(shaderMock, nil)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 9. CreateShadowDepthTexture spot error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("CreateShadowDepthTexture spot error panics", func() {
 		lhMock, shMock := newBaseHandlers()
 		shaderMock := shader_mocks.NewMockShader(suite.T())
@@ -6777,7 +6453,6 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		suite.Panics(func() { suite.scene.initShadowMap(shaderMock, nil) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 10. InitBindGroup spot slot error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitBindGroup spot slot error panics", func() {
 		lhMock, shMock := newBaseHandlers()
 		shaderMock := shader_mocks.NewMockShader(suite.T())
@@ -6795,7 +6470,6 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		suite.Panics(func() { suite.scene.initShadowMap(shaderMock, nil) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 11. RegisterShadowDepthPipeline static error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("RegisterShadowDepthPipeline static error panics", func() {
 		lhMock, shMock := newBaseHandlers()
 		shaderMock := shader_mocks.NewMockShader(suite.T())
@@ -6817,7 +6491,6 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		suite.Panics(func() { suite.scene.initShadowMap(shaderMock, nil) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 12. RegisterShadowDepthPipeline skinned error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("RegisterShadowDepthPipeline skinned error panics", func() {
 		lhMock, shMock := newBaseHandlers()
 		shaderMock := shader_mocks.NewMockShader(suite.T())
@@ -6829,7 +6502,6 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		suite.Panics(func() { suite.scene.initShadowMap(shaderMock, skinnedMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 13. full happy path nil skinned shader Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("full happy path nil skinned shader", func() {
 		lhMock, shMock := newBaseHandlers()
 		shaderMock := shader_mocks.NewMockShader(suite.T())
@@ -6839,7 +6511,6 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		suite.scene.initShadowMap(shaderMock, nil)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 14. full happy path with skinned shader Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("full happy path with skinned shader", func() {
 		lhMock, shMock := newBaseHandlers()
 		shaderMock := shader_mocks.NewMockShader(suite.T())
@@ -6854,9 +6525,6 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 }
 
 func (suite *sceneImplTest) TestInitCSMShadowLitBindGroup() {
-	// makeReadyShader builds lhMock + shMock with non-nil atlas/sampler returns and
-	// a fragMock whose Declarations() returns decls. All expectations use Maybe() so
-	// they tolerate any call count (0Ã¢â‚¬â€œN) across the two Declarations loops.
 	makeReadyShader := func(decls []shader.Annotation) (*light_mocks.MockLightingHandler, *light_mocks.MockShadowHandler, *shader_mocks.MockShader) {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		shMock := light_mocks.NewMockShadowHandler(suite.T())
@@ -6868,7 +6536,6 @@ func (suite *sceneImplTest) TestInitCSMShadowLitBindGroup() {
 		return lhMock, shMock, fragMock
 	}
 
-	// makeProviderDecl returns the standard provider annotation that resolves shadowGroup = 4.
 	makeProviderDecl := func() shader.Annotation {
 		grp := 4
 		return shader.Annotation{
@@ -6878,8 +6545,6 @@ func (suite *sceneImplTest) TestInitCSMShadowLitBindGroup() {
 		}
 	}
 
-	// setupBGP wires the BGP expectations required for every test that passes the
-	// shadowGroup guard. Returns the bgpMock so callers can add further expectations.
 	setupBGP := func(shMock *light_mocks.MockShadowHandler, fragMock *shader_mocks.MockShader) *bgp_mocks.MockBindGroupProvider {
 		bgpMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		shMock.EXPECT().SetBgp("csm_shadow_lit", mock.Anything).Once()
@@ -6890,12 +6555,10 @@ func (suite *sceneImplTest) TestInitCSMShadowLitBindGroup() {
 		return bgpMock
 	}
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. nil litFragmentShader returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("nil litFragmentShader returns early", func() {
 		suite.NotPanics(func() { suite.scene.initCSMShadowLitBindGroup(nil) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. CSMAtlasTextureView nil returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("CSMAtlasTextureView nil returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		shMock := light_mocks.NewMockShadowHandler(suite.T())
@@ -6906,7 +6569,6 @@ func (suite *sceneImplTest) TestInitCSMShadowLitBindGroup() {
 		suite.NotPanics(func() { suite.scene.initCSMShadowLitBindGroup(fragMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 3. ComparisonSampler nil returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("ComparisonSampler nil returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		shMock := light_mocks.NewMockShadowHandler(suite.T())
@@ -6918,14 +6580,12 @@ func (suite *sceneImplTest) TestInitCSMShadowLitBindGroup() {
 		suite.NotPanics(func() { suite.scene.initCSMShadowLitBindGroup(fragMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 4. no provider declaration Ã¢â‚¬â€ shadowGroup stays -1 returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("no provider declaration shadowGroup negative returns early", func() {
 		lhMock, _, fragMock := makeReadyShader([]shader.Annotation{})
 		suite.scene.lightHandler = lhMock
 		suite.NotPanics(func() { suite.scene.initCSMShadowLitBindGroup(fragMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 5. wrong provider type and wrong arg Ã¢â‚¬â€ shadowGroup stays -1 Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("wrong provider type and wrong arg shadowGroup negative returns early", func() {
 		grp := 4
 		wrongTypeDecl := shader.Annotation{
@@ -6943,7 +6603,6 @@ func (suite *sceneImplTest) TestInitCSMShadowLitBindGroup() {
 		suite.NotPanics(func() { suite.scene.initCSMShadowLitBindGroup(fragMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 6. LightShadowAtlasView nil Ã¢â‚¬â€ binding 3 skipped Ã¢â‚¬â€ contact shadow fallback Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("LightShadowAtlasView nil contact shadow nil fallback succeeds", func() {
 		lhMock, shMock, fragMock := makeReadyShader([]shader.Annotation{makeProviderDecl()})
 		bgpMock := setupBGP(shMock, fragMock)
@@ -6956,7 +6615,6 @@ func (suite *sceneImplTest) TestInitCSMShadowLitBindGroup() {
 		suite.NotPanics(func() { suite.scene.initCSMShadowLitBindGroup(fragMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 7. LightShadowAtlasView non-nil Ã¢â‚¬â€ SetTextureView(3) called Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("LightShadowAtlasView non-nil binding 3 set", func() {
 		lhMock, shMock, fragMock := makeReadyShader([]shader.Annotation{makeProviderDecl()})
 		bgpMock := setupBGP(shMock, fragMock)
@@ -6970,7 +6628,6 @@ func (suite *sceneImplTest) TestInitCSMShadowLitBindGroup() {
 		suite.NotPanics(func() { suite.scene.initCSMShadowLitBindGroup(fragMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 8. contact shadow handler nil Ã¢â‚¬â€ InitTextureView error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("contact shadow handler nil InitTextureView error panics", func() {
 		lhMock, shMock, fragMock := makeReadyShader([]shader.Annotation{makeProviderDecl()})
 		bgpMock := setupBGP(shMock, fragMock)
@@ -6981,7 +6638,6 @@ func (suite *sceneImplTest) TestInitCSMShadowLitBindGroup() {
 		suite.Panics(func() { suite.scene.initCSMShadowLitBindGroup(fragMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 9. contact shadow handler nil Ã¢â‚¬â€ InitSampler error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("contact shadow handler nil InitSampler error panics", func() {
 		lhMock, shMock, fragMock := makeReadyShader([]shader.Annotation{makeProviderDecl()})
 		bgpMock := setupBGP(shMock, fragMock)
@@ -6993,7 +6649,6 @@ func (suite *sceneImplTest) TestInitCSMShadowLitBindGroup() {
 		suite.Panics(func() { suite.scene.initCSMShadowLitBindGroup(fragMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 10. contact shadow handler Enabled false Ã¢â‚¬â€ fallback path Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("contact shadow handler enabled false fallback path succeeds", func() {
 		lhMock, shMock, fragMock := makeReadyShader([]shader.Annotation{makeProviderDecl()})
 		bgpMock := setupBGP(shMock, fragMock)
@@ -7008,7 +6663,6 @@ func (suite *sceneImplTest) TestInitCSMShadowLitBindGroup() {
 		suite.NotPanics(func() { suite.scene.initCSMShadowLitBindGroup(fragMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 11. contact shadow handler TextureView nil Ã¢â‚¬â€ fallback path Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("contact shadow handler TextureView nil fallback path succeeds", func() {
 		lhMock, shMock, fragMock := makeReadyShader([]shader.Annotation{makeProviderDecl()})
 		bgpMock := setupBGP(shMock, fragMock)
@@ -7024,7 +6678,6 @@ func (suite *sceneImplTest) TestInitCSMShadowLitBindGroup() {
 		suite.NotPanics(func() { suite.scene.initCSMShadowLitBindGroup(fragMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 12. contact shadow handler LinearSampler nil Ã¢â‚¬â€ fallback path Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("contact shadow handler LinearSampler nil fallback path succeeds", func() {
 		lhMock, shMock, fragMock := makeReadyShader([]shader.Annotation{makeProviderDecl()})
 		bgpMock := setupBGP(shMock, fragMock)
@@ -7041,7 +6694,6 @@ func (suite *sceneImplTest) TestInitCSMShadowLitBindGroup() {
 		suite.NotPanics(func() { suite.scene.initCSMShadowLitBindGroup(fragMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 13. contact shadow handler all OK Ã¢â‚¬â€ SetTextureView(5) + SetSampler(6) called Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("contact shadow handler all OK bindings 5 and 6 set", func() {
 		lhMock, shMock, fragMock := makeReadyShader([]shader.Annotation{makeProviderDecl()})
 		bgpMock := setupBGP(shMock, fragMock)
@@ -7058,7 +6710,6 @@ func (suite *sceneImplTest) TestInitCSMShadowLitBindGroup() {
 		suite.NotPanics(func() { suite.scene.initCSMShadowLitBindGroup(fragMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 14. sizeOverrides: AnnotationArgCSMData match sets override Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("sizeOverrides CSMData match sets override", func() {
 		grp := 4
 		binding := 2
@@ -7081,7 +6732,6 @@ func (suite *sceneImplTest) TestInitCSMShadowLitBindGroup() {
 		suite.NotPanics(func() { suite.scene.initCSMShadowLitBindGroup(fragMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 15. sizeOverrides: array<light_shadow_entry> stripped + LightShadowAtlasSlots called Ã¢â€â‚¬
 	suite.Run("sizeOverrides array light_shadow_entry stripped and LightShadowAtlasSlots called", func() {
 		grp := 4
 		binding := 4
@@ -7105,7 +6755,6 @@ func (suite *sceneImplTest) TestInitCSMShadowLitBindGroup() {
 		suite.NotPanics(func() { suite.scene.initCSMShadowLitBindGroup(fragMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 16. sizeOverrides: decl with nil Group is skipped Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("sizeOverrides decl with nil Group is skipped", func() {
 		binding := 2
 		nilGroupDecl := shader.Annotation{
@@ -7127,7 +6776,6 @@ func (suite *sceneImplTest) TestInitCSMShadowLitBindGroup() {
 		suite.NotPanics(func() { suite.scene.initCSMShadowLitBindGroup(fragMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 17. sizeOverrides: decl with wrong group is skipped Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("sizeOverrides decl with wrong group is skipped", func() {
 		wrongGrp := 99
 		binding := 2
@@ -7150,7 +6798,6 @@ func (suite *sceneImplTest) TestInitCSMShadowLitBindGroup() {
 		suite.NotPanics(func() { suite.scene.initCSMShadowLitBindGroup(fragMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 18. sizeOverrides: decl with nil Binding is skipped Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("sizeOverrides decl with nil Binding is skipped", func() {
 		grp := 4
 		nilBindingDecl := shader.Annotation{
@@ -7172,7 +6819,6 @@ func (suite *sceneImplTest) TestInitCSMShadowLitBindGroup() {
 		suite.NotPanics(func() { suite.scene.initCSMShadowLitBindGroup(fragMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 19. InitBindGroup error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitBindGroup error panics", func() {
 		lhMock, shMock, fragMock := makeReadyShader([]shader.Annotation{makeProviderDecl()})
 		bgpMock := setupBGP(shMock, fragMock)
@@ -7185,7 +6831,6 @@ func (suite *sceneImplTest) TestInitCSMShadowLitBindGroup() {
 		suite.Panics(func() { suite.scene.initCSMShadowLitBindGroup(fragMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 20. full happy path Ã¢â‚¬â€ all branches exercised together Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("full happy path all branches exercised", func() {
 		grp := 4
 		binding0 := 2
@@ -7267,19 +6912,16 @@ func (suite *sceneImplTest) TestInitLightCullResources() {
 		return lhMock, lightsBGPMock, cullBGPMock, tileBGPMock, cullShaderMock, litShaderMock
 	}
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. cullComputeShader nil Ã¢â€ â€™ returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("cullComputeShader nil returns early", func() {
 		litMock := shader_mocks.NewMockShader(suite.T())
 		suite.scene.initLightCullResources(nil, litMock, 800, 600)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. litFragmentShader nil Ã¢â€ â€™ returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("litFragmentShader nil returns early", func() {
 		cullMock := shader_mocks.NewMockShader(suite.T())
 		suite.scene.initLightCullResources(cullMock, nil, 800, 600)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 3. lightsBGP.Buffer(1) nil Ã¢â€ â€™ returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("lightsBGP Buffer(1) nil returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		lightsBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
@@ -7291,7 +6933,6 @@ func (suite *sceneImplTest) TestInitLightCullResources() {
 		suite.NotPanics(func() { suite.scene.initLightCullResources(cullMock, litMock, 800, 600) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 4. InitBindGroup for cullBGP error Ã¢â€ â€™ panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitBindGroup for cullBGP error panics", func() {
 		lhMock, _, cullBGPMock, _, cullShaderMock, litShaderMock := makeBase()
 		suite.scene.lightHandler = lhMock
@@ -7299,7 +6940,6 @@ func (suite *sceneImplTest) TestInitLightCullResources() {
 		suite.Panics(func() { suite.scene.initLightCullResources(cullShaderMock, litShaderMock, 800, 600) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 5. RegisterPipelines error Ã¢â€ â€™ panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("RegisterPipelines error panics", func() {
 		lhMock, _, cullBGPMock, _, cullShaderMock, litShaderMock := makeBase()
 		suite.scene.lightHandler = lhMock
@@ -7308,7 +6948,6 @@ func (suite *sceneImplTest) TestInitLightCullResources() {
 		suite.Panics(func() { suite.scene.initLightCullResources(cullShaderMock, litShaderMock, 800, 600) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 6. no matching tile decl (empty declarations) Ã¢â€ â€™ panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("no matching tile decl empty declarations panics", func() {
 		lhMock, _, cullBGPMock, _, cullShaderMock, _ := makeBase()
 		litShaderMock := shader_mocks.NewMockShader(suite.T())
@@ -7319,7 +6958,6 @@ func (suite *sceneImplTest) TestInitLightCullResources() {
 		suite.Panics(func() { suite.scene.initLightCullResources(cullShaderMock, litShaderMock, 800, 600) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 7. decl with wrong type is skipped Ã¢â€ â€™ panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("decl with wrong type is skipped panics", func() {
 		lhMock, _, cullBGPMock, _, cullShaderMock, _ := makeBase()
 		grp := 5
@@ -7336,7 +6974,6 @@ func (suite *sceneImplTest) TestInitLightCullResources() {
 		suite.Panics(func() { suite.scene.initLightCullResources(cullShaderMock, litShaderMock, 800, 600) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 8. decl with nil Group is skipped Ã¢â€ â€™ panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("decl with nil Group is skipped panics", func() {
 		lhMock, _, cullBGPMock, _, cullShaderMock, _ := makeBase()
 		nilGrpDecl := shader.Annotation{
@@ -7352,7 +6989,6 @@ func (suite *sceneImplTest) TestInitLightCullResources() {
 		suite.Panics(func() { suite.scene.initLightCullResources(cullShaderMock, litShaderMock, 800, 600) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 9. InitBindGroup for tileBGP error Ã¢â€ â€™ panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitBindGroup for tileBGP error panics", func() {
 		lhMock, _, cullBGPMock, tileBGPMock, cullShaderMock, litShaderMock := makeBase()
 		suite.scene.lightHandler = lhMock
@@ -7362,7 +6998,6 @@ func (suite *sceneImplTest) TestInitLightCullResources() {
 		suite.Panics(func() { suite.scene.initLightCullResources(cullShaderMock, litShaderMock, 800, 600) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 10. cullBGP.Buffer(2) non-nil Ã¢â€ â€™ tileBGP.SetBuffer(1) called Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("cullBGP Buffer(2) non-nil tileBGP SetBuffer(1) called", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		lightsBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
@@ -7406,7 +7041,6 @@ func (suite *sceneImplTest) TestInitLightCullResources() {
 		suite.NotPanics(func() { suite.scene.initLightCullResources(cullShaderMock, litShaderMock, 800, 600) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 11. cullBGP.Buffer(3) non-nil Ã¢â€ â€™ tileBGP.SetBuffer(2) called Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("cullBGP Buffer(3) non-nil tileBGP SetBuffer(2) called", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		lightsBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
@@ -7450,7 +7084,6 @@ func (suite *sceneImplTest) TestInitLightCullResources() {
 		suite.NotPanics(func() { suite.scene.initLightCullResources(cullShaderMock, litShaderMock, 800, 600) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 12. full happy path Ã¢â‚¬â€ both Buffer(2) and Buffer(3) nil Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("full happy path both Buffer(2) and Buffer(3) nil", func() {
 		lhMock, _, cullBGPMock, tileBGPMock, cullShaderMock, litShaderMock := makeBase()
 		suite.scene.lightHandler = lhMock
@@ -7518,7 +7151,6 @@ func (suite *sceneImplTest) TestInitSSR() {
 		return lhMock, ssrMock, gbMock, compMock
 	}
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. ssrHandler nil returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("ssrHandler nil returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		lhMock.EXPECT().SSRHandler().Return(nil)
@@ -7528,7 +7160,6 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.NotPanics(func() { suite.scene.initSSR() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. gbHandler nil returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("gbHandler nil returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		ssrMock := light_mocks.NewMockSSRHandler(suite.T())
@@ -7539,7 +7170,6 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.NotPanics(func() { suite.scene.initSSR() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 3. compHandler nil returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("compHandler nil returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		ssrMock := light_mocks.NewMockSSRHandler(suite.T())
@@ -7551,7 +7181,6 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.NotPanics(func() { suite.scene.initSSR() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 4. gbHandler not enabled returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("gbHandler not enabled returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		ssrMock := light_mocks.NewMockSSRHandler(suite.T())
@@ -7566,7 +7195,6 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.NotPanics(func() { suite.scene.initSSR() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 5. compHandler not enabled returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("compHandler not enabled returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		ssrMock := light_mocks.NewMockSSRHandler(suite.T())
@@ -7581,7 +7209,6 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.NotPanics(func() { suite.scene.initSSR() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 6. zero screenWidth returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("zero screenWidth returns early", func() {
 		lhMock, _, _, _ := makeReadyHandlers()
 		suite.scene.lightHandler = lhMock
@@ -7590,7 +7217,6 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.NotPanics(func() { suite.scene.initSSR() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 7. zero screenHeight returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("zero screenHeight returns early", func() {
 		lhMock, _, _, _ := makeReadyHandlers()
 		suite.scene.lightHandler = lhMock
@@ -7599,7 +7225,6 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.NotPanics(func() { suite.scene.initSSR() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 8. halfW clamped to 1 when screenWidth=1 Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("halfW clamped to 1 when screenWidth=1", func() {
 		lhMock, _, _, _ := makeReadyHandlers()
 		suite.scene.lightHandler = lhMock
@@ -7610,7 +7235,6 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.Panics(func() { suite.scene.initSSR() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 9. halfH clamped to 1 when screenHeight=1 Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("halfH clamped to 1 when screenHeight=1", func() {
 		lhMock, _, _, _ := makeReadyHandlers()
 		suite.scene.lightHandler = lhMock
@@ -7621,7 +7245,6 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.Panics(func() { suite.scene.initSSR() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 10. CreateSSRTextures error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("CreateSSRTextures error panics", func() {
 		lhMock, _, _, _ := makeReadyHandlers()
 		suite.scene.lightHandler = lhMock
@@ -7632,7 +7255,6 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.Panics(func() { suite.scene.initSSR() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 11. CreateLinearSampler error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("CreateLinearSampler error panics", func() {
 		lhMock, ssrMock, _, _ := makeReadyHandlers()
 		suite.scene.lightHandler = lhMock
@@ -7647,7 +7269,6 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.Panics(func() { suite.scene.initSSR() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 12. CreateHiZTextures error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("CreateHiZTextures error panics", func() {
 		lhMock, ssrMock, _, _ := makeReadyHandlers()
 		suite.scene.lightHandler = lhMock
@@ -7665,7 +7286,6 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.Panics(func() { suite.scene.initSSR() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 13. RegisterPipelines hizInit error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("RegisterPipelines hizInit error panics", func() {
 		lhMock, _, _, _ := makeFullBase(1)
 		suite.scene.lightHandler = lhMock
@@ -7673,7 +7293,6 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.Panics(func() { suite.scene.initSSR() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 14. InitBindGroup hizInitBGP error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitBindGroup hizInitBGP error panics", func() {
 		lhMock, ssrMock, _, _ := makeFullBase(1)
 		suite.scene.lightHandler = lhMock
@@ -7684,7 +7303,6 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.Panics(func() { suite.scene.initSSR() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 15. RegisterPipelines hizDown error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("RegisterPipelines hizDown error panics", func() {
 		lhMock, ssrMock, _, _ := makeFullBase(1)
 		suite.scene.lightHandler = lhMock
@@ -7697,7 +7315,6 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.Panics(func() { suite.scene.initSSR() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 16. InitBindGroup in mip loop error panics (mipCount=2) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitBindGroup in mip loop error panics", func() {
 		lhMock, ssrMock, _, _ := makeFullBase(2)
 		suite.scene.lightHandler = lhMock
@@ -7713,7 +7330,6 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.Panics(func() { suite.scene.initSSR() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 17. mip loop skipped when mipCount=1 Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("mip loop skipped when mipCount=1", func() {
 		lhMock, ssrMock, _, _ := makeFullBase(1)
 		ssrBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
@@ -7730,7 +7346,6 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.NotPanics(func() { suite.scene.initSSR() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 18. RegisterPipelines ssrCompute error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("RegisterPipelines ssrCompute error panics", func() {
 		lhMock, ssrMock, _, _ := makeFullBase(1)
 		suite.scene.lightHandler = lhMock
@@ -7745,7 +7360,6 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.Panics(func() { suite.scene.initSSR() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 19. InitBindGroup ssrBGP error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitBindGroup ssrBGP error panics", func() {
 		lhMock, ssrMock, _, _ := makeFullBase(1)
 		ssrBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
@@ -7766,7 +7380,6 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.Panics(func() { suite.scene.initSSR() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 20. full happy path mipCount=1 Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("full happy path mipCount=1", func() {
 		lhMock, ssrMock, _, _ := makeFullBase(1)
 		ssrBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
@@ -7789,7 +7402,6 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.NotPanics(func() { suite.scene.initSSR() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 21. full happy path mipCount=2 Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("full happy path mipCount=2", func() {
 		lhMock, ssrMock, _, _ := makeFullBase(2)
 		ssrBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
@@ -7830,6 +7442,7 @@ func (suite *sceneImplTest) TestInitComposition() {
 
 		suite.scene.screenWidth = 800
 		suite.scene.screenHeight = 600
+		suite.scene.buildInjectionMap()
 
 		lhMock.EXPECT().CompositionHandler().Return(chMock).Maybe()
 		lhMock.EXPECT().SSRHandler().Return(ssrMock).Maybe()
@@ -7865,11 +7478,23 @@ func (suite *sceneImplTest) TestInitComposition() {
 		bgpMock.EXPECT().SetTextureView(0, mock.Anything).Maybe()
 		bgpMock.EXPECT().SetSampler(1, mock.Anything).Maybe()
 		bgpMock.EXPECT().SetSampler(3, mock.Anything).Maybe()
+		bgpMock.EXPECT().SetBuffer(mock.Anything, mock.Anything).Maybe()
+
+		suite.rendererMock.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).Return((*wgpu.Buffer)(nil), nil).Maybe()
+		suite.rendererMock.EXPECT().WriteRawBuffer(mock.Anything, mock.Anything, mock.Anything).Maybe()
+		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Maybe()
+		chMock.EXPECT().Exposure().Return(float32(1.0)).Maybe()
+		chMock.EXPECT().SetExposureBuffer(mock.Anything).Maybe()
+		chMock.EXPECT().HDRTextureView().Return(nil).Maybe()
+		lumBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		lumBGPMock.EXPECT().SetTextureView(mock.Anything, mock.Anything).Maybe()
+		lumBGPMock.EXPECT().SetBuffer(mock.Anything, mock.Anything).Maybe()
+		chMock.EXPECT().Bgp("luminance_compute").Return(lumBGPMock).Maybe()
+		suite.rendererMock.EXPECT().InitBindGroup(lumBGPMock, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 		return lhMock, chMock, ssrMock, bgpMock
 	}
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. nil CompositionHandler returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("nil CompositionHandler returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		lhMock.EXPECT().CompositionHandler().Return(nil).Once()
@@ -7877,7 +7502,6 @@ func (suite *sceneImplTest) TestInitComposition() {
 		suite.NotPanics(func() { suite.scene.initComposition() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. zero screenWidth returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("zero screenWidth returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		chMock := light_mocks.NewMockCompositionHandler(suite.T())
@@ -7888,7 +7512,6 @@ func (suite *sceneImplTest) TestInitComposition() {
 		suite.NotPanics(func() { suite.scene.initComposition() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 3. zero screenHeight returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("zero screenHeight returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		chMock := light_mocks.NewMockCompositionHandler(suite.T())
@@ -7899,7 +7522,6 @@ func (suite *sceneImplTest) TestInitComposition() {
 		suite.NotPanics(func() { suite.scene.initComposition() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 4. CreateCompositionTextures error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("CreateCompositionTextures error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		chMock := light_mocks.NewMockCompositionHandler(suite.T())
@@ -7913,7 +7535,6 @@ func (suite *sceneImplTest) TestInitComposition() {
 		suite.Panics(func() { suite.scene.initComposition() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 5. CreateLinearSampler error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("CreateLinearSampler error panics", func() {
 		lhMock, _, _, _ := makeBase()
 		suite.scene.lightHandler = lhMock
@@ -7921,7 +7542,6 @@ func (suite *sceneImplTest) TestInitComposition() {
 		suite.Panics(func() { suite.scene.initComposition() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 6. RegisterCompositionPipeline error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("RegisterCompositionPipeline error panics", func() {
 		lhMock, chMock, _, _ := makeBase()
 		suite.scene.lightHandler = lhMock
@@ -7931,7 +7551,6 @@ func (suite *sceneImplTest) TestInitComposition() {
 		suite.Panics(func() { suite.scene.initComposition() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 7. SSRTextureView non-nil Ã¢â€ â€™ SetTextureView(2) called Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("SSRTextureView non-nil calls SetTextureView at binding 2", func() {
 		lhMock, chMock, ssrMock, bgpMock := makeFullBase()
 		suite.scene.lightHandler = lhMock
@@ -7943,7 +7562,6 @@ func (suite *sceneImplTest) TestInitComposition() {
 		suite.NotPanics(func() { suite.scene.initComposition() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 8. SSRTextureView nil Ã¢â€ â€™ InitTextureView fallback error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("SSRTextureView nil InitTextureView error panics", func() {
 		lhMock, _, ssrMock, bgpMock := makeFullBase()
 		suite.scene.lightHandler = lhMock
@@ -7952,7 +7570,6 @@ func (suite *sceneImplTest) TestInitComposition() {
 		suite.Panics(func() { suite.scene.initComposition() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 9. SSRTextureView nil Ã¢â€ â€™ InitTextureView fallback succeeds Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("SSRTextureView nil InitTextureView fallback succeeds", func() {
 		lhMock, chMock, ssrMock, bgpMock := makeFullBase()
 		suite.scene.lightHandler = lhMock
@@ -7964,7 +7581,6 @@ func (suite *sceneImplTest) TestInitComposition() {
 		suite.NotPanics(func() { suite.scene.initComposition() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 10. InitBindGroup error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitBindGroup error panics", func() {
 		lhMock, _, ssrMock, bgpMock := makeFullBase()
 		suite.scene.lightHandler = lhMock
@@ -7974,7 +7590,6 @@ func (suite *sceneImplTest) TestInitComposition() {
 		suite.Panics(func() { suite.scene.initComposition() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 11. full happy path SSR view non-nil Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("full happy path SSR view non-nil", func() {
 		lhMock, chMock, ssrMock, bgpMock := makeFullBase()
 		suite.scene.lightHandler = lhMock
@@ -7988,10 +7603,6 @@ func (suite *sceneImplTest) TestInitComposition() {
 }
 
 func (suite *sceneImplTest) TestInitLighting() {
-	// makeMocks builds the full handler/renderer mock tree required by all
-	// sub-inits called inside initLighting.  InitBindGroup, compMock.Bgp, and
-	// ssrMock.SSRTextureView are intentionally omitted here; each sub-test
-	// registers those expectations itself so order-sensitive matching works.
 	makeMocks := func() (
 		lhMock *light_mocks.MockLightingHandler,
 		shMock *light_mocks.MockShadowHandler,
@@ -8010,7 +7621,6 @@ func (suite *sceneImplTest) TestInitLighting() {
 		camMock = camera_mocks.NewMockCamera(suite.T())
 		camBGPMock = bgp_mocks.NewMockBindGroupProvider(suite.T())
 
-		// Ã¢â€â‚¬Ã¢â€â‚¬ ShadowHandler Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 		lhMock.EXPECT().ShadowHandler().Return(shMock).Maybe()
 		shMock.EXPECT().ShadowMapResolution().Return(1024).Maybe()
 		shMock.EXPECT().CascadeCount().Return(2).Maybe()
@@ -8031,7 +7641,6 @@ func (suite *sceneImplTest) TestInitLighting() {
 		shMock.EXPECT().LightShadowAtlasView().Return(nil).Maybe()
 		shMock.EXPECT().LightShadowAtlasSlots().Return(6).Maybe()
 
-		// Ã¢â€â‚¬Ã¢â€â‚¬ ContactShadowHandler Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 		csBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		csBGPMock.EXPECT().SetTextureView(mock.Anything, mock.Anything).Maybe()
 		lhMock.EXPECT().ContactShadowHandler().Return(csMock).Maybe()
@@ -8045,7 +7654,6 @@ func (suite *sceneImplTest) TestInitLighting() {
 		csMock.EXPECT().Bgp(mock.Anything).Return(csBGPMock).Maybe()
 		csMock.EXPECT().SetEnabled(mock.Anything).Maybe()
 
-		// Ã¢â€â‚¬Ã¢â€â‚¬ GBufferHandler Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 		lhMock.EXPECT().GBufferHandler().Return(gbMock).Maybe()
 		gbMock.EXPECT().Enabled().Return(true).Maybe()
 		gbMock.EXPECT().SetNormalTexture(mock.Anything).Maybe()
@@ -8060,7 +7668,6 @@ func (suite *sceneImplTest) TestInitLighting() {
 		gbMock.EXPECT().DepthTextureView().Return(nil).Maybe()
 		gbMock.EXPECT().NormalTextureView().Return(nil).Maybe()
 
-		// Ã¢â€â‚¬Ã¢â€â‚¬ SSAOHandler Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 		ssaoBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		ssaoBGPMock.EXPECT().SetTextureView(mock.Anything, mock.Anything).Maybe()
 		lhMock.EXPECT().SSAOHandler().Return(ssaoMock).Maybe()
@@ -8071,8 +7678,6 @@ func (suite *sceneImplTest) TestInitLighting() {
 		ssaoMock.EXPECT().SetBlurredTextureView(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTextureView(mock.Anything).Maybe()
-		ssaoMock.EXPECT().SetNoiseTexture(mock.Anything).Maybe()
-		ssaoMock.EXPECT().SetNoiseTextureView(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetLinearSampler(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetPipelineKey(mock.Anything, mock.Anything).Maybe()
 		ssaoMock.EXPECT().Bgp(mock.Anything).Return(ssaoBGPMock).Maybe()
@@ -8084,7 +7689,6 @@ func (suite *sceneImplTest) TestInitLighting() {
 		ssaoMock.EXPECT().BlurredTextureView().Return(nil).Maybe()
 		ssaoMock.EXPECT().LinearSampler().Return(nil).Maybe()
 
-		// Ã¢â€â‚¬Ã¢â€â‚¬ LightingHandler BGPs Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 		lightsBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		lightsBGPMock.EXPECT().Buffer(mock.Anything).Return(nil).Maybe()
 		lightsBGPMock.EXPECT().SetBuffer(mock.Anything, mock.Anything).Maybe()
@@ -8100,7 +7704,6 @@ func (suite *sceneImplTest) TestInitLighting() {
 		lhMock.EXPECT().MaxLightsPerTile().Return(32).Maybe()
 		lhMock.EXPECT().SetPipelineKey(mock.Anything, mock.Anything).Maybe()
 
-		// Ã¢â€â‚¬Ã¢â€â‚¬ CompositionHandler (Bgp and SSRTextureView per sub-test) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 		lhMock.EXPECT().CompositionHandler().Return(compMock).Maybe()
 		compMock.EXPECT().SetHDRTexture(mock.Anything).Maybe()
 		compMock.EXPECT().SetHDRTextureView(mock.Anything).Maybe()
@@ -8114,8 +7717,11 @@ func (suite *sceneImplTest) TestInitLighting() {
 		compMock.EXPECT().SetEnabled(mock.Anything).Maybe()
 		compMock.EXPECT().HDRTextureView().Return(nil).Maybe()
 		compMock.EXPECT().Enabled().Return(true).Maybe()
+		compMock.EXPECT().Exposure().Return(float32(1.0)).Maybe()
+		compMock.EXPECT().SetExposureBuffer(mock.Anything).Maybe()
+		compMock.EXPECT().LuminanceWorkgroupSize().Return(16).Maybe()
+		compMock.EXPECT().LuminanceWorkgroupSize().Return(16).Maybe()
 
-		// Ã¢â€â‚¬Ã¢â€â‚¬ SSRHandler (Enabled and SSRTextureView per sub-test) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 		ssrInternalBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		ssrInternalBGPMock.EXPECT().SetTextureView(mock.Anything, mock.Anything).Maybe()
 		lhMock.EXPECT().SSRHandler().Return(ssrMock).Maybe()
@@ -8133,20 +7739,17 @@ func (suite *sceneImplTest) TestInitLighting() {
 		ssrMock.EXPECT().SetEnabled(mock.Anything).Maybe()
 		ssrMock.EXPECT().SetBgp(mock.Anything, mock.Anything).Maybe()
 
-		// Ã¢â€â‚¬Ã¢â€â‚¬ Camera Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 		camMock.EXPECT().BindGroupProvider().Return(camBGPMock).Maybe()
 		camBGPMock.EXPECT().SetBindGroupLayout(mock.Anything).Maybe()
 
-		// Ã¢â€â‚¬Ã¢â€â‚¬ Renderer (no InitBindGroup Ã¢â‚¬â€ each sub-test registers that) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 		suite.rendererMock.EXPECT().MaxTextureDimension2D().Return(uint32(0)).Maybe()
 		suite.rendererMock.EXPECT().CreateShadowDepthTexture(mock.Anything, mock.Anything).Return(nil, nil, nil).Maybe()
 		suite.rendererMock.EXPECT().CreateComparisonSampler().Return(nil, nil).Maybe()
 		suite.rendererMock.EXPECT().RegisterShadowDepthPipeline(mock.Anything).Return(nil).Maybe()
 		suite.rendererMock.EXPECT().CreateGBufferTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, nil, nil, nil).Maybe()
 		suite.rendererMock.EXPECT().RegisterGBufferPipeline(mock.Anything).Return(nil).Maybe()
-		suite.rendererMock.EXPECT().CreateSSAOTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, nil, nil, nil, nil, nil).Maybe()
+		suite.rendererMock.EXPECT().CreateSSAOTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, nil, nil, nil).Maybe()
 		suite.rendererMock.EXPECT().CreateLinearSampler().Return(nil, nil).Maybe()
-		suite.rendererMock.EXPECT().WriteTexture(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
 		suite.rendererMock.EXPECT().CreateContactShadowTextures(mock.Anything, mock.Anything).Return(nil, nil, nil).Maybe()
 		suite.rendererMock.EXPECT().SampleCount().Return(uint32(1)).Maybe()
 		suite.rendererMock.EXPECT().CreateCompositionTextures(mock.Anything, mock.Anything, mock.Anything).Return(nil, nil, nil, nil, nil, nil, nil).Maybe()
@@ -8158,11 +7761,12 @@ func (suite *sceneImplTest) TestInitLighting() {
 		suite.rendererMock.EXPECT().InitTextureView(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 		suite.rendererMock.EXPECT().InitSampler(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Maybe()
+		suite.rendererMock.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).Return((*wgpu.Buffer)(nil), nil).Maybe()
+		suite.rendererMock.EXPECT().WriteRawBuffer(mock.Anything, mock.Anything, mock.Anything).Maybe()
 
 		return
 	}
 
-	// setupSceneFields sets the scene fields required by initLighting.
 	setupSceneFields := func(lhMock *light_mocks.MockLightingHandler, camMock *camera_mocks.MockCamera) {
 		suite.scene.cam = camMock
 		suite.scene.lightHandler = lhMock
@@ -8171,19 +7775,20 @@ func (suite *sceneImplTest) TestInitLighting() {
 		suite.scene.buildInjectionMap()
 	}
 
-	// mkInitCompBGP creates a fresh BindGroupProvider mock that acts as the BGP
-	// returned by compMock.Bgp("composition") during the initComposition call.
-	// It also registers the SSRTextureView return value used by initComposition.
 	mkInitCompBGP := func(compMock *light_mocks.MockCompositionHandler, ssrMock *light_mocks.MockSSRHandler) *bgp_mocks.MockBindGroupProvider {
 		bgpMockComp := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		bgpMockComp.EXPECT().SetTextureView(mock.Anything, mock.Anything).Maybe()
 		bgpMockComp.EXPECT().SetSampler(mock.Anything, mock.Anything).Maybe()
+		bgpMockComp.EXPECT().SetBuffer(mock.Anything, mock.Anything).Maybe()
 		compMock.EXPECT().Bgp("composition").Return(bgpMockComp).Once()
 		ssrMock.EXPECT().SSRTextureView().Return(nil).Once()
+		lumBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		lumBGPMock.EXPECT().SetTextureView(mock.Anything, mock.Anything).Maybe()
+		lumBGPMock.EXPECT().SetBuffer(mock.Anything, mock.Anything).Maybe()
+		compMock.EXPECT().Bgp("luminance_compute").Return(lumBGPMock).Maybe()
 		return bgpMockComp
 	}
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. SSR disabled Ã¢â€ â€™ re-bind block skipped, SetEnabled(true) called Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("SSR disabled skips re-bind SetEnabled called", func() {
 		lhMock, _, compMock, ssrMock, camMock, _ := makeMocks()
 		setupSceneFields(lhMock, camMock)
@@ -8194,7 +7799,6 @@ func (suite *sceneImplTest) TestInitLighting() {
 		suite.NotPanics(func() { suite.scene.initLighting(800, 600) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. SSR+comp enabled, Bgp("composition") Ã¢â€ â€™ nil Ã¢â€ â€™ inner block skipped Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("SSR comp enabled Bgp nil inner block skipped SetEnabled called", func() {
 		lhMock, _, compMock, ssrMock, camMock, _ := makeMocks()
 		setupSceneFields(lhMock, camMock)
@@ -8206,7 +7810,6 @@ func (suite *sceneImplTest) TestInitLighting() {
 		suite.NotPanics(func() { suite.scene.initLighting(800, 600) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 3. SSR+comp enabled, Bgp non-nil, SSRTextureView nil Ã¢â€ â€™ inner block skipped Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("SSR comp enabled Bgp non-nil SSRTextureView nil inner block skipped", func() {
 		lhMock, _, compMock, ssrMock, camMock, _ := makeMocks()
 		setupSceneFields(lhMock, camMock)
@@ -8220,7 +7823,6 @@ func (suite *sceneImplTest) TestInitLighting() {
 		suite.NotPanics(func() { suite.scene.initLighting(800, 600) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 4. SSR re-bind InitBindGroup error Ã¢â€ â€™ panic Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("SSR re-bind InitBindGroup error panics", func() {
 		lhMock, _, compMock, ssrMock, camMock, _ := makeMocks()
 		setupSceneFields(lhMock, camMock)
@@ -8235,7 +7837,6 @@ func (suite *sceneImplTest) TestInitLighting() {
 		suite.Panics(func() { suite.scene.initLighting(800, 600) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 5. Full happy path: SSR re-bind succeeds, SetEnabled(true) called Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("full happy path SSR re-bind succeeds SetEnabled called", func() {
 		lhMock, _, compMock, ssrMock, camMock, _ := makeMocks()
 		setupSceneFields(lhMock, camMock)
@@ -8258,10 +7859,8 @@ func (suite *sceneImplTest) TestInitPhysics() {
 		buffersBGPMock = bgp_mocks.NewMockBindGroupProvider(suite.T())
 		stageBGPMock = bgp_mocks.NewMockBindGroupProvider(suite.T())
 		suite.scene.physicsHandler = phMock
-		// buildInjectionMap calls on physicsHandler
 		phMock.EXPECT().SlotsPerCell().Return(uint32(16)).Maybe()
 		phMock.EXPECT().BodyIdxMask().Return(uint32(0xFFFFFF)).Maybe()
-		// core physics mock expectations
 		phMock.EXPECT().MaxBodies().Return(10).Maybe()
 		phMock.EXPECT().MaxParticles().Return(100).Maybe()
 		phMock.EXPECT().MaxGridCells().Return(50).Maybe()
@@ -8274,14 +7873,12 @@ func (suite *sceneImplTest) TestInitPhysics() {
 		return
 	}
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. InitBindGroup on buffers BGP returns error Ã¢â‚¬â€ panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitBindGroup on buffers panics", func() {
 		_, buffersBGPMock, _ := makeBase()
 		suite.rendererMock.EXPECT().InitBindGroup(buffersBGPMock, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("buf err")).Once()
 		suite.Panics(func() { suite.scene.initPhysics() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. InitBindGroup on stage BGP returns error Ã¢â‚¬â€ panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitBindGroup on stage BGP panics", func() {
 		_, buffersBGPMock, stageBGPMock := makeBase()
 		suite.rendererMock.EXPECT().InitBindGroup(buffersBGPMock, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
@@ -8289,7 +7886,6 @@ func (suite *sceneImplTest) TestInitPhysics() {
 		suite.Panics(func() { suite.scene.initPhysics() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 3. RegisterPipelines for stage returns error Ã¢â‚¬â€ panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("RegisterPipelines for stage panics", func() {
 		makeBase()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
@@ -8297,7 +7893,6 @@ func (suite *sceneImplTest) TestInitPhysics() {
 		suite.Panics(func() { suite.scene.initPhysics() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 4. RegisterPipelines for bone update returns error Ã¢â‚¬â€ panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("RegisterPipelines for bone update panics", func() {
 		makeBase()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
@@ -8306,7 +7901,6 @@ func (suite *sceneImplTest) TestInitPhysics() {
 		suite.Panics(func() { suite.scene.initPhysics() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 5. CreateBuffer returns error Ã¢â‚¬â€ panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("CreateBuffer panics", func() {
 		makeBase()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
@@ -8315,7 +7909,6 @@ func (suite *sceneImplTest) TestInitPhysics() {
 		suite.Panics(func() { suite.scene.initPhysics() })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 6. Full happy path Ã¢â‚¬â€ no panic Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("full happy path completes", func() {
 		makeBase()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
@@ -8349,7 +7942,6 @@ func (suite *sceneImplTest) TestInitPhysicsSyncGroup() {
 		return phMock, animMock
 	}
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. physicsAnimBinding discovered from real shader Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("physicsAnimBinding discovered from real shader", func() {
 		phMock := physics_mocks.NewMockPhysics(suite.T())
 		buffersBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
@@ -8376,14 +7968,12 @@ func (suite *sceneImplTest) TestInitPhysicsSyncGroup() {
 		suite.GreaterOrEqual(suite.scene.physicsAnimBinding, 0)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. InitBindGroup error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitBindGroup error panics", func() {
 		_, animMock := makeBase()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("init err")).Once()
 		suite.Panics(func() { suite.scene.initPhysicsSyncGroup(animMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 3. physicsSyncGroup nil initialized on first call Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("physicsSyncGroup nil initialized on first call", func() {
 		_, animMock := makeBase()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
@@ -8393,7 +7983,6 @@ func (suite *sceneImplTest) TestInitPhysicsSyncGroup() {
 		suite.NotNil(suite.scene.physicsSyncGroup)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 4. second call increments groupID Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("second call increments groupID", func() {
 		_, animMock := makeBase()
 		suite.scene.physicsSyncGroup = map[int]bind_group_provider.BindGroupProvider{0: bgp_mocks.NewMockBindGroupProvider(suite.T())}
@@ -8403,7 +7992,6 @@ func (suite *sceneImplTest) TestInitPhysicsSyncGroup() {
 		suite.Equal(1, id)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 5. full happy path returns 0 and populates maps Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("full happy path returns 0 and populates maps", func() {
 		_, animMock := makeBase()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
@@ -8431,19 +8019,16 @@ func (suite *sceneImplTest) TestReinitCameraBGPForLitPipeline() {
 		return shaderMock, camMock, bgpMock
 	}
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. nil shader returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("nil shader returns early", func() {
 		suite.NotPanics(func() { suite.scene.reinitCameraBGPForLitPipeline(nil) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. no camera declaration returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("no camera declaration returns early", func() {
 		shaderMock, _, _ := makeBase()
 		shaderMock.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		suite.NotPanics(func() { suite.scene.reinitCameraBGPForLitPipeline(shaderMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 3. camera BGP nil returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("camera BGP nil returns early", func() {
 		shaderMock, camMock, _ := makeBase()
 		shaderMock.EXPECT().Declarations().Return([]shader.Annotation{cameraDecl}).Once()
@@ -8451,7 +8036,6 @@ func (suite *sceneImplTest) TestReinitCameraBGPForLitPipeline() {
 		suite.NotPanics(func() { suite.scene.reinitCameraBGPForLitPipeline(shaderMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 4. InitBindGroup error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitBindGroup error panics", func() {
 		shaderMock, camMock, bgpMock := makeBase()
 		shaderMock.EXPECT().Declarations().Return([]shader.Annotation{cameraDecl}).Once()
@@ -8462,7 +8046,6 @@ func (suite *sceneImplTest) TestReinitCameraBGPForLitPipeline() {
 		suite.Panics(func() { suite.scene.reinitCameraBGPForLitPipeline(shaderMock) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 5. full happy path succeeds Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("full happy path succeeds", func() {
 		shaderMock, camMock, bgpMock := makeBase()
 		shaderMock.EXPECT().Declarations().Return([]shader.Annotation{cameraDecl}).Once()
@@ -8488,21 +8071,18 @@ func (suite *sceneImplTest) TestPatchSyncMapEntry() {
 		return phMock, animMock, syncBGPMock
 	}
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. nil physicsHandler returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("nil physicsHandler returns early", func() {
 		suite.scene.physicsHandler = nil
 		suite.scene.patchSyncMapEntry(animator_mocks.NewMockAnimator(suite.T()), 1, 0)
 		suite.Empty(suite.scene.physicsSyncWrites)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. nil anim returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("nil anim returns early", func() {
 		_, _, _ = makeBase()
 		suite.scene.patchSyncMapEntry(nil, 1, 0)
 		suite.Empty(suite.scene.physicsSyncWrites)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 3. BodyIndex not found returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("BodyIndex not found returns early", func() {
 		phMock, animMock, _ := makeBase()
 		phMock.EXPECT().BodyIndex(uint64(42)).Return(0, false).Once()
@@ -8510,7 +8090,6 @@ func (suite *sceneImplTest) TestPatchSyncMapEntry() {
 		suite.Empty(suite.scene.physicsSyncWrites)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 4. anim not in syncAnimMap returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("anim not in syncAnimMap returns early", func() {
 		phMock, _, _ := makeBase()
 		suite.scene.physicsSyncAnimMap = map[animator.Animator]int{}
@@ -8520,7 +8099,6 @@ func (suite *sceneImplTest) TestPatchSyncMapEntry() {
 		suite.Empty(suite.scene.physicsSyncWrites)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 5. full happy path appends BufferWrite Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("full happy path appends BufferWrite", func() {
 		phMock, animMock, syncBGPMock := makeBase()
 		phMock.EXPECT().BodyIndex(uint64(10)).Return(3, true).Once()
@@ -8557,7 +8135,6 @@ func (suite *sceneImplTest) TestCreateBoneParticleUpdateGroup() {
 		return bgpMock
 	}
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. particleCount zero returns early Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("particleCount zero returns early", func() {
 		phMock, animMock, mdlMock := makeBase()
 		phMock.EXPECT().BodyParticleInfo(2).Return(uint32(0), uint32(0)).Once()
@@ -8567,7 +8144,6 @@ func (suite *sceneImplTest) TestCreateBoneParticleUpdateGroup() {
 		suite.Len(suite.scene.boneParticleUpdateGroups, 0)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. nil pipeline panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("nil pipeline panics", func() {
 		phMock, animMock, mdlMock := makeBase()
 		phMock.EXPECT().BodyParticleInfo(0).Return(uint32(0), uint32(4)).Once()
@@ -8583,7 +8159,6 @@ func (suite *sceneImplTest) TestCreateBoneParticleUpdateGroup() {
 		})
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 3. InitBindGroup error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitBindGroup error panics", func() {
 		phMock, animMock, mdlMock := makeBase()
 		phMock.EXPECT().BodyParticleInfo(0).Return(uint32(0), uint32(4)).Once()
@@ -8604,7 +8179,6 @@ func (suite *sceneImplTest) TestCreateBoneParticleUpdateGroup() {
 		})
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 4. happy path appends boneParticleUpdateGroup Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("happy path appends boneParticleUpdateGroup", func() {
 		phMock, animMock, mdlMock := makeBase()
 		phMock.EXPECT().BodyParticleInfo(1).Return(uint32(10), uint32(8)).Once()
@@ -9036,7 +8610,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 			shader_mocks.NewMockShader(suite.T())
 	}
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 1. Simple backend, empty declarations, no mesh, no materials Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("simple backend empty declarations returns non-nil animator", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9057,7 +8630,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.NotNil(anim)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 2. Mesh provider: nil vertex buffer triggers InitMeshBuffers Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("mesh provider with nil vertex buffer calls InitMeshBuffers", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9083,7 +8655,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 3. Mesh provider: non-nil vertex buffer skips InitMeshBuffers Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("mesh provider with non-nil vertex buffer skips InitMeshBuffers", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9105,7 +8676,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 4. InitMeshBuffers error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitMeshBuffers error panics", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = vs
@@ -9124,7 +8694,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 5. Compute group: AnnotationArgAnimationData sets computeGroup Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("AnnotationArgAnimationData sets compute group", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9150,7 +8719,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 6. Compute group: AnnotationArgSkeletalAnimationData with array< prefix Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("AnnotationArgSkeletalAnimationData with array< prefix sets compute group", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9176,7 +8744,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 7. Compute group: nil Group skips decl Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("compute group decl with nil Group is skipped", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9203,7 +8770,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 8. Compute group: non-BindingGroup type skips decl Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("compute group decl non-BindingGroup type is skipped", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9231,7 +8797,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 9. Output group: BindingGroup InstanceData with array< prefix and non-nil binding Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("output group BindingGroup InstanceData array< prefix sets group and binding", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9259,7 +8824,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 10. Output group: BindingGroup InstanceData nil binding skips binding update Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("output group BindingGroup InstanceData with nil binding skips binding update", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9286,7 +8850,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 11. Output group: Provider Animator sets outputGroup Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("output group set from Provider Animator", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9312,7 +8875,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 12. Output group: nil Group skips decl Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("output decl with nil Group is skipped", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9337,7 +8899,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 13. Output group: Provider non-Animator arg does not set outputGroup Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("output group Provider with non-Animator arg does not set outputGroup", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9363,7 +8924,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 14. perInstanceOutputSize: matching descriptor entry overrides default Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("matching output descriptor entry overrides perInstanceOutputSize", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9396,7 +8956,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 15. perInstanceOutputSize: zero MinBindingSize does not override Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("output descriptor entry zero MinBindingSize does not override perInstanceOutputSize", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9429,7 +8988,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 16. Typed compute entries: all typed branches covered in one test Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("typed compute entries IndirectArgs BoneInfo ModelData AnimGlobals GlobalData default storage", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9469,7 +9027,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 17. Typed compute entries: BoneInfo and ModelData zero MinBindingSize no override Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("typed BoneInfo ModelData with zero MinBindingSize no size override", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9501,7 +9058,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 18. Typed compute entries: default ReadOnlyStorage with MinBindingSize > 0 Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("default ReadOnlyStorage binding with MinBindingSize adds size override", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9531,7 +9087,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 19. Typed compute entries: default non-storage no override Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("default non-storage binding with MinBindingSize no size override", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9561,7 +9116,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 20. Compute binding types loop: skips Provider decls Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("compute binding types loop skips Provider decls", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9587,7 +9141,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 21. Compute binding types loop: skips BindingGroup decls with nil Binding Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("compute binding types loop skips BindingGroup decls with nil Binding", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9614,7 +9167,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 22. Raw output binding sets computeOutputBinding Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("raw output binding sets computeOutputBinding and size override", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9645,7 +9197,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 23. Raw packed binding adds size override Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("raw packed binding adds size override", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9676,7 +9227,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 24. Raw scratch binding adds size override Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("raw scratch binding adds size override", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9707,7 +9257,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 25. Raw provider loop: skips non-Provider decls Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("raw provider loop skips non-Provider decls", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9735,7 +9284,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 26. Raw provider loop: skips Provider decls with nil Binding Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("raw provider loop skips Provider decls with nil Binding", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9760,7 +9308,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 27. Output size override for matching storage entry Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("output size override for matching outputInstanceBinding storage entry", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9785,7 +9332,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 28. InitBindGroup compute error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitBindGroup compute error panics", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9801,7 +9347,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 29. InitBindGroup output error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("InitBindGroup output error panics", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9818,7 +9363,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 30. RegisterPipelines compute error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("RegisterPipelines compute error panics", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9836,7 +9380,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 31. RegisterPipelines render error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("RegisterPipelines render error panics", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9856,7 +9399,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 32. Material: non-nil BGP skips loop body Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("material with non-nil BGP is skipped", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -9879,7 +9421,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 33. Material: empty pipeline key uses fragmentShader for initMaterialGPU Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("material with empty pipeline key uses fragmentShader for initMaterialGPU", func() {
 		mdl, cs, vs, fs := makeBase()
 		mdl.EXPECT().Skinned().Return(false).Maybe()
@@ -9902,7 +9443,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 34. Material: pipeline key nil at check registers pipeline, second Pipeline nil Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("material pipeline key nil at Pipeline registers new pipeline second nil uses fragmentShader", func() {
 		mdl, cs, vs, fs := makeBase()
 		mdl.EXPECT().Skinned().Return(false).Maybe()
@@ -9928,7 +9468,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 35. Material: PipelineOptions non-empty with non-PipelineBuilderOption filtered Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("material PipelineOptions non-empty non-PipelineBuilderOption items filtered", func() {
 		mdl, cs, vs, fs := makeBase()
 		mdl.EXPECT().Skinned().Return(false).Maybe()
@@ -9954,7 +9493,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 36. Material: PipelineOptions with valid PipelineBuilderOption included Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("material PipelineOptions with valid PipelineBuilderOption is included", func() {
 		mdl, cs, vs, fs := makeBase()
 		mdl.EXPECT().Skinned().Return(false).Maybe()
@@ -9981,7 +9519,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 37. Material: already registered Pipeline skips registration uses Shader for frag Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("material already registered Pipeline skips registration and uses Shader for frag", func() {
 		mdl, cs, vs, fs := makeBase()
 		mdl.EXPECT().Skinned().Return(false).Maybe()
@@ -10008,7 +9545,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 38. Material: pipeline Shader returns nil falls back to fragmentShader Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("material pipeline Shader returns nil falls back to fragmentShader", func() {
 		mdl, cs, vs, fs := makeBase()
 		mdl.EXPECT().Skinned().Return(false).Maybe()
@@ -10035,7 +9571,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 39. Material: RegisterPipelines error for material pipeline panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("material RegisterPipelines error panics", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -10061,7 +9596,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 40. Material: initMaterialGPU error panics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("initMaterialGPU error panics", func() {
 		mdl, cs, vs, fs := makeBase()
 		mdl.EXPECT().Skinned().Return(false).Maybe()
@@ -10095,7 +9629,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 41. Skeletal backend: nil skeleton selects skeletal type Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("skeletal backend nil skeleton selects skeletal type", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -10117,7 +9650,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.NotNil(anim)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 42. Skeletal binding discovery: nil Binding skips decl Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("skeletal binding discovery nil Binding skips decl", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -10145,7 +9677,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 43. Skeletal binding discovery: BoneInfo sets boneBinding, AnimatorPacked sets packed Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("skeletal binding discovery BoneInfo and AnimatorPacked both found", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -10172,7 +9703,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 44. Skeletal binding discovery: array< prefix stripped for BoneInfo Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("skeletal binding discovery array< prefix stripped for BoneInfo", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -10201,7 +9731,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 45. Skeletal binding discovery: Provider with non-AnimatorPacked arg skips packedBinding
 	suite.Run("skeletal binding discovery Provider non-AnimatorPacked arg does not set packedBinding", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -10228,7 +9757,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 46. Skeletal with skeleton and animations: computes packed buffer size Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("skeletal with skeleton and animations computes packed buffer size", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -10267,7 +9795,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.NotNil(anim)
 	})
 
-	// Ã¢â€â‚¬Ã¢â€â‚¬ 47. Packed buffer size clamped to 4 when zero animations Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 	suite.Run("packed buffer size clamped to 4 when zero clips", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs
@@ -10292,7 +9819,6 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
-	// ── 48. sharedBuf != nil branch: compute output binding wired to output BGP ──────────────────────────────
 	suite.Run("compute output buffer shared to output BGP when annotation present", func() {
 		mdl, cs, vs, fs := makeBase()
 		_ = fs

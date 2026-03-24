@@ -41,6 +41,20 @@ type Loader interface {
 	//   - error: error if loading fails
 	Load(path string) (model.Model, error)
 
+	// LoadAll imports a model file and returns one model.Model per unique material group.
+	// Each returned model contains only the primitives that share the same material,
+	// merged into a single vertex+index buffer, with exactly one render material.
+	// This correctly handles multi-material GLTF models (e.g. Sponza with 25 materials)
+	// where different surfaces must display different textures.
+	//
+	// Parameters:
+	//   - path: the file path to the model file
+	//
+	// Returns:
+	//   - []model.Model: one model per unique material index, in order of first appearance
+	//   - error: error if loading fails
+	LoadAll(path string) ([]model.Model, error)
+
 	// Get retrieves a cached model by name. Returns nil if not found.
 	//
 	// Parameters:

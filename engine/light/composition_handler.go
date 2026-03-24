@@ -200,6 +200,212 @@ type CompositionHandler interface {
 	//   - width: the new screen width in pixels
 	//   - height: the new screen height in pixels
 	Resize(width, height int)
+
+	// AutoExposureEnabled returns whether the eye-adaptation / auto-exposure system
+	// is active. When true, the luminance compute shader drives exposure each frame
+	// instead of the static Exposure value.
+	//
+	// Returns:
+	//   - bool: true if auto-exposure is enabled
+	AutoExposureEnabled() bool
+
+	// SetAutoExposureEnabled enables or disables the auto-exposure system.
+	//
+	// Parameters:
+	//   - enabled: true to enable eye adaptation
+	SetAutoExposureEnabled(enabled bool)
+
+	// AdaptSpeed returns the eye-adaptation rate (exposure change per second).
+	//
+	// Returns:
+	//   - float32: the adaptation speed
+	AdaptSpeed() float32
+
+	// SetAdaptSpeed sets the eye-adaptation rate (exposure change per second).
+	//
+	// Parameters:
+	//   - speed: the adaptation speed
+	SetAdaptSpeed(speed float32)
+
+	// MinExposure returns the lower clamp boundary for auto-exposure.
+	//
+	// Returns:
+	//   - float32: the minimum exposure value
+	MinExposure() float32
+
+	// SetMinExposure sets the lower clamp boundary for auto-exposure.
+	//
+	// Parameters:
+	//   - min: the minimum exposure value
+	SetMinExposure(min float32)
+
+	// MaxExposure returns the upper clamp boundary for auto-exposure.
+	//
+	// Returns:
+	//   - float32: the maximum exposure value
+	MaxExposure() float32
+
+	// SetMaxExposure sets the upper clamp boundary for auto-exposure.
+	//
+	// Parameters:
+	//   - max: the maximum exposure value
+	SetMaxExposure(max float32)
+
+	// LuminanceWorkgroupSize returns the tile dimension of the luminance compute
+	// shader workgroup. The shader uses a single (size × size) workgroup where each
+	// thread samples one texel of the HDR image to compute log-average luminance.
+	//
+	// Returns:
+	//   - int: the workgroup tile dimension (number of threads per axis)
+	LuminanceWorkgroupSize() int
+
+	// ExposureBuffer returns the persistent GPU storage buffer holding the current
+	// adapted exposure value written each frame by the luminance compute shader.
+	//
+	// Returns:
+	//   - *wgpu.Buffer: the exposure storage buffer, or nil if not initialized
+	ExposureBuffer() *wgpu.Buffer
+
+	// SetExposureBuffer stores the persistent GPU exposure storage buffer.
+	//
+	// Parameters:
+	//   - b: the exposure storage buffer
+	SetExposureBuffer(b *wgpu.Buffer)
+
+	// BloomEnabled returns whether the bloom post-processing effect is active.
+	//
+	// Returns:
+	//   - bool: true if bloom is enabled
+	BloomEnabled() bool
+
+	// SetBloomEnabled enables or disables the bloom post-processing effect.
+	//
+	// Parameters:
+	//   - enabled: true to enable bloom
+	SetBloomEnabled(enabled bool)
+
+	// BloomThreshold returns the brightness threshold for bloom extraction.
+	// Pixels below this brightness are excluded from the bloom contribution.
+	//
+	// Returns:
+	//   - float32: the brightness threshold
+	BloomThreshold() float32
+
+	// SetBloomThreshold sets the brightness threshold for bloom extraction.
+	//
+	// Parameters:
+	//   - threshold: the brightness threshold (typical range 0.5–2.0)
+	SetBloomThreshold(threshold float32)
+
+	// BloomIntensity returns the intensity multiplier applied to the bloom
+	// contribution when blended into the final composition.
+	//
+	// Returns:
+	//   - float32: the bloom intensity
+	BloomIntensity() float32
+
+	// SetBloomIntensity sets the bloom intensity multiplier.
+	//
+	// Parameters:
+	//   - intensity: the bloom intensity (typical range 0.1–1.0)
+	SetBloomIntensity(intensity float32)
+
+	// BloomMipCount returns the number of mip levels in the bloom mip chain.
+	//
+	// Returns:
+	//   - int: the mip level count
+	BloomMipCount() int
+
+	// SetBloomMipCount stores the number of mip levels in the bloom mip chain.
+	//
+	// Parameters:
+	//   - count: the mip level count
+	SetBloomMipCount(count int)
+
+	// BloomDownTexture returns the bloom downsample chain texture.
+	//
+	// Returns:
+	//   - *wgpu.Texture: the downsample chain texture, or nil if not initialized
+	BloomDownTexture() *wgpu.Texture
+
+	// SetBloomDownTexture stores the bloom downsample chain texture.
+	//
+	// Parameters:
+	//   - t: the downsample chain texture
+	SetBloomDownTexture(t *wgpu.Texture)
+
+	// BloomDownReadViews returns the per-mip read views for the downsample chain.
+	//
+	// Returns:
+	//   - []*wgpu.TextureView: the per-mip read views
+	BloomDownReadViews() []*wgpu.TextureView
+
+	// SetBloomDownReadViews stores the per-mip read views for the downsample chain.
+	//
+	// Parameters:
+	//   - views: the per-mip read views
+	SetBloomDownReadViews(views []*wgpu.TextureView)
+
+	// BloomDownStorageViews returns the per-mip storage views for the downsample chain.
+	//
+	// Returns:
+	//   - []*wgpu.TextureView: the per-mip storage views
+	BloomDownStorageViews() []*wgpu.TextureView
+
+	// SetBloomDownStorageViews stores the per-mip storage views for the downsample chain.
+	//
+	// Parameters:
+	//   - views: the per-mip storage views
+	SetBloomDownStorageViews(views []*wgpu.TextureView)
+
+	// BloomUpTexture returns the bloom upsample chain texture.
+	//
+	// Returns:
+	//   - *wgpu.Texture: the upsample chain texture, or nil if not initialized
+	BloomUpTexture() *wgpu.Texture
+
+	// SetBloomUpTexture stores the bloom upsample chain texture.
+	//
+	// Parameters:
+	//   - t: the upsample chain texture
+	SetBloomUpTexture(t *wgpu.Texture)
+
+	// BloomUpReadViews returns the per-mip read views for the upsample chain.
+	//
+	// Returns:
+	//   - []*wgpu.TextureView: the per-mip read views
+	BloomUpReadViews() []*wgpu.TextureView
+
+	// SetBloomUpReadViews stores the per-mip read views for the upsample chain.
+	//
+	// Parameters:
+	//   - views: the per-mip read views
+	SetBloomUpReadViews(views []*wgpu.TextureView)
+
+	// BloomUpStorageViews returns the per-mip storage views for the upsample chain.
+	//
+	// Returns:
+	//   - []*wgpu.TextureView: the per-mip storage views
+	BloomUpStorageViews() []*wgpu.TextureView
+
+	// SetBloomUpStorageViews stores the per-mip storage views for the upsample chain.
+	//
+	// Parameters:
+	//   - views: the per-mip storage views
+	SetBloomUpStorageViews(views []*wgpu.TextureView)
+
+	// BloomUpMip0View returns the mip 0 read view of the upsample chain texture.
+	// This is the final bloom result texture view sampled in the composition shader.
+	//
+	// Returns:
+	//   - *wgpu.TextureView: the mip 0 read view
+	BloomUpMip0View() *wgpu.TextureView
+
+	// SetBloomUpMip0View stores the mip 0 read view of the upsample chain.
+	//
+	// Parameters:
+	//   - tv: the mip 0 read view
+	SetBloomUpMip0View(tv *wgpu.TextureView)
 }
 
 var _ CompositionHandler = &compositionHandlerImpl{}
@@ -228,6 +434,57 @@ func (h *compositionHandlerImpl) DepthTextureView() *wgpu.TextureView      { ret
 func (h *compositionHandlerImpl) SetDepthTextureView(tv *wgpu.TextureView) { h.depthTextureView = tv }
 func (h *compositionHandlerImpl) LinearSampler() *wgpu.Sampler             { return h.linearSampler }
 func (h *compositionHandlerImpl) SetLinearSampler(s *wgpu.Sampler)         { h.linearSampler = s }
+
+func (h *compositionHandlerImpl) AutoExposureEnabled() bool { return h.autoExposureEnabled }
+func (h *compositionHandlerImpl) SetAutoExposureEnabled(enabled bool) {
+	h.autoExposureEnabled = enabled
+}
+func (h *compositionHandlerImpl) AdaptSpeed() float32              { return h.adaptSpeed }
+func (h *compositionHandlerImpl) SetAdaptSpeed(speed float32)      { h.adaptSpeed = speed }
+func (h *compositionHandlerImpl) MinExposure() float32             { return h.minExposure }
+func (h *compositionHandlerImpl) SetMinExposure(min float32)       { h.minExposure = min }
+func (h *compositionHandlerImpl) MaxExposure() float32             { return h.maxExposure }
+func (h *compositionHandlerImpl) SetMaxExposure(max float32)       { h.maxExposure = max }
+func (h *compositionHandlerImpl) LuminanceWorkgroupSize() int      { return h.luminanceWorkgroupSize }
+func (h *compositionHandlerImpl) ExposureBuffer() *wgpu.Buffer     { return h.exposureBuffer }
+func (h *compositionHandlerImpl) SetExposureBuffer(b *wgpu.Buffer) { h.exposureBuffer = b }
+
+func (h *compositionHandlerImpl) BloomEnabled() bool                  { return h.bloomEnabled }
+func (h *compositionHandlerImpl) SetBloomEnabled(enabled bool)        { h.bloomEnabled = enabled }
+func (h *compositionHandlerImpl) BloomThreshold() float32             { return h.bloomThreshold }
+func (h *compositionHandlerImpl) SetBloomThreshold(threshold float32) { h.bloomThreshold = threshold }
+func (h *compositionHandlerImpl) BloomIntensity() float32             { return h.bloomIntensity }
+func (h *compositionHandlerImpl) SetBloomIntensity(intensity float32) { h.bloomIntensity = intensity }
+func (h *compositionHandlerImpl) BloomMipCount() int                  { return h.bloomMipCount }
+func (h *compositionHandlerImpl) SetBloomMipCount(count int)          { h.bloomMipCount = count }
+func (h *compositionHandlerImpl) BloomDownTexture() *wgpu.Texture     { return h.bloomDownTexture }
+func (h *compositionHandlerImpl) SetBloomDownTexture(t *wgpu.Texture) { h.bloomDownTexture = t }
+func (h *compositionHandlerImpl) BloomDownReadViews() []*wgpu.TextureView {
+	return h.bloomDownReadViews
+}
+func (h *compositionHandlerImpl) SetBloomDownReadViews(views []*wgpu.TextureView) {
+	h.bloomDownReadViews = views
+}
+func (h *compositionHandlerImpl) BloomDownStorageViews() []*wgpu.TextureView {
+	return h.bloomDownStorageViews
+}
+func (h *compositionHandlerImpl) SetBloomDownStorageViews(views []*wgpu.TextureView) {
+	h.bloomDownStorageViews = views
+}
+func (h *compositionHandlerImpl) BloomUpTexture() *wgpu.Texture         { return h.bloomUpTexture }
+func (h *compositionHandlerImpl) SetBloomUpTexture(t *wgpu.Texture)     { h.bloomUpTexture = t }
+func (h *compositionHandlerImpl) BloomUpReadViews() []*wgpu.TextureView { return h.bloomUpReadViews }
+func (h *compositionHandlerImpl) SetBloomUpReadViews(views []*wgpu.TextureView) {
+	h.bloomUpReadViews = views
+}
+func (h *compositionHandlerImpl) BloomUpStorageViews() []*wgpu.TextureView {
+	return h.bloomUpStorageViews
+}
+func (h *compositionHandlerImpl) SetBloomUpStorageViews(views []*wgpu.TextureView) {
+	h.bloomUpStorageViews = views
+}
+func (h *compositionHandlerImpl) BloomUpMip0View() *wgpu.TextureView      { return h.bloomUpMip0View }
+func (h *compositionHandlerImpl) SetBloomUpMip0View(tv *wgpu.TextureView) { h.bloomUpMip0View = tv }
 
 func (h *compositionHandlerImpl) Resize(width, height int) {
 	h.screenWidth = width

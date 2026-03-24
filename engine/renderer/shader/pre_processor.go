@@ -123,6 +123,8 @@ func NewPreProcessor() PreProcessor {
 			annotationArgCompositionParams:     {Source: light.GPUCompositionParamsSource, Type: "CompositionParams"},
 			annotationArgSSRParams:             {Source: light.GPUSSRParamsSource, Type: "SSRParams"},
 			annotationArgContactShadowParams:   {Source: light.GPUContactShadowParamsSource, Type: "ContactShadowParams"},
+			annotationArgLuminanceParams:       {Source: light.GPULuminanceParamsSource, Type: "LuminanceParams"},
+			annotationArgBloomParams:           {Source: light.GPUBloomParamsSource, Type: "BloomParams"},
 		},
 		addressSpaceRegistry: map[AnnotationArg]string{
 			annotationArgStorageTypeUniform:   "var<uniform>",

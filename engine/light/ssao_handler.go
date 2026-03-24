@@ -55,11 +55,13 @@ type SSAOHandler interface {
 	//   - int: the maximum number of samples
 	MaxSamples() int
 
-	// Radius returns the hemisphere sampling radius in world-space units.
+	// ScreenRadius returns the desired SSAO sampling radius in screen pixels.
+	// The engine auto-computes the world-space radius each frame from this value,
+	// the camera distance, FOV, and screen height.
 	//
 	// Returns:
-	//   - float32: the sampling radius
-	Radius() float32
+	//   - float32: the screen-space radius in pixels
+	ScreenRadius() float32
 
 	// Bias returns the depth comparison bias used to prevent self-occlusion.
 	//
@@ -200,31 +202,6 @@ type SSAOHandler interface {
 	//   - tv: the scratch texture view
 	SetScratchTextureView(tv *wgpu.TextureView)
 
-	// NoiseTexture returns the 4×4 RGBA16Float texture storing random rotation
-	// vectors for the SSAO sample kernel.
-	//
-	// Returns:
-	//   - *wgpu.Texture: the noise texture, or nil if not initialized
-	NoiseTexture() *wgpu.Texture
-
-	// SetNoiseTexture sets the SSAO noise texture.
-	//
-	// Parameters:
-	//   - t: the noise texture
-	SetNoiseTexture(t *wgpu.Texture)
-
-	// NoiseTextureView returns the texture view for the noise texture.
-	//
-	// Returns:
-	//   - *wgpu.TextureView: the noise texture view, or nil if not initialized
-	NoiseTextureView() *wgpu.TextureView
-
-	// SetNoiseTextureView sets the texture view for the noise texture.
-	//
-	// Parameters:
-	//   - tv: the noise texture view
-	SetNoiseTextureView(tv *wgpu.TextureView)
-
 	// LinearSampler returns the linear sampler used when binding the SSAO
 	// blurred texture to the lit fragment shader.
 	//
@@ -270,7 +247,7 @@ func (h *ssaoHandlerImpl) ScreenWidth() int                           { return h
 func (h *ssaoHandlerImpl) ScreenHeight() int                          { return h.screenHeight }
 func (h *ssaoHandlerImpl) SampleCount() int                           { return h.sampleCount }
 func (h *ssaoHandlerImpl) MaxSamples() int                            { return h.maxSamples }
-func (h *ssaoHandlerImpl) Radius() float32                            { return h.radius }
+func (h *ssaoHandlerImpl) ScreenRadius() float32                      { return h.screenRadius }
 func (h *ssaoHandlerImpl) Bias() float32                              { return h.bias }
 func (h *ssaoHandlerImpl) Power() float32                             { return h.power }
 func (h *ssaoHandlerImpl) BlurRadius() int                            { return h.blurRadius }
@@ -289,10 +266,6 @@ func (h *ssaoHandlerImpl) ScratchTexture() *wgpu.Texture              { return h
 func (h *ssaoHandlerImpl) SetScratchTexture(t *wgpu.Texture)          { h.scratchTexture = t }
 func (h *ssaoHandlerImpl) ScratchTextureView() *wgpu.TextureView      { return h.scratchTextureView }
 func (h *ssaoHandlerImpl) SetScratchTextureView(tv *wgpu.TextureView) { h.scratchTextureView = tv }
-func (h *ssaoHandlerImpl) NoiseTexture() *wgpu.Texture                { return h.noiseTexture }
-func (h *ssaoHandlerImpl) SetNoiseTexture(t *wgpu.Texture)            { h.noiseTexture = t }
-func (h *ssaoHandlerImpl) NoiseTextureView() *wgpu.TextureView        { return h.noiseTextureView }
-func (h *ssaoHandlerImpl) SetNoiseTextureView(tv *wgpu.TextureView)   { h.noiseTextureView = tv }
 func (h *ssaoHandlerImpl) LinearSampler() *wgpu.Sampler               { return h.linearSampler }
 func (h *ssaoHandlerImpl) SetLinearSampler(s *wgpu.Sampler)           { h.linearSampler = s }
 func (h *ssaoHandlerImpl) HalfResolution() bool                       { return h.halfResolution }

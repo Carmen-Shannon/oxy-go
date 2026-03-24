@@ -54,18 +54,19 @@ func WithSSAOMaxSamples(max int) SSAOHandlerOption {
 	}
 }
 
-// WithSSAORadius sets the hemisphere sampling radius in world-space units.
-// Larger radii detect occlusion over longer distances but may introduce
-// halo artifacts.
+// WithSSAOScreenRadius sets the desired SSAO sampling radius in screen pixels.
+// The engine auto-computes the world-space radius each frame from this value,
+// the camera distance, FOV, and screen height, producing consistent visual
+// results regardless of zoom level.
 //
 // Parameters:
-//   - radius: the sampling radius in world units (recommended: 0.5)
+//   - pixels: the screen-space radius in pixels (recommended: 24.0)
 //
 // Returns:
-//   - SSAOHandlerOption: a function that applies the radius option to an ssaoHandlerImpl
-func WithSSAORadius(radius float32) SSAOHandlerOption {
+//   - SSAOHandlerOption: a function that applies the screen radius option to an ssaoHandlerImpl
+func WithSSAOScreenRadius(pixels float32) SSAOHandlerOption {
 	return func(h *ssaoHandlerImpl) {
-		h.radius = radius
+		h.screenRadius = pixels
 	}
 }
 
@@ -134,7 +135,7 @@ func WithSSAOHalfResolution(enabled bool) SSAOHandlerOption {
 //
 // Default values:
 //   - SampleCount: 16
-//   - Radius: 0.5
+//   - ScreenRadius: 24.0
 //   - Bias: 0.025
 //   - Power: 2.0
 //   - BlurRadius: 4
@@ -149,7 +150,7 @@ func NewSSAOHandler(opts ...SSAOHandlerOption) SSAOHandler {
 		enabled:      false,
 		sampleCount:  16,
 		maxSamples:   32,
-		radius:       0.5,
+		screenRadius: 24.0,
 		bias:         0.025,
 		power:        2.0,
 		blurRadius:   4,

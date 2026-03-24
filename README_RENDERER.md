@@ -119,11 +119,23 @@ The `Renderer` interface embeds `common.Delegate[Renderer]`, exposing `SetDelega
 
 ### Compute Frame
 
-| Method                                                          | Description                                                       |
-| --------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `BeginComputeFrame() error`                                     | Creates a command encoder for compute work.                       |
-| `DispatchCompute(pipelineKey, computeProvider, workGroupCount)` | Dispatches a compute shader with the given work group dimensions. |
-| `EndComputeFrame()`                                             | Finishes and submits the compute command buffer.                  |
+| Method                                               | Description                                                                         |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `BeginComputeFrame() error`                          | Creates a command encoder for compute work.                                         |
+| `DispatchComputeBatch(dispatches []ComputeDispatch)` | Encodes one or more compute dispatches as a batch within the current compute frame. |
+| `EndComputeFrame()`                                  | Finishes and submits the compute command buffer.                                    |
+
+#### ComputeDispatch
+
+`ComputeDispatch` groups a compute pipeline key, its bind group provider, and the workgroup dispatch dimensions for use with `DispatchComputeBatch`.
+
+```go
+type ComputeDispatch struct {
+    PipelineKey    string
+    Provider       bind_group_provider.BindGroupProvider
+    WorkGroupCount [3]uint32
+}
+```
 
 ### Render Frame
 
@@ -166,20 +178,21 @@ The shadow frame renders depth-only passes into a `Depth32Float` atlas for direc
 
 ### SSAO / Composition / SSR
 
-| Method                                                                                                                                                                      | Description                                                                                                                     |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `CreateSSAOTextures(w, h) (rawView, rawTex, blurView, blurTex, scratchView, scratchTex, noiseView, noiseTex, error)`                                                        | Creates all SSAO textures (raw, blurred, scratch, 4×4 noise).                                                                   |
-| `CreateCompositionTextures(w, h, sampleCount) (hdrView, hdrTex, msaaView, msaaTex, depthView, depthTex, error)`                                                             | Creates HDR, MSAA resolve, and depth textures for the composition pass.                                                         |
-| `RegisterCompositionPipeline(p) error`                                                                                                                                      | Creates the full-screen composition render pipeline.                                                                            |
-| `CreateSSRTextures(w, h) (ssrView, ssrTex, error)`                                                                                                                          | Creates the half-resolution RGBA16Float SSR result texture.                                                                     |
-| `CreateHiZTextures(w, h) (hizView *wgpu.TextureView, hizTex *wgpu.Texture, mipReadViews []*wgpu.TextureView, mipStorageViews []*wgpu.TextureView, mipCount int, err error)` | Creates the R32Float Hi-Z depth pyramid with per-mip views.                                                                     |
-| `BeginHDRFrame(colorView, resolveView, depthView *wgpu.TextureView, sampleCount uint32) error`                                                                              | Begins a render pass targeting the offscreen HDR texture.                                                                       |
-| `BeginCompositionFrame() error`                                                                                                                                             | Begins the composition tone-mapping frame                                                                                       |
-| `BeginCompositionPass()`                                                                                                                                                    | Begins the composition draw pass                                                                                                |
-| `CompositionDrawCall(pipelineKey string, bindGroups []bind_group_provider.BindGroupProvider) error`                                                                         | Issues a full-screen composition draw call                                                                                      |
-| `EndCompositionPass()`                                                                                                                                                      | Ends the composition draw pass                                                                                                  |
-| `EndCompositionFrame()`                                                                                                                                                     | Ends the composition frame and accumulates its command buffer                                                                   |
-| `FlushFrame()`                                                                                                                                                              | Submits all accumulated per-frame command buffers (geometry, compute, HDR, composition) in a single batched `Queue.Submit` call |
+| Method                                                                                                                                                                      | Description                                                                                                                                                                     |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CreateSSAOTextures(w, h) (rawView, rawTex, blurView, blurTex, scratchView, scratchTex, error)`                                                                             | Creates all SSAO textures (raw, blurred, scratch).                                                                                                                              |
+| `CreateCompositionTextures(w, h, sampleCount) (hdrView, hdrTex, msaaView, msaaTex, depthView, depthTex, error)`                                                             | Creates HDR, MSAA resolve, and depth textures for the composition pass.                                                                                                         |
+| `RegisterCompositionPipeline(p) error`                                                                                                                                      | Creates the full-screen composition render pipeline.                                                                                                                            |
+| `CreateSSRTextures(w, h) (ssrView, ssrTex, error)`                                                                                                                          | Creates the half-resolution RGBA16Float SSR result texture.                                                                                                                     |
+| `CreateHiZTextures(w, h) (hizView *wgpu.TextureView, hizTex *wgpu.Texture, mipReadViews []*wgpu.TextureView, mipStorageViews []*wgpu.TextureView, mipCount int, err error)` | Creates the R32Float Hi-Z depth pyramid with per-mip views.                                                                                                                     |
+| `CreateBloomTextures(w, h) (...views, mipCount, error)`                                                                                                                     | Creates two RGBA16Float mip chain textures (down chain + up chain) with per-mip read/storage views and a mip-0 up-chain view for the composition shader. Mip count capped at 6. |
+| `BeginHDRFrame(colorView, resolveView, depthView *wgpu.TextureView, sampleCount uint32) error`                                                                              | Begins a render pass targeting the offscreen HDR texture.                                                                                                                       |
+| `BeginCompositionFrame() error`                                                                                                                                             | Begins the composition tone-mapping frame                                                                                                                                       |
+| `BeginCompositionPass()`                                                                                                                                                    | Begins the composition draw pass                                                                                                                                                |
+| `CompositionDrawCall(pipelineKey string, bindGroups []bind_group_provider.BindGroupProvider) error`                                                                         | Issues a full-screen composition draw call                                                                                                                                      |
+| `EndCompositionPass()`                                                                                                                                                      | Ends the composition draw pass                                                                                                                                                  |
+| `EndCompositionFrame()`                                                                                                                                                     | Ends the composition frame and accumulates its command buffer                                                                                                                   |
+| `FlushFrame()`                                                                                                                                                              | Submits all accumulated per-frame command buffers (geometry, compute, HDR, composition) in a single batched `Queue.Submit` call                                                 |
 
 ### Configuration
 
@@ -204,7 +217,7 @@ A typical frame follows this order:
 ```
 1. WriteBuffers(...)                 — upload per-frame uniform data
 2. BeginComputeFrame()               — compute passes (e.g., light culling, SSAO, SSR, Hi-Z)
-   DispatchCompute(...)
+   DispatchComputeBatch(...)
    EndComputeFrame()
 3. **Shadow pass** — `BeginShadowDepthPass(depthView, x, y, width, height, clear)`: renders depth-only into the shadow atlas for each cascade/light.
 4. BeginGBufferFrame()               — G-Buffer MRT pre-pass
@@ -212,11 +225,11 @@ A typical frame follows this order:
    DrawCall(...)
    EndGBufferPass()
    EndGBufferFrame()
-5. (compute) SSAO + bilateral blur   — dispatched via DispatchCompute
+5. (compute) SSAO + bilateral blur   — dispatched via DispatchComputeBatch
 6. BeginFrame() / BeginHDRFrame()    — main lit render pass (to swapchain or HDR texture)
    DrawCall(...) / DrawCallIndirect(...)
    EndFrame()
-7. (compute) SSR Hi-Z + ray march    — dispatched via DispatchCompute
+7. (compute) SSR Hi-Z + ray march    — dispatched via DispatchComputeBatch
 8. Composition pass (BeginFrame)      — full-screen HDR → LDR tone mapping + SSR blend
    DrawCall(...)
    EndFrame()

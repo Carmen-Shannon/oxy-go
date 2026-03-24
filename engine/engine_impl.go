@@ -166,7 +166,14 @@ func (e *engine) handleRender() {
 							for _, s := range activeScenes {
 								s.PrepareSSR()
 							}
+							for _, s := range activeScenes {
+								s.PrepareLuminance(dt)
+							}
 							frameRenderer.EndComputeFrame()
+						}
+
+						for _, s := range activeScenes {
+							s.PrepareBloom()
 						}
 
 						for _, s := range activeScenes {

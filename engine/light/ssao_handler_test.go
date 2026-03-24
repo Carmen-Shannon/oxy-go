@@ -27,7 +27,7 @@ func (suite *ssaoHandlerTest) TestNewSSAOHandler() {
 			light.WithSSAOScreenSize(1920, 1080),
 			light.WithSSAOSampleCount(32),
 			light.WithSSAOMaxSamples(64),
-			light.WithSSAORadius(1.0),
+			light.WithSSAOScreenRadius(1.0),
 			light.WithSSAOBias(0.05),
 			light.WithSSAOPower(3.0),
 			light.WithSSAOBlurRadius(8),
@@ -74,9 +74,9 @@ func (suite *ssaoHandlerTest) TestMaxSamples() {
 	})
 }
 
-func (suite *ssaoHandlerTest) TestRadius() {
-	suite.Run("should return 0.5 by default", func() {
-		suite.InDelta(0.5, suite.handler.Radius(), 1e-6)
+func (suite *ssaoHandlerTest) TestScreenRadius() {
+	suite.Run("should return 24.0 by default", func() {
+		suite.InDelta(24.0, suite.handler.ScreenRadius(), 1e-6)
 	})
 }
 
@@ -230,28 +230,6 @@ func (suite *ssaoHandlerTest) TestScratchTextureView() {
 	suite.Run("should update after SetScratchTextureView", func() {
 		suite.handler.SetScratchTextureView(nil)
 		suite.Nil(suite.handler.ScratchTextureView())
-	})
-}
-
-func (suite *ssaoHandlerTest) TestNoiseTexture() {
-	suite.Run("should return nil by default", func() {
-		suite.Nil(suite.handler.NoiseTexture())
-	})
-
-	suite.Run("should update after SetNoiseTexture", func() {
-		suite.handler.SetNoiseTexture(nil)
-		suite.Nil(suite.handler.NoiseTexture())
-	})
-}
-
-func (suite *ssaoHandlerTest) TestNoiseTextureView() {
-	suite.Run("should return nil by default", func() {
-		suite.Nil(suite.handler.NoiseTextureView())
-	})
-
-	suite.Run("should update after SetNoiseTextureView", func() {
-		suite.handler.SetNoiseTextureView(nil)
-		suite.Nil(suite.handler.NoiseTextureView())
 	})
 }
 

@@ -15,7 +15,7 @@ type ssaoHandlerImpl struct {
 	// Quality parameters.
 	sampleCount    int
 	maxSamples     int
-	radius         float32
+	screenRadius   float32
 	bias           float32
 	power          float32
 	blurRadius     int
@@ -36,10 +36,6 @@ type ssaoHandlerImpl struct {
 	// (horizontal pass writes here, vertical pass reads from here).
 	scratchTexture     *wgpu.Texture
 	scratchTextureView *wgpu.TextureView
-
-	// 4×4 noise texture (RGBA16Float) for kernel rotation.
-	noiseTexture     *wgpu.Texture
-	noiseTextureView *wgpu.TextureView
 
 	// Linear sampler used for the final SSAO texture bound to the lit shader.
 	linearSampler *wgpu.Sampler

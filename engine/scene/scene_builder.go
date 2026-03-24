@@ -184,21 +184,23 @@ func NewScene(name string, cam camera.Camera, r renderer.Renderer, options ...Sc
 	}
 
 	s := &scene{
-		mu:                 &sync.RWMutex{},
-		name:               name,
-		active:             false,
-		cam:                cam,
-		r:                  r,
-		animatorPool:       make(map[model.Model][]animator.Animator),
-		registry:           make(map[uint64]game_object.GameObject),
-		instanceLookup:     make(map[animator.Animator]map[uint32]uint64),
-		nextID:             1,
-		computeWorkers:     max(runtime.NumCPU()-1, 1),
-		maxBonesGPU:        64,
-		drawBindGroupsPool: make([]bind_group_provider.BindGroupProvider, 0, 3),
-		lightHandler:       light.NewLightingHandler(),
-		physicsSyncGroup:   make(map[int]bind_group_provider.BindGroupProvider),
-		physicsAnimBinding: -1,
+		mu:                     &sync.RWMutex{},
+		name:                   name,
+		active:                 false,
+		cam:                    cam,
+		r:                      r,
+		animatorPool:           make(map[model.Model][]animator.Animator),
+		registry:               make(map[uint64]game_object.GameObject),
+		instanceLookup:         make(map[animator.Animator]map[uint32]uint64),
+		nextID:                 1,
+		computeWorkers:         max(runtime.NumCPU()-1, 1),
+		maxBonesGPU:            64,
+		drawBindGroupsPool:     make([]bind_group_provider.BindGroupProvider, 0, 3),
+		drawDeclsPool:          make([]shader.Annotation, 0, 32),
+		drawGroupProvidersPool: make(map[int]bind_group_provider.BindGroupProvider, 8),
+		lightHandler:           light.NewLightingHandler(),
+		physicsSyncGroup:       make(map[int]bind_group_provider.BindGroupProvider),
+		physicsAnimBinding:     -1,
 	}
 
 	for _, option := range options {

@@ -1,4 +1,5 @@
-// SSAO compute shader — hemisphere sampling with depth-aware occlusion.
+// SSAO compute shader — hemisphere sampling with depth-aware occlusion
+// and normal-based rejection.
 //
 // Reads the G-Buffer hardware depth texture and normal texture (world normal
 // packed [0,1] + roughness). For each pixel, reconstructs the world-space
@@ -7,9 +8,19 @@
 // screen space, and tests against the depth buffer. Occluded samples
 // contribute to the occlusion factor.
 //
-// A 4×4 noise texture provides per-pixel random rotation of the sample
-// kernel to reduce banding artifacts, which the subsequent bilateral blur
-// pass smooths out.
+// Normal-based rejection: after projecting a sample to screen space, the
+// shader reads the G-Buffer normal at that pixel. If the sample-pixel normal
+// is similar to the fragment normal (high dot product), the sample is on the
+// same continuous surface and is rejected as self-occlusion. Only samples
+// whose normals diverge (corners, creases, different surfaces) contribute
+// full occlusion.
+//
+// TBN construction uses a stable cross-product tangent frame from the
+// surface normal (non-parallel reference vector), then rotates the tangent
+// and bitangent in the tangent plane by a per-pixel PCG hash angle. This
+// gives proper per-pixel hemisphere rotation on all surface orientations,
+// avoiding the axis-aligned degeneracy of Gram-Schmidt with a Z=0 noise
+// vector. The subsequent bilateral blur smooths the resulting per-pixel noise.
 //
 // Dispatch: ceil(width/16) × ceil(height/16) × 1
 
@@ -17,7 +28,6 @@
 
 @group(0) @binding(0) var gbuffer_depth: texture_depth_2d;
 @group(0) @binding(1) var gbuffer_normal: texture_2d<f32>;
-@group(0) @binding(2) var noise_texture: texture_2d<f32>;
 @group(0) @binding(3) var output_tex: texture_storage_2d<r32float, write>;
 //@oxy:group 0 4 storage_uniform ssao_params ssao_params
 //@oxy:inject MAX_SSAO_SAMPLES u32 max_ssao_samples
@@ -32,6 +42,28 @@ fn reconstructWorldPos(uv: vec2<f32>, depth: f32) -> vec4<f32> {
     let world_pos = world.xyz / world.w;
     let linear_depth = length(world_pos - ssao_params.camera_position);
     return vec4<f32>(world_pos, linear_depth);
+}
+
+// Per-pixel hash — produces a pseudo-random float in [0,1) from 2D
+// pixel coordinates. Uses a PCG-style integer hash to eliminate
+// spatial correlation, ensuring every pixel gets an independent
+// hemisphere rotation for the SSAO sample kernel.
+fn hash_pixel(px: u32, py: u32) -> f32 {
+    var state = px * 1597334677u + py * 3812015801u + 2891336453u;
+    state = state ^ (state >> 16u);
+    state = state * 2654435769u;
+    state = state ^ (state >> 16u);
+    return f32(state) / 4294967295.0;
+}
+
+// build_tbn constructs a stable tangent frame from a surface normal. Uses a
+// reference vector guaranteed non-parallel to the normal to produce orthogonal
+// tangent and bitangent vectors via cross products.
+fn build_tbn(n: vec3<f32>) -> mat3x3<f32> {
+    let ref_vec = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(n.z) > 0.999);
+    let t = normalize(cross(ref_vec, n));
+    let b = cross(n, t);
+    return mat3x3<f32>(t, b, n);
 }
 
 // world_to_screen projects a world-space position to screen-space pixel
@@ -73,14 +105,17 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let norm_sample = textureLoad(gbuffer_normal, gb_coord, 0);
     let normal = normalize(norm_sample.xyz * 2.0 - 1.0);
 
-    // Read noise for random kernel rotation (tiled 4×4).
-    let noise_coord = vec2<i32>(vec2<u32>(gid.xy) % 4u);
-    let noise_val = textureLoad(noise_texture, noise_coord, 0).xyz;
-
-    // Build TBN from the surface normal and the random noise vector.
-    let tangent = normalize(noise_val - normal * dot(noise_val, normal));
-    let bitangent = cross(normal, tangent);
-    let TBN = mat3x3<f32>(tangent, bitangent, normal);
+    // Per-pixel hash rotation — each pixel gets a unique hemisphere rotation
+    // angle. build_tbn produces a stable tangent frame from the normal, then
+    // the tangent and bitangent are rotated in the tangent plane by the hash
+    // angle so every pixel gets a unique hemisphere orientation.
+    let angle = hash_pixel(gid.x, gid.y) * 6.283185307;
+    let base_tbn = build_tbn(normal);
+    let cos_a = cos(angle);
+    let sin_a = sin(angle);
+    let t_rot = base_tbn[0] * cos_a + base_tbn[1] * sin_a;
+    let b_rot = base_tbn[1] * cos_a - base_tbn[0] * sin_a;
+    let TBN = mat3x3<f32>(t_rot, b_rot, normal);
 
     let sample_count = min(ssao_params.sample_count, MAX_SSAO_SAMPLES);
     var occlusion = 0.0;
@@ -109,6 +144,16 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             continue;
         }
 
+        // Read normal at the sample's projected screen position.
+        let scene_normal_raw = textureLoad(gbuffer_normal, gb_sample, 0);
+        let scene_normal = normalize(scene_normal_raw.xyz * 2.0 - 1.0);
+
+        // Normal-based rejection: surfaces facing the same direction as
+        // the fragment are on the same continuous surface and should not
+        // count as occluders. The weight is zero when normals match and
+        // increases as normals diverge.
+        let normal_weight = 1.0 - max(dot(normal, scene_normal), 0.0);
+
         // Reconstruct the linear depth at the sample screen position.
         let sample_uv = (vec2<f32>(gb_sample) + 0.5) / vec2<f32>(gb_dims);
         let scene_pos = reconstructWorldPos(sample_uv, sample_hw_depth);
@@ -121,13 +166,12 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Compare linear depths: if the scene surface at the sample pixel is
         // closer than the hemisphere sample point, the sample is occluded.
         let sample_depth_from_cam = length(sample_world - ssao_params.camera_position);
-        if scene_depth < sample_depth_from_cam - ssao_params.bias {
-            occlusion += range_check;
+        if scene_depth < sample_depth_from_cam - ssao_params.bias * ssao_params.radius {
+            occlusion += range_check * normal_weight;
         }
     }
 
     occlusion = 1.0 - (occlusion / f32(sample_count));
     let ao = pow(occlusion, ssao_params.power);
-
     textureStore(output_tex, coord, vec4<f32>(ao, 0.0, 0.0, 0.0));
 }

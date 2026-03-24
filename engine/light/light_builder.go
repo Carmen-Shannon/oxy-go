@@ -135,7 +135,7 @@ func WithCastsShadows(castsShadows bool) LightBuilderOption {
 }
 
 // WithShadowBias sets the depth comparison bias for this light's shadow map.
-// Default is 0.0.
+// Default is 0.003.
 //
 // Parameters:
 //   - bias: the depth bias value
@@ -170,6 +170,7 @@ func NewLight(lightType LightType, opts ...LightBuilderOption) Light {
 		enabled:      true,
 		ephemeral:    false,
 		castsShadows: false,
+		shadowBias:   0.005,
 	}
 	for _, opt := range opts {
 		opt(l)

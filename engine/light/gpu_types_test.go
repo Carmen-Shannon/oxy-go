@@ -310,21 +310,48 @@ func (suite *gpuTypesTest) TestGPUSSAOParams() {
 }
 
 func (suite *gpuTypesTest) TestGPUCompositionParams() {
-	suite.Run("Size should return 16 bytes", func() {
+	suite.Run("Size should return 32 bytes", func() {
 		p := &light.GPUCompositionParams{}
+		suite.Equal(32, p.Size())
+		suite.Equal(32, int(unsafe.Sizeof(*p)))
+	})
+
+	suite.Run("Marshal should return a 32-byte buffer with correct encoding", func() {
+		p := &light.GPUCompositionParams{
+			ToneMappingEnabled:  1,
+			Exposure:            2.0,
+			AutoExposureEnabled: 1,
+			BloomEnabled:        1,
+			BloomIntensity:      0.75,
+		}
+		buf := p.Marshal()
+		suite.Equal(32, len(buf))
+		suite.Equal(uint32(1), binary.LittleEndian.Uint32(buf[0:4]))
+		suite.Equal(math.Float32bits(2.0), binary.LittleEndian.Uint32(buf[4:8]))
+		suite.Equal(uint32(1), binary.LittleEndian.Uint32(buf[8:12]))
+		suite.Equal(uint32(1), binary.LittleEndian.Uint32(buf[12:16]))
+		suite.Equal(math.Float32bits(0.75), binary.LittleEndian.Uint32(buf[16:20]))
+		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[20:24]))
+		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[24:28]))
+		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[28:32]))
+	})
+}
+
+func (suite *gpuTypesTest) TestGPUBloomParams() {
+	suite.Run("Size should return 16 bytes", func() {
+		p := &light.GPUBloomParams{}
 		suite.Equal(16, p.Size())
 		suite.Equal(16, int(unsafe.Sizeof(*p)))
 	})
 
 	suite.Run("Marshal should return a 16-byte buffer with correct encoding", func() {
-		p := &light.GPUCompositionParams{
-			ToneMappingEnabled: 1,
-			Exposure:           2.0,
+		p := &light.GPUBloomParams{
+			Threshold: 1.5,
 		}
 		buf := p.Marshal()
 		suite.Equal(16, len(buf))
-		suite.Equal(uint32(1), binary.LittleEndian.Uint32(buf[0:4]))
-		suite.Equal(math.Float32bits(2.0), binary.LittleEndian.Uint32(buf[4:8]))
+		suite.Equal(math.Float32bits(1.5), binary.LittleEndian.Uint32(buf[0:4]))
+		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[4:8]))
 		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[8:12]))
 		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[12:16]))
 	})
@@ -431,6 +458,39 @@ func (suite *gpuTypesTest) TestToGPULight() {
 		gpu := light.ToGPULight(l)
 		suite.Equal(uint32(0), gpu.CastsShadows)
 		suite.Equal(uint32(0xFFFFFFFF), gpu.ShadowIndex)
+	})
+}
+
+func (suite *gpuTypesTest) TestGPULuminanceParamsSize() {
+	suite.Run("Size should return 32 bytes", func() {
+		p := &light.GPULuminanceParams{}
+		suite.Equal(uint64(32), p.Size())
+		suite.Equal(32, int(unsafe.Sizeof(*p)))
+	})
+}
+
+func (suite *gpuTypesTest) TestGPULuminanceParamsMarshal() {
+	suite.Run("Marshal should return a 32-byte buffer with correct encoding", func() {
+		p := &light.GPULuminanceParams{
+			ScreenWidth:         1920,
+			ScreenHeight:        1080,
+			AdaptSpeed:          1.5,
+			DeltaTime:           0.016,
+			MinExposure:         0.1,
+			MaxExposure:         10.0,
+			KeyValue:            0.18,
+			AutoExposureEnabled: 1,
+		}
+		buf := p.Marshal()
+		suite.Equal(32, len(buf))
+		suite.Equal(uint32(1920), binary.LittleEndian.Uint32(buf[0:4]))
+		suite.Equal(uint32(1080), binary.LittleEndian.Uint32(buf[4:8]))
+		suite.Equal(math.Float32bits(1.5), binary.LittleEndian.Uint32(buf[8:12]))
+		suite.Equal(math.Float32bits(0.016), binary.LittleEndian.Uint32(buf[12:16]))
+		suite.Equal(math.Float32bits(0.1), binary.LittleEndian.Uint32(buf[16:20]))
+		suite.Equal(math.Float32bits(10.0), binary.LittleEndian.Uint32(buf[20:24]))
+		suite.Equal(math.Float32bits(0.18), binary.LittleEndian.Uint32(buf[24:28]))
+		suite.Equal(uint32(1), binary.LittleEndian.Uint32(buf[28:32]))
 	})
 }
 

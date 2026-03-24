@@ -246,6 +246,22 @@ type Scene interface {
 	// subsystem has not been initialized.
 	PrepareSSR()
 
+	// PrepareLuminance dispatches the luminance compute shader to update the
+	// adapted exposure storage buffer based on the current HDR frame luminance.
+	// Must be called after DrawCalls (so the HDR texture is populated) and
+	// after PrepareSSR. No-ops if auto-exposure is disabled or the composition
+	// handler has not been initialized.
+	//
+	// Parameters:
+	//   - dt: elapsed time since the last frame in seconds
+	PrepareLuminance(dt float32)
+
+	// PrepareBloom dispatches the bloom downsample and upsample compute passes
+	// to produce the final bloom texture from the HDR scene output. Must be
+	// called after PrepareLuminance and before PrepareComposition. No-ops if
+	// bloom is disabled or the composition handler has not been initialized.
+	PrepareBloom()
+
 	// PrepareComposition runs the fullscreen composition pass: acquires the
 	// swapchain, samples the HDR lit texture and optional SSR texture, applies
 	// ACES tone mapping and gamma correction, and writes the final LDR result
@@ -315,6 +331,20 @@ func (s *scene) Resize(width, height int) {
 	}
 	if s.lightHandler.SSRHandler().Enabled() {
 		s.lightHandler.SSRHandler().Resize(width, height)
+	}
+
+	// Recreate resolution-dependent GPU resources (textures + bind groups).
+	s.resizePostProcessing(width, height)
+
+	// If the new tile count exceeds the allocated tile buffer capacity,
+	// re-init the Forward+ cull resources with larger buffers.
+	newTileCount := s.lightHandler.TileCountX() * s.lightHandler.TileCountY()
+	if newTileCount > s.tileBufferCapacity {
+		cullComputeShader := shader.NewShader("_light_cull_compute", shader.ShaderTypeCompute,
+			"engine/light/assets/light-cull-compute.wgsl", shader.WithInjections(s.injections))
+		litFragShader := shader.NewShader("_lit_frag_csm", shader.ShaderTypeFragment,
+			"engine/light/assets/lit-frag-csm.wgsl", shader.WithInjections(s.injections))
+		s.initLightCullResourcesLocked(cullComputeShader, litFragShader, width, height)
 	}
 }
 
@@ -485,11 +515,22 @@ func (s *scene) PrepareSSAO() {
 		camPos[0], camPos[1], camPos[2] = ctrl.Position()
 	}
 
+	// Compute view-adaptive world-space radius from screen-space pixel radius.
+	screenRadius := s.lightHandler.SSAOHandler().ScreenRadius()
+	camDist := float32(1.0)
+	if ctrl := s.cam.Controller(); ctrl != nil {
+		if d := ctrl.Radius(); d > 0 {
+			camDist = d
+		}
+	}
+	fov := s.cam.Fov()
+	worldRadius := screenRadius * (2.0 * camDist * float32(math.Tan(float64(fov/2.0)))) / float32(ssaoH)
+
 	// Build and write SSAO uniform parameters.
 	ssaoParams := light.GPUSSAOParams{
 		Projection:     s.cam.ViewProjectionMatrix(),
 		InvViewProj:    invVP,
-		Radius:         s.lightHandler.SSAOHandler().Radius(),
+		Radius:         worldRadius,
 		Bias:           s.lightHandler.SSAOHandler().Bias(),
 		Power:          s.lightHandler.SSAOHandler().Power(),
 		SampleCount:    uint32(s.lightHandler.SSAOHandler().SampleCount()),
@@ -522,17 +563,21 @@ func (s *scene) PrepareSSAO() {
 
 	// Dispatch SSAO compute + bilateral blur.
 	ssaoWGX, ssaoWGY := s.computeWorkgroupSize2D(s.lightHandler.SSAOHandler().PipelineKey("ssao_compute"), 16, 16)
-	workGroupsX := (uint32(w) + ssaoWGX - 1) / ssaoWGX
-	workGroupsY := (uint32(h) + ssaoWGY - 1) / ssaoWGY
+	workGroupsX := (uint32(ssaoW) + ssaoWGX - 1) / ssaoWGX
+	workGroupsY := (uint32(ssaoH) + ssaoWGY - 1) / ssaoWGY
 	wg := [3]uint32{workGroupsX, workGroupsY, 1}
 
-	if err := s.r.BeginComputeFrame(); err != nil {
-		return
-	}
-	s.r.DispatchCompute(s.lightHandler.SSAOHandler().PipelineKey("ssao_compute"), ssaoBGP, wg)
-	s.r.DispatchCompute(s.lightHandler.SSAOHandler().PipelineKey("ssao_blur"), blurHBGP, wg)
-	s.r.DispatchCompute(s.lightHandler.SSAOHandler().PipelineKey("ssao_blur"), blurVBGP, wg)
-	s.r.EndComputeFrame()
+	// Each dispatch is a separate compute pass to ensure automatic GPU barriers
+	// between the SSAO compute output and the blur reads (READ-AFTER-WRITE).
+	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+		{PipelineKey: s.lightHandler.SSAOHandler().PipelineKey("ssao_compute"), Provider: ssaoBGP, WorkGroupCount: wg},
+	})
+	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+		{PipelineKey: s.lightHandler.SSAOHandler().PipelineKey("ssao_blur"), Provider: blurHBGP, WorkGroupCount: wg},
+	})
+	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+		{PipelineKey: s.lightHandler.SSAOHandler().PipelineKey("ssao_blur"), Provider: blurVBGP, WorkGroupCount: wg},
+	})
 }
 
 func (s *scene) PrepareContactShadows() {
@@ -599,7 +644,9 @@ func (s *scene) PrepareContactShadows() {
 	if err := s.r.BeginComputeFrame(); err != nil {
 		return
 	}
-	s.r.DispatchCompute(csHandler.PipelineKey("contact_shadow_compute"), csBGP, [3]uint32{workGroupsX, workGroupsY, 1})
+	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+		{PipelineKey: csHandler.PipelineKey("contact_shadow_compute"), Provider: csBGP, WorkGroupCount: [3]uint32{workGroupsX, workGroupsY, 1}},
+	})
 	s.r.EndComputeFrame()
 }
 
@@ -648,9 +695,16 @@ func (s *scene) PrepareSSR() {
 	hizIWGX, hizIWGY := s.computeWorkgroupSize2D(ssrHandler.PipelineKey("hiz_init"), 8, 8)
 	initWGX := (uint32(w) + hizIWGX - 1) / hizIWGX
 	initWGY := (uint32(h) + hizIWGY - 1) / hizIWGY
-	s.r.DispatchCompute(ssrHandler.PipelineKey("hiz_init"), hizInitBGP, [3]uint32{initWGX, initWGY, 1})
+	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+		{
+			PipelineKey:    ssrHandler.PipelineKey("hiz_init"),
+			Provider:       hizInitBGP,
+			WorkGroupCount: [3]uint32{initWGX, initWGY, 1},
+		},
+	})
 
 	// Passes 1..N-1: min-downsample each mip level from the previous.
+	// Each dispatch is a separate pass to provide implicit barriers for the READ-AFTER-WRITE chain.
 	mipW := w
 	mipH := h
 	hizDWGX, hizDWGY := s.computeWorkgroupSize2D(ssrHandler.PipelineKey("hiz_downsample"), 8, 8)
@@ -660,7 +714,13 @@ func (s *scene) PrepareSSR() {
 		bgp := ssrHandler.Bgp(fmt.Sprintf("hiz_down_%d", i))
 		wgX := (uint32(mipW) + hizDWGX - 1) / hizDWGX
 		wgY := (uint32(mipH) + hizDWGY - 1) / hizDWGY
-		s.r.DispatchCompute(ssrHandler.PipelineKey("hiz_downsample"), bgp, [3]uint32{wgX, wgY, 1})
+		s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+			{
+				PipelineKey:    ssrHandler.PipelineKey("hiz_downsample"),
+				Provider:       bgp,
+				WorkGroupCount: [3]uint32{wgX, wgY, 1},
+			},
+		})
 	}
 
 	// --- SSR compute dispatch at half-resolution ---
@@ -675,7 +735,85 @@ func (s *scene) PrepareSSR() {
 	ssrWGX, ssrWGY := s.computeWorkgroupSize2D(ssrHandler.PipelineKey("ssr_compute"), 8, 8)
 	workGroupsX := (uint32(halfW) + ssrWGX - 1) / ssrWGX
 	workGroupsY := (uint32(halfH) + ssrWGY - 1) / ssrWGY
-	s.r.DispatchCompute(ssrHandler.PipelineKey("ssr_compute"), ssrBGP, [3]uint32{workGroupsX, workGroupsY, 1})
+	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+		{
+			PipelineKey:    ssrHandler.PipelineKey("ssr_compute"),
+			Provider:       ssrBGP,
+			WorkGroupCount: [3]uint32{workGroupsX, workGroupsY, 1},
+		},
+	})
+
+	s.r.EndComputeFrame()
+}
+
+func (s *scene) PrepareLuminance(dt float32) {
+	s.prepareLuminance(dt)
+}
+
+func (s *scene) PrepareBloom() {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.lightHandler == nil || s.r == nil {
+		return
+	}
+	ch := s.lightHandler.CompositionHandler()
+	if ch == nil || !ch.Enabled() || !ch.BloomEnabled() || ch.BloomMipCount() <= 0 {
+		return
+	}
+
+	mipCount := ch.BloomMipCount()
+
+	// Write bloom params for each downsample BGP.
+	writes := make([]bind_group_provider.BufferWrite, mipCount)
+	for i := 0; i < mipCount; i++ {
+		params := light.GPUBloomParams{}
+		if i == 0 {
+			params.Threshold = ch.BloomThreshold()
+		}
+		writes[i] = bind_group_provider.BufferWrite{
+			Provider: ch.Bgp(fmt.Sprintf("bloom_down_%d", i)),
+			Binding:  3,
+			Offset:   0,
+			Data:     params.Marshal(),
+		}
+	}
+	s.r.WriteBuffers(writes)
+
+	if err := s.r.BeginComputeFrame(); err != nil {
+		return
+	}
+
+	// Pre-compute mip dimensions.
+	halfW := ch.ScreenWidth() / 2
+	halfH := ch.ScreenHeight() / 2
+	mipDims := make([][2]int, mipCount)
+	w, h := halfW, halfH
+	for i := 0; i < mipCount; i++ {
+		mipDims[i] = [2]int{w, h}
+		w = max(w/2, 1)
+		h = max(h/2, 1)
+	}
+
+	// Downsample chain.
+	downKey := ch.PipelineKey("bloom_downsample")
+	for i := 0; i < mipCount; i++ {
+		wgX := (uint32(mipDims[i][0]) + 7) / 8
+		wgY := (uint32(mipDims[i][1]) + 7) / 8
+		s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+			{PipelineKey: downKey, Provider: ch.Bgp(fmt.Sprintf("bloom_down_%d", i)), WorkGroupCount: [3]uint32{wgX, wgY, 1}},
+		})
+	}
+
+	// Upsample chain: from lowest mip up to mip 0.
+	upKey := ch.PipelineKey("bloom_upsample")
+	for i := mipCount - 2; i >= 0; i-- {
+		wgX := (uint32(mipDims[i][0]) + 7) / 8
+		wgY := (uint32(mipDims[i][1]) + 7) / 8
+		s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+			{PipelineKey: upKey, Provider: ch.Bgp(fmt.Sprintf("bloom_up_%d", i)), WorkGroupCount: [3]uint32{wgX, wgY, 1}},
+		})
+	}
 
 	s.r.EndComputeFrame()
 }
@@ -695,6 +833,13 @@ func (s *scene) PrepareComposition() {
 	}
 	if compHandler.ToneMappingEnabled() {
 		compParams.ToneMappingEnabled = 1
+	}
+	if compHandler.AutoExposureEnabled() {
+		compParams.AutoExposureEnabled = 1
+	}
+	if compHandler.BloomEnabled() {
+		compParams.BloomEnabled = 1
+		compParams.BloomIntensity = compHandler.BloomIntensity()
 	}
 	compBGP := compHandler.Bgp("composition")
 	s.r.WriteBuffers([]bind_group_provider.BufferWrite{
@@ -1257,11 +1402,26 @@ func (s *scene) PrepareLightCulling() {
 		{Provider: cullBGP, Binding: 0, Offset: 0, Data: uniforms.Marshal()},
 	})
 
+	// Also update tile uniforms for the lit shader so screen dimensions
+	// and tile counts stay in sync after resize.
+	tileBGP := s.lightHandler.Bgp("tile_lit")
+	tileUniforms := light.GPUTileUniforms{
+		TileCountX:       uint32(s.lightHandler.TileCountX()),
+		MaxLightsPerTile: uint32(s.lightHandler.MaxLightsPerTile()),
+		ScreenWidth:      uint32(s.lightHandler.ScreenWidth()),
+		ScreenHeight:     uint32(s.lightHandler.ScreenHeight()),
+	}
+	s.r.WriteBuffers([]bind_group_provider.BufferWrite{
+		{Provider: tileBGP, Binding: 0, Offset: 0, Data: tileUniforms.Marshal()},
+	})
+
 	// Dispatch the light culling compute shader.
 	if err := s.r.BeginComputeFrame(); err != nil {
 		return
 	}
-	s.r.DispatchCompute(s.lightHandler.PipelineKey("light_cull"), cullBGP, [3]uint32{uint32(s.lightHandler.TileCountX()), uint32(s.lightHandler.TileCountY()), 1})
+	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+		{PipelineKey: s.lightHandler.PipelineKey("light_cull"), Provider: cullBGP, WorkGroupCount: [3]uint32{uint32(s.lightHandler.TileCountX()), uint32(s.lightHandler.TileCountY()), 1}},
+	})
 	s.r.EndComputeFrame()
 }
 
@@ -1830,51 +1990,47 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 			binary.LittleEndian.PutUint32(aabbReset[8:12], 0xFFFFFFFF)
 			// indices 3–5 are already zero from make()
 
-			for sub := 0; sub < substeps; sub++ {
-				// Stage 1: Particle value computation (world pos, velocity, rel pos)
-				pvKey := ph.PipelineKey("particle_values")
-				s.r.DispatchCompute(pvKey, ph.Bgp("particle_values"),
-					physDispatchGroups(pvKey, particleCount))
+			pvKey := ph.PipelineKey("particle_values")
+			arKey := ph.PipelineKey("aabb_reduce")
+			gbKey := ph.PipelineKey("grid_build_params")
+			gcKey := ph.PipelineKey("grid_clear")
+			giKey := ph.PipelineKey("grid_insert")
+			crKey := ph.PipelineKey("collision")
+			cmKey := ph.PipelineKey("momenta")
+			iKey := ph.PipelineKey("integrate")
 
-				// Reset AABB atomics before the reduction pass.
+			for sub := 0; sub < substeps; sub++ {
+				// WriteBuffers must precede the dispatch batch (Queue.writeBuffer takes effect
+				// before the next GPU submit, providing the AABB reset before any dispatch runs).
 				s.r.WriteBuffers([]bind_group_provider.BufferWrite{
 					{Provider: ph.Buffers(), Binding: 5, Offset: 0, Data: aabbReset},
 				})
-
-				// Stage 1.5a: AABB reduction (parallel atomicMin/Max over particle positions)
-				arKey := ph.PipelineKey("aabb_reduce")
-				s.r.DispatchCompute(arKey, ph.Bgp("aabb_reduce"),
-					physDispatchGroups(arKey, particleCount))
-
-				// Stage 1.5b: Grid build params (single invocation derives grid origin + dims)
-				gbKey := ph.PipelineKey("grid_build_params")
-				s.r.DispatchCompute(gbKey, ph.Bgp("grid_build_params"),
-					physDispatchGroups(gbKey, 1))
-
-				// Stage 2a: Grid clear (fill all cells with sentinel 0xFFFFFFFF)
-				gcKey := ph.PipelineKey("grid_clear")
-				s.r.DispatchCompute(gcKey, ph.Bgp("grid_clear"),
-					physDispatchGroups(gcKey, uint32(ph.MaxGridCells())))
-
-				// Stage 2b: Grid insert (hash particles into cells via atomic CAS)
-				giKey := ph.PipelineKey("grid_insert")
-				s.r.DispatchCompute(giKey, ph.Bgp("grid_insert"),
-					physDispatchGroups(giKey, particleCount))
-
-				// Stage 3: Collision detection & DEM force computation
-				crKey := ph.PipelineKey("collision")
-				s.r.DispatchCompute(crKey, ph.Bgp("collision"),
-					physDispatchGroups(crKey, particleCount))
-
-				// Stage 4: Momentum accumulation (sum particle forces → body momenta)
-				cmKey := ph.PipelineKey("momenta")
-				s.r.DispatchCompute(cmKey, ph.Bgp("momenta"),
-					physDispatchGroups(cmKey, bodyCount))
-
-				// Stage 5: Integration (update position & quaternion from momenta)
-				iKey := ph.PipelineKey("integrate")
-				s.r.DispatchCompute(iKey, ph.Bgp("integrate"),
-					physDispatchGroups(iKey, bodyCount))
+				// Each physics pipeline stage depends on the previous stage's output.
+				// Separate compute passes provide automatic GPU barriers (READ-AFTER-WRITE).
+				s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+					{PipelineKey: pvKey, Provider: ph.Bgp("particle_values"), WorkGroupCount: physDispatchGroups(pvKey, particleCount)},
+				})
+				s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+					{PipelineKey: arKey, Provider: ph.Bgp("aabb_reduce"), WorkGroupCount: physDispatchGroups(arKey, particleCount)},
+				})
+				s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+					{PipelineKey: gbKey, Provider: ph.Bgp("grid_build_params"), WorkGroupCount: physDispatchGroups(gbKey, 1)},
+				})
+				s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+					{PipelineKey: gcKey, Provider: ph.Bgp("grid_clear"), WorkGroupCount: physDispatchGroups(gcKey, uint32(ph.MaxGridCells()))},
+				})
+				s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+					{PipelineKey: giKey, Provider: ph.Bgp("grid_insert"), WorkGroupCount: physDispatchGroups(giKey, particleCount)},
+				})
+				s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+					{PipelineKey: crKey, Provider: ph.Bgp("collision"), WorkGroupCount: physDispatchGroups(crKey, particleCount)},
+				})
+				s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+					{PipelineKey: cmKey, Provider: ph.Bgp("momenta"), WorkGroupCount: physDispatchGroups(cmKey, bodyCount)},
+				})
+				s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+					{PipelineKey: iKey, Provider: ph.Bgp("integrate"), WorkGroupCount: physDispatchGroups(iKey, bodyCount)},
+				})
 			}
 
 			// After all substeps, sync physics results back to each Animator's
@@ -1883,11 +2039,19 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 			// sync_map (sentinel-filtered so non-member bodies are skipped).
 			if len(s.physicsSyncGroup) > 0 {
 				syncKey := ph.PipelineKey("sync")
-				wg := physDispatchGroups(syncKey, bodyCount)
+				syncWG := physDispatchGroups(syncKey, bodyCount)
+				syncDispatches := make([]renderer.ComputeDispatch, 0, len(s.physicsSyncGroup))
 				for i := 0; i < len(s.physicsSyncGroup); i++ {
 					if bgp, ok := s.physicsSyncGroup[i]; ok {
-						s.r.DispatchCompute(syncKey, bgp, wg)
+						syncDispatches = append(syncDispatches, renderer.ComputeDispatch{
+							PipelineKey:    syncKey,
+							Provider:       bgp,
+							WorkGroupCount: syncWG,
+						})
 					}
+				}
+				if len(syncDispatches) > 0 {
+					s.r.DispatchComputeBatch(syncDispatches)
 				}
 			}
 
@@ -1911,6 +2075,7 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 	// AnimationData (positions/rotations of physics-controlled bodies) are
 	// visible when the animator's compute shader builds model matrices and
 	// performs frustum culling.
+	var animDispatches []renderer.ComputeDispatch
 	for _, anim := range s.animatorPool {
 		for _, a := range anim {
 			if a.InstanceCount() == 0 {
@@ -1942,8 +2107,15 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 			}
 			instCount := a.InstanceCount()
 			groups := (instCount + xSize - 1) / xSize
-			s.r.DispatchCompute(key, a.ComputeBindGroupProvider(), [3]uint32{groups, 1, 1})
+			animDispatches = append(animDispatches, renderer.ComputeDispatch{
+				PipelineKey:    key,
+				Provider:       a.ComputeBindGroupProvider(),
+				WorkGroupCount: [3]uint32{groups, 1, 1},
+			})
 		}
+	}
+	if len(animDispatches) > 0 {
+		s.r.DispatchComputeBatch(animDispatches)
 	}
 
 	// Dispatch bone particle update for kinematic bodies after animator compute.
@@ -1961,12 +2133,20 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 				if xSize == 0 {
 					xSize = 1
 				}
+				boneDispatches := make([]renderer.ComputeDispatch, 0, len(s.boneParticleUpdateGroups))
 				for _, bg := range s.boneParticleUpdateGroups {
 					groups := (bg.particleCount + xSize - 1) / xSize
 					if groups == 0 {
 						groups = 1
 					}
-					s.r.DispatchCompute(boneUpdateKey, bg.bgp, [3]uint32{groups, 1, 1})
+					boneDispatches = append(boneDispatches, renderer.ComputeDispatch{
+						PipelineKey:    boneUpdateKey,
+						Provider:       bg.bgp,
+						WorkGroupCount: [3]uint32{groups, 1, 1},
+					})
+				}
+				if len(boneDispatches) > 0 {
+					s.r.DispatchComputeBatch(boneDispatches)
 				}
 			}
 		}
@@ -2013,16 +2193,18 @@ func (s *scene) DrawCalls() error {
 				}
 
 				// Collect declarations from vertex and fragment shaders.
-				var allDecls []shader.Annotation
+				allDecls := s.drawDeclsPool[:0]
 				allDecls = append(allDecls, renderShader.Declarations()...)
 				if fragShader := rp.Shader(shader.ShaderTypeFragment); fragShader != nil {
 					allDecls = append(allDecls, fragShader.Declarations()...)
 				}
+				s.drawDeclsPool = allDecls
 
 				// Build bind groups dynamically by matching each group's var names to a provider.
 				// Groups are iterated in index order so bindGroups[i] maps to @group(i).
 				maxGroup := -1
-				groupProviders := make(map[int]bind_group_provider.BindGroupProvider)
+				clear(s.drawGroupProvidersPool)
+				groupProviders := s.drawGroupProvidersPool
 				for _, decl := range allDecls {
 					if decl.Group == nil {
 						continue

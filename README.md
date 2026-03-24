@@ -25,6 +25,7 @@ Oxy is a forward-rendering 3D engine built from scratch in Go. It uses WebGPU fo
 - **Forward+ Rendering** — Tiled light culling compute pass followed by a lit forward render pass.
 - **Skeletal Animation** — GPU-driven skeletal animation via compute shaders with bone blending, channel interpolation, and indirect draw.
 - **Shadow Mapping** — Depth-only shadow passes with PCF sampling and configurable shadow uniforms.
+- **Post-Processing** — SSAO, screen-space reflections (SSR), contact shadows, auto-exposure, and bloom.
 - **glTF Loader** — Full glTF 2.0 import pipeline: meshes, materials, skeletons, and animations.
 - **WGSL Shader Annotations** — A custom pre-processor that embeds resource metadata directly in WGSL source files, enabling declarative GPU resource wiring with zero string-based lookups at runtime. See the [Annotation System Documentation](README_ANNOTATIONS.md).
 - **Scene Graph** — Scenes manage cameras, lights, game objects, pipelines, shaders, and bind group providers in a single composable unit.

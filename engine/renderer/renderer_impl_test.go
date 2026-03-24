@@ -223,17 +223,24 @@ func (suite *rendererImplTest) TestRegisterCompositionPipeline() {
 	})
 }
 
-// --- DispatchCompute ---
-
-func (suite *rendererImplTest) TestDispatchCompute() {
-	suite.Run("should do nothing when the pipeline key is not in the cache", func() {
-		suite.r.DispatchCompute("missing", nil, [3]uint32{1, 1, 1})
+func (suite *rendererImplTest) TestDispatchComputeBatch() {
+	suite.Run("should call backend with empty entries when the pipeline key is not in the cache", func() {
+		suite.backendMock.EXPECT().DispatchComputeBatch(mock.MatchedBy(func(e []renderer.ComputeDispatchEntry) bool {
+			return len(e) == 0
+		})).Return().Once()
+		suite.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+			{PipelineKey: "missing", Provider: nil, WorkGroupCount: [3]uint32{1, 1, 1}},
+		})
 	})
 	suite.Run("should dispatch compute when the pipeline key exists", func() {
 		mockPipeline := pipeline_mocks.NewMockPipeline(suite.T())
 		suite.r.SetPipeline("key", mockPipeline)
-		suite.backendMock.EXPECT().DispatchCompute(mockPipeline, mock.Anything, mock.Anything).Return().Once()
-		suite.r.DispatchCompute("key", nil, [3]uint32{1, 1, 1})
+		suite.backendMock.EXPECT().DispatchComputeBatch(mock.MatchedBy(func(e []renderer.ComputeDispatchEntry) bool {
+			return len(e) == 1 && e[0].Pipeline == mockPipeline
+		})).Return().Once()
+		suite.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+			{PipelineKey: "key", Provider: nil, WorkGroupCount: [3]uint32{1, 1, 1}},
+		})
 	})
 }
 
@@ -659,8 +666,8 @@ func (suite *rendererImplTest) TestCreateGBufferTextures() {
 
 func (suite *rendererImplTest) TestCreateSSAOTextures() {
 	suite.Run("should delegate to the backend and return results", func() {
-		suite.backendMock.EXPECT().CreateSSAOTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, nil, nil, nil, nil, nil).Once()
-		rawView, rawTex, blurredView, blurredTex, scratchView, scratchTex, noiseView, noiseTex, err := suite.r.CreateSSAOTextures(1920, 1080)
+		suite.backendMock.EXPECT().CreateSSAOTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, nil, nil, nil).Once()
+		rawView, rawTex, blurredView, blurredTex, scratchView, scratchTex, err := suite.r.CreateSSAOTextures(1920, 1080)
 		suite.NoError(err)
 		suite.Nil(rawView)
 		suite.Nil(rawTex)
@@ -668,8 +675,6 @@ func (suite *rendererImplTest) TestCreateSSAOTextures() {
 		suite.Nil(blurredTex)
 		suite.Nil(scratchView)
 		suite.Nil(scratchTex)
-		suite.Nil(noiseView)
-		suite.Nil(noiseTex)
 	})
 }
 

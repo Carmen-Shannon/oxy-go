@@ -30,6 +30,9 @@ const (
 	// MSAAOff disables multisample anti-aliasing (sample count 1).
 	MSAAOff MSAASampleCount = 1
 
+	// MSAA2x enables 2× multisample anti-aliasing. Adapter-dependent; not all hardware supports this.
+	MSAA2x MSAASampleCount = 2
+
 	// MSAA4x enables 4× multisample anti-aliasing. This is the default.
 	MSAA4x MSAASampleCount = 4
 
