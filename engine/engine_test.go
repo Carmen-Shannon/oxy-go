@@ -337,6 +337,7 @@ func (suite *engineTest) TestHandleRender() {
 		rendererMock.EXPECT().EndFrame().Return().Maybe()
 		suite.sceneMock.EXPECT().PrepareSSR().Return().Maybe()
 		suite.sceneMock.EXPECT().PrepareLuminance(mock.AnythingOfType("float32")).Return().Maybe()
+		suite.sceneMock.EXPECT().PrepareBloom().Return().Maybe()
 		suite.sceneMock.EXPECT().PrepareComposition().Return().Maybe()
 		rendererMock.EXPECT().FlushFrame().Return().Maybe()
 

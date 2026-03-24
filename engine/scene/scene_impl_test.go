@@ -7492,6 +7492,9 @@ func (suite *sceneImplTest) TestInitComposition() {
 		chMock.EXPECT().Bgp("luminance_compute").Return(lumBGPMock).Maybe()
 		suite.rendererMock.EXPECT().InitBindGroup(lumBGPMock, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
+		chMock.EXPECT().BloomEnabled().Return(false).Maybe()
+		suite.rendererMock.EXPECT().InitTextureView(bgpMock, 6, mock.Anything).Return(nil).Maybe()
+
 		return lhMock, chMock, ssrMock, bgpMock
 	}
 
@@ -7721,6 +7724,7 @@ func (suite *sceneImplTest) TestInitLighting() {
 		compMock.EXPECT().SetExposureBuffer(mock.Anything).Maybe()
 		compMock.EXPECT().LuminanceWorkgroupSize().Return(16).Maybe()
 		compMock.EXPECT().LuminanceWorkgroupSize().Return(16).Maybe()
+		compMock.EXPECT().BloomEnabled().Return(false).Maybe()
 
 		ssrInternalBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		ssrInternalBGPMock.EXPECT().SetTextureView(mock.Anything, mock.Anything).Maybe()
