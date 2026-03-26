@@ -2509,7 +2509,10 @@ func (s *scene) releaseResolutionDependentResources() {
 	sh := s.lightHandler.ShadowHandler()
 	if sh.CSMAtlasTexture() != nil {
 		if bgp := sh.Bgp("csm_shadow_lit"); bgp != nil {
-			bgp.Release()
+			if bg := bgp.BindGroup(); bg != nil {
+				bg.Release()
+			}
+			bgp.SetBindGroup(nil)
 		}
 	}
 
@@ -2660,6 +2663,7 @@ func (s *scene) resizePostProcessing(w, h int) {
 		return
 	}
 
+	s.r.WaitIdle()
 	s.releaseResolutionDependentResources()
 
 	if s.lightHandler.GBufferHandler().Enabled() {

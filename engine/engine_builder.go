@@ -97,6 +97,7 @@ func WithRenderFrameLimit(fps float64) EngineBuilderOption {
 func NewEngine(options ...EngineBuilderOption) Engine {
 	e := &engine{
 		tickRateChannel:  make(chan time.Duration, 1),
+		resizeEvents:     make(chan [2]int, 1),
 		quitChannel:      make(chan struct{}),
 		scenes:           make(map[int]scene.Scene),
 		running:          false,

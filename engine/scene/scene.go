@@ -216,6 +216,11 @@ type Scene interface {
 	// light exists.
 	PrepareShadows()
 
+	// PrepareLights marshals the current light list into the GPU light buffer.
+	// Must be called after PrepareShadows (so that the shadow index map is up to date)
+	// and before PrepareGBuffer each frame. No-ops if lighting is not initialized.
+	PrepareLights()
+
 	// PrepareLightCulling updates the light cull uniform buffer and dispatches the
 	// light culling compute shader. Must be called after PrepareCompute (so lights
 	// are uploaded) and before DrawCalls.
@@ -308,8 +313,10 @@ func (s *scene) AddLight(l light.Light) {
 
 func (s *scene) Resize(width, height int) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	if s.screenWidth == width && s.screenHeight == height {
+		s.mu.Unlock()
+		return
+	}
 	s.screenWidth = width
 	s.screenHeight = height
 	s.r.Resize(width, height)
@@ -332,19 +339,20 @@ func (s *scene) Resize(width, height int) {
 	if s.lightHandler.SSRHandler().Enabled() {
 		s.lightHandler.SSRHandler().Resize(width, height)
 	}
+	needTileCullReinit := s.lightHandler.TileCountX()*s.lightHandler.TileCountY() > s.tileBufferCapacity
+	s.mu.Unlock()
 
 	// Recreate resolution-dependent GPU resources (textures + bind groups).
 	s.resizePostProcessing(width, height)
 
 	// If the new tile count exceeds the allocated tile buffer capacity,
 	// re-init the Forward+ cull resources with larger buffers.
-	newTileCount := s.lightHandler.TileCountX() * s.lightHandler.TileCountY()
-	if newTileCount > s.tileBufferCapacity {
+	if needTileCullReinit {
 		cullComputeShader := shader.NewShader("_light_cull_compute", shader.ShaderTypeCompute,
 			"engine/light/assets/light-cull-compute.wgsl", shader.WithInjections(s.injections))
 		litFragShader := shader.NewShader("_lit_frag_csm", shader.ShaderTypeFragment,
 			"engine/light/assets/lit-frag-csm.wgsl", shader.WithInjections(s.injections))
-		s.initLightCullResourcesLocked(cullComputeShader, litFragShader, width, height)
+		s.initLightCullResources(cullComputeShader, litFragShader, width, height)
 	}
 }
 
@@ -874,6 +882,72 @@ func (s *scene) BeginHDRFrame() error {
 	return s.r.BeginHDRFrame(ch.HDRTextureView(), nil, ch.DepthTextureView(), 1)
 }
 
+func (s *scene) PrepareLights() {
+	if !s.lightHandler.Enabled() {
+		return
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	lightsBGP := s.lightHandler.Bgp("lights")
+	rawLights := s.lightHandler.Lights()
+	lightsToMarshal := rawLights
+	if len(rawLights) > int(s.lightHandler.MaxGPULights()) {
+		const lightSortEpsilon = float32(1e-4)
+		var eyeX, eyeY, eyeZ float32
+		if ctrl := s.cam.Controller(); ctrl != nil {
+			eyeX, eyeY, eyeZ = ctrl.Position()
+		}
+		importanceOf := func(l light.Light) float32 {
+			if l.Type() == light.LightTypeDirectional {
+				return math.MaxFloat32
+			}
+			pos := l.Position()
+			dx := pos[0] - eyeX
+			dy := pos[1] - eyeY
+			dz := pos[2] - eyeZ
+			dist2 := dx*dx + dy*dy + dz*dz
+			if dist2 < lightSortEpsilon {
+				dist2 = lightSortEpsilon
+			}
+			return l.Intensity() * l.Range() / dist2
+		}
+		sorted := make([]light.Light, len(rawLights))
+		copy(sorted, rawLights)
+		slices.SortFunc(sorted, func(a, b light.Light) int {
+			impA := importanceOf(a)
+			impB := importanceOf(b)
+			if impA > impB {
+				return -1
+			}
+			if impA < impB {
+				return 1
+			}
+			return 0
+		})
+		lightsToMarshal = sorted
+	}
+	lightData := s.lightHandler.MarshalLightBuffer(lightsToMarshal, s.lightShadowMap)
+	writes := []bind_group_provider.BufferWrite{
+		{
+			Provider: lightsBGP,
+			Binding:  0, // light_header uniform
+			Offset:   0,
+			Data:     lightData[:16], // GPULightHeader is 16 bytes
+		},
+	}
+	if len(lightData) > 16 {
+		writes = append(writes, bind_group_provider.BufferWrite{
+			Provider: lightsBGP,
+			Binding:  1, // lights storage array
+			Offset:   0,
+			Data:     lightData[16:],
+		})
+	}
+	s.r.WriteBuffers(writes)
+}
+
 func (s *scene) PrepareShadows() {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -977,7 +1051,7 @@ func (s *scene) PrepareShadows() {
 
 		halfAngle := float32(math.Acos(float64(outerCos)))
 		fovY := halfAngle * 2.0
-		near := float32(0.1)
+		near := float32(math.Max(1.0, float64(rng)*0.005))
 		far := rng
 
 		var view, proj, vp [16]float32
@@ -1687,66 +1761,6 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 			x, y, z := obj.Position()
 			l.SetPosition(x, y, z)
 		}
-	}
-
-	// Write light buffer to GPU each frame when lighting is initialized.
-	if s.lightHandler.Enabled() {
-		lightsBGP := s.lightHandler.Bgp("lights")
-		rawLights := s.lightHandler.Lights()
-		lightsToMarshal := rawLights
-		if len(rawLights) > int(s.lightHandler.MaxGPULights()) {
-			const lightSortEpsilon = float32(1e-4)
-			var eyeX, eyeY, eyeZ float32
-			if ctrl := s.cam.Controller(); ctrl != nil {
-				eyeX, eyeY, eyeZ = ctrl.Position()
-			}
-			importanceOf := func(l light.Light) float32 {
-				if l.Type() == light.LightTypeDirectional {
-					return math.MaxFloat32
-				}
-				pos := l.Position()
-				dx := pos[0] - eyeX
-				dy := pos[1] - eyeY
-				dz := pos[2] - eyeZ
-				dist2 := dx*dx + dy*dy + dz*dz
-				if dist2 < lightSortEpsilon {
-					dist2 = lightSortEpsilon
-				}
-				return l.Intensity() * l.Range() / dist2
-			}
-			sorted := make([]light.Light, len(rawLights))
-			copy(sorted, rawLights)
-			slices.SortFunc(sorted, func(a, b light.Light) int {
-				impA := importanceOf(a)
-				impB := importanceOf(b)
-				if impA > impB {
-					return -1
-				}
-				if impA < impB {
-					return 1
-				}
-				return 0
-			})
-			lightsToMarshal = sorted
-		}
-		lightData := s.lightHandler.MarshalLightBuffer(lightsToMarshal, s.lightShadowMap)
-		writes := []bind_group_provider.BufferWrite{
-			{
-				Provider: lightsBGP,
-				Binding:  0, // light_header uniform
-				Offset:   0,
-				Data:     lightData[:16], // GPULightHeader is 16 bytes
-			},
-		}
-		if len(lightData) > 16 {
-			writes = append(writes, bind_group_provider.BufferWrite{
-				Provider: lightsBGP,
-				Binding:  1, // lights storage array
-				Offset:   0,
-				Data:     lightData[16:],
-			})
-		}
-		s.r.WriteBuffers(writes)
 	}
 
 	// Process all animator groups in three phases:

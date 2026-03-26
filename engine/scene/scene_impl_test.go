@@ -2935,90 +2935,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	suite.Run("light handler enabled single binding write", func() {
-		camMock := camera_mocks.NewMockCamera(suite.T())
-		camMock.EXPECT().Update().Return().Once()
-		camMock.EXPECT().ViewProjectionMatrix().Return([16]float32{}).Once()
-		camMock.EXPECT().BindGroupProvider().Return(nil).Once()
-		suite.scene.cam = camMock
-		suite.scene.writePool = []bind_group_provider.BufferWrite{}
-		lightsBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
-		mockLH := light_mocks.NewMockLightingHandler(suite.T())
-		mockLH.EXPECT().Enabled().Return(true).Once()
-		mockLH.EXPECT().Bgp("lights").Return(lightsBGP).Once()
-		mockLH.EXPECT().Lights().Return(nil).Once()
-		mockLH.EXPECT().MaxGPULights().Return(100).Once()
-		mockLH.EXPECT().MarshalLightBuffer(mock.Anything, mock.Anything).Return(make([]byte, 16)).Once()
-		suite.scene.lightHandler = mockLH
-		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
-		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
-	})
-
-	suite.Run("light handler enabled two bindings when data over 16", func() {
-		camMock := camera_mocks.NewMockCamera(suite.T())
-		camMock.EXPECT().Update().Return().Once()
-		camMock.EXPECT().ViewProjectionMatrix().Return([16]float32{}).Once()
-		camMock.EXPECT().BindGroupProvider().Return(nil).Once()
-		suite.scene.cam = camMock
-		suite.scene.writePool = []bind_group_provider.BufferWrite{}
-		lightsBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
-		mockLH := light_mocks.NewMockLightingHandler(suite.T())
-		mockLH.EXPECT().Enabled().Return(true).Once()
-		mockLH.EXPECT().Bgp("lights").Return(lightsBGP).Once()
-		mockLH.EXPECT().Lights().Return(nil).Once()
-		mockLH.EXPECT().MaxGPULights().Return(100).Once()
-		mockLH.EXPECT().MarshalLightBuffer(mock.Anything, mock.Anything).Return(make([]byte, 32)).Once()
-		suite.scene.lightHandler = mockLH
-		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
-		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
-	})
-
-	suite.Run("light sort triggers when rawLights exceeds MaxGPULights", func() {
-		camMock := camera_mocks.NewMockCamera(suite.T())
-		camMock.EXPECT().Update().Return().Once()
-		camMock.EXPECT().ViewProjectionMatrix().Return([16]float32{}).Once()
-		camMock.EXPECT().BindGroupProvider().Return(nil).Once()
-		camMock.EXPECT().Controller().Return(nil).Once()
-		suite.scene.cam = camMock
-		suite.scene.writePool = []bind_group_provider.BufferWrite{}
-		l1 := light.NewLight(light.LightTypePoint)
-		l2 := light.NewLight(light.LightTypePoint)
-		lightsBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
-		mockLH := light_mocks.NewMockLightingHandler(suite.T())
-		mockLH.EXPECT().Enabled().Return(true).Once()
-		mockLH.EXPECT().Bgp("lights").Return(lightsBGP).Once()
-		mockLH.EXPECT().Lights().Return([]light.Light{l1, l2}).Once()
-		mockLH.EXPECT().MaxGPULights().Return(1).Once()
-		mockLH.EXPECT().MarshalLightBuffer(mock.Anything, mock.Anything).Return(make([]byte, 16)).Once()
-		suite.scene.lightHandler = mockLH
-		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
-		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
-	})
-
-	suite.Run("light sort non-nil controller uses camera position", func() {
-		ctrl := camera_mocks.NewMockCameraController(suite.T())
-		ctrl.EXPECT().Position().Return(float32(5), float32(5), float32(5)).Once()
-		camMock := camera_mocks.NewMockCamera(suite.T())
-		camMock.EXPECT().Update().Return().Once()
-		camMock.EXPECT().ViewProjectionMatrix().Return([16]float32{}).Once()
-		camMock.EXPECT().BindGroupProvider().Return(nil).Once()
-		camMock.EXPECT().Controller().Return(ctrl).Once()
-		suite.scene.cam = camMock
-		suite.scene.writePool = []bind_group_provider.BufferWrite{}
-		l1 := light.NewLight(light.LightTypePoint)
-		l2 := light.NewLight(light.LightTypePoint)
-		lightsBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
-		mockLH := light_mocks.NewMockLightingHandler(suite.T())
-		mockLH.EXPECT().Enabled().Return(true).Once()
-		mockLH.EXPECT().Bgp("lights").Return(lightsBGP).Once()
-		mockLH.EXPECT().Lights().Return([]light.Light{l1, l2}).Once()
-		mockLH.EXPECT().MaxGPULights().Return(1).Once()
-		mockLH.EXPECT().MarshalLightBuffer(mock.Anything, mock.Anything).Return(make([]byte, 16)).Once()
-		suite.scene.lightHandler = mockLH
-		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
-		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
-	})
-
 	suite.Run("phase1 zero instance count skipped", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -3845,76 +3761,6 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	suite.Run("light sort directional light returns MaxFloat32 importance", func() {
-		camMock := camera_mocks.NewMockCamera(suite.T())
-		camMock.EXPECT().Update().Return().Once()
-		camMock.EXPECT().ViewProjectionMatrix().Return([16]float32{}).Once()
-		camMock.EXPECT().BindGroupProvider().Return(nil).Once()
-		camMock.EXPECT().Controller().Return(nil).Once()
-		suite.scene.cam = camMock
-		suite.scene.writePool = []bind_group_provider.BufferWrite{}
-		dirLight := light.NewLight(light.LightTypeDirectional)
-		pointLight := light.NewLight(light.LightTypePoint)
-		bgpMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
-		mockLH := light_mocks.NewMockLightingHandler(suite.T())
-		mockLH.EXPECT().Enabled().Return(true).Once()
-		mockLH.EXPECT().Bgp("lights").Return(bgpMock).Once()
-		mockLH.EXPECT().Lights().Return([]light.Light{dirLight, pointLight}).Once()
-		mockLH.EXPECT().MaxGPULights().Return(1).Once()
-		mockLH.EXPECT().MarshalLightBuffer(mock.Anything, mock.Anything).Return(make([]byte, 16)).Once()
-		suite.scene.lightHandler = mockLH
-		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
-		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
-	})
-
-	suite.Run("light sort comparison branches impA greater and impA less than", func() {
-		camMock := camera_mocks.NewMockCamera(suite.T())
-		camMock.EXPECT().Update().Return().Once()
-		camMock.EXPECT().ViewProjectionMatrix().Return([16]float32{}).Once()
-		camMock.EXPECT().BindGroupProvider().Return(nil).Once()
-		camMock.EXPECT().Controller().Return(nil).Once()
-		suite.scene.cam = camMock
-		suite.scene.writePool = []bind_group_provider.BufferWrite{}
-		l1 := light.NewLight(light.LightTypePoint)
-		l1.SetPosition(0, 0, 1)
-		l2 := light.NewLight(light.LightTypePoint)
-		l2.SetPosition(0, 0, 5)
-		l3 := light.NewLight(light.LightTypePoint)
-		l3.SetPosition(0, 0, 10)
-		bgpMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
-		mockLH := light_mocks.NewMockLightingHandler(suite.T())
-		mockLH.EXPECT().Enabled().Return(true).Once()
-		mockLH.EXPECT().Bgp("lights").Return(bgpMock).Once()
-		mockLH.EXPECT().Lights().Return([]light.Light{l3, l1, l2}).Once()
-		mockLH.EXPECT().MaxGPULights().Return(2).Once()
-		mockLH.EXPECT().MarshalLightBuffer(mock.Anything, mock.Anything).Return(make([]byte, 16)).Once()
-		suite.scene.lightHandler = mockLH
-		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
-		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
-	})
-
-	suite.Run("light sort equal importance returns zero", func() {
-		camMock := camera_mocks.NewMockCamera(suite.T())
-		camMock.EXPECT().Update().Return().Once()
-		camMock.EXPECT().ViewProjectionMatrix().Return([16]float32{}).Once()
-		camMock.EXPECT().BindGroupProvider().Return(nil).Once()
-		camMock.EXPECT().Controller().Return(nil).Once()
-		suite.scene.cam = camMock
-		suite.scene.writePool = []bind_group_provider.BufferWrite{}
-		l1 := light.NewLight(light.LightTypePoint)
-		l2 := light.NewLight(light.LightTypePoint)
-		bgpMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
-		mockLH := light_mocks.NewMockLightingHandler(suite.T())
-		mockLH.EXPECT().Enabled().Return(true).Once()
-		mockLH.EXPECT().Bgp("lights").Return(bgpMock).Once()
-		mockLH.EXPECT().Lights().Return([]light.Light{l1, l2}).Once()
-		mockLH.EXPECT().MaxGPULights().Return(1).Once()
-		mockLH.EXPECT().MarshalLightBuffer(mock.Anything, mock.Anything).Return(make([]byte, 16)).Once()
-		suite.scene.lightHandler = mockLH
-		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
-		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
-	})
-
 	suite.Run("phase1 goroutine covers boneBinding and modelBinding annotation arms", func() {
 		suite.scene.cullingDisabled = true
 		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
@@ -3958,6 +3804,131 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 }
+
+func (suite *sceneImplTest) TestPrepareLights() {
+	suite.Run("light handler enabled single binding write", func() {
+		lightsBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		mockLH := light_mocks.NewMockLightingHandler(suite.T())
+		mockLH.EXPECT().Enabled().Return(true).Once()
+		mockLH.EXPECT().Bgp("lights").Return(lightsBGP).Once()
+		mockLH.EXPECT().Lights().Return(nil).Once()
+		mockLH.EXPECT().MaxGPULights().Return(100).Once()
+		mockLH.EXPECT().MarshalLightBuffer(mock.Anything, mock.Anything).Return(make([]byte, 16)).Once()
+		suite.scene.lightHandler = mockLH
+		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
+		suite.NotPanics(func() { suite.scene.PrepareLights() })
+	})
+
+	suite.Run("light handler enabled two bindings when data over 16", func() {
+		lightsBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		mockLH := light_mocks.NewMockLightingHandler(suite.T())
+		mockLH.EXPECT().Enabled().Return(true).Once()
+		mockLH.EXPECT().Bgp("lights").Return(lightsBGP).Once()
+		mockLH.EXPECT().Lights().Return(nil).Once()
+		mockLH.EXPECT().MaxGPULights().Return(100).Once()
+		mockLH.EXPECT().MarshalLightBuffer(mock.Anything, mock.Anything).Return(make([]byte, 32)).Once()
+		suite.scene.lightHandler = mockLH
+		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
+		suite.NotPanics(func() { suite.scene.PrepareLights() })
+	})
+
+	suite.Run("light sort triggers when rawLights exceeds MaxGPULights", func() {
+		camMock := camera_mocks.NewMockCamera(suite.T())
+		camMock.EXPECT().Controller().Return(nil).Once()
+		suite.scene.cam = camMock
+		l1 := light.NewLight(light.LightTypePoint)
+		l2 := light.NewLight(light.LightTypePoint)
+		lightsBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		mockLH := light_mocks.NewMockLightingHandler(suite.T())
+		mockLH.EXPECT().Enabled().Return(true).Once()
+		mockLH.EXPECT().Bgp("lights").Return(lightsBGP).Once()
+		mockLH.EXPECT().Lights().Return([]light.Light{l1, l2}).Once()
+		mockLH.EXPECT().MaxGPULights().Return(1).Once()
+		mockLH.EXPECT().MarshalLightBuffer(mock.Anything, mock.Anything).Return(make([]byte, 16)).Once()
+		suite.scene.lightHandler = mockLH
+		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
+		suite.NotPanics(func() { suite.scene.PrepareLights() })
+	})
+
+	suite.Run("light sort non-nil controller uses camera position", func() {
+		ctrl := camera_mocks.NewMockCameraController(suite.T())
+		ctrl.EXPECT().Position().Return(float32(5), float32(5), float32(5)).Once()
+		camMock := camera_mocks.NewMockCamera(suite.T())
+		camMock.EXPECT().Controller().Return(ctrl).Once()
+		suite.scene.cam = camMock
+		l1 := light.NewLight(light.LightTypePoint)
+		l2 := light.NewLight(light.LightTypePoint)
+		lightsBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		mockLH := light_mocks.NewMockLightingHandler(suite.T())
+		mockLH.EXPECT().Enabled().Return(true).Once()
+		mockLH.EXPECT().Bgp("lights").Return(lightsBGP).Once()
+		mockLH.EXPECT().Lights().Return([]light.Light{l1, l2}).Once()
+		mockLH.EXPECT().MaxGPULights().Return(1).Once()
+		mockLH.EXPECT().MarshalLightBuffer(mock.Anything, mock.Anything).Return(make([]byte, 16)).Once()
+		suite.scene.lightHandler = mockLH
+		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
+		suite.NotPanics(func() { suite.scene.PrepareLights() })
+	})
+
+	suite.Run("light sort directional light returns MaxFloat32 importance", func() {
+		camMock := camera_mocks.NewMockCamera(suite.T())
+		camMock.EXPECT().Controller().Return(nil).Once()
+		suite.scene.cam = camMock
+		dirLight := light.NewLight(light.LightTypeDirectional)
+		pointLight := light.NewLight(light.LightTypePoint)
+		bgpMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		mockLH := light_mocks.NewMockLightingHandler(suite.T())
+		mockLH.EXPECT().Enabled().Return(true).Once()
+		mockLH.EXPECT().Bgp("lights").Return(bgpMock).Once()
+		mockLH.EXPECT().Lights().Return([]light.Light{dirLight, pointLight}).Once()
+		mockLH.EXPECT().MaxGPULights().Return(1).Once()
+		mockLH.EXPECT().MarshalLightBuffer(mock.Anything, mock.Anything).Return(make([]byte, 16)).Once()
+		suite.scene.lightHandler = mockLH
+		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
+		suite.NotPanics(func() { suite.scene.PrepareLights() })
+	})
+
+	suite.Run("light sort comparison branches impA greater and impA less than", func() {
+		camMock := camera_mocks.NewMockCamera(suite.T())
+		camMock.EXPECT().Controller().Return(nil).Once()
+		suite.scene.cam = camMock
+		l1 := light.NewLight(light.LightTypePoint)
+		l1.SetPosition(0, 0, 1)
+		l2 := light.NewLight(light.LightTypePoint)
+		l2.SetPosition(0, 0, 5)
+		l3 := light.NewLight(light.LightTypePoint)
+		l3.SetPosition(0, 0, 10)
+		bgpMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		mockLH := light_mocks.NewMockLightingHandler(suite.T())
+		mockLH.EXPECT().Enabled().Return(true).Once()
+		mockLH.EXPECT().Bgp("lights").Return(bgpMock).Once()
+		mockLH.EXPECT().Lights().Return([]light.Light{l3, l1, l2}).Once()
+		mockLH.EXPECT().MaxGPULights().Return(2).Once()
+		mockLH.EXPECT().MarshalLightBuffer(mock.Anything, mock.Anything).Return(make([]byte, 16)).Once()
+		suite.scene.lightHandler = mockLH
+		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
+		suite.NotPanics(func() { suite.scene.PrepareLights() })
+	})
+
+	suite.Run("light sort equal importance returns zero", func() {
+		camMock := camera_mocks.NewMockCamera(suite.T())
+		camMock.EXPECT().Controller().Return(nil).Once()
+		suite.scene.cam = camMock
+		l1 := light.NewLight(light.LightTypePoint)
+		l2 := light.NewLight(light.LightTypePoint)
+		bgpMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		mockLH := light_mocks.NewMockLightingHandler(suite.T())
+		mockLH.EXPECT().Enabled().Return(true).Once()
+		mockLH.EXPECT().Bgp("lights").Return(bgpMock).Once()
+		mockLH.EXPECT().Lights().Return([]light.Light{l1, l2}).Once()
+		mockLH.EXPECT().MaxGPULights().Return(1).Once()
+		mockLH.EXPECT().MarshalLightBuffer(mock.Anything, mock.Anything).Return(make([]byte, 16)).Once()
+		suite.scene.lightHandler = mockLH
+		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
+		suite.NotPanics(func() { suite.scene.PrepareLights() })
+	})
+}
+
 func (suite *sceneImplTest) TestDrawCalls() {
 	suite.Run("empty pool returns nil", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}

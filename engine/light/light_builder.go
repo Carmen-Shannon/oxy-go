@@ -170,7 +170,7 @@ func NewLight(lightType LightType, opts ...LightBuilderOption) Light {
 		enabled:      true,
 		ephemeral:    false,
 		castsShadows: false,
-		shadowBias:   0.005,
+		shadowBias:   0.0002,
 	}
 	for _, opt := range opts {
 		opt(l)

@@ -146,6 +146,7 @@ func main() {
 		light.WithSpotCone(15, 15),
 		light.WithEnabled(false),
 		light.WithCastsShadows(true),
+		light.WithShadowBias(0.0002),
 	)
 	sc.AddLight(spot)
 

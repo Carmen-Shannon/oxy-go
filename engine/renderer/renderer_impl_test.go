@@ -527,6 +527,13 @@ func (suite *rendererImplTest) TestFlushFrame() {
 	})
 }
 
+func (suite *rendererImplTest) TestWaitIdle() {
+	suite.Run("should call WaitIdle on the backend", func() {
+		suite.backendMock.EXPECT().WaitIdle().Return().Once()
+		suite.r.WaitIdle()
+	})
+}
+
 func (suite *rendererImplTest) TestSampleCount() {
 	suite.Run("should return the backend sample count", func() {
 		suite.backendMock.EXPECT().SampleCount().Return(uint32(4)).Once()

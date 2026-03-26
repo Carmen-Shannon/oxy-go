@@ -663,6 +663,10 @@ type wgpuRendererBackend interface {
 	// FlushFrame submits all accumulated per-frame command buffers to the GPU in a
 	// single queue submission and clears the pending slice.
 	FlushFrame()
+
+	// WaitIdle blocks until all in-flight GPU work has completed.
+	// Must be called before releasing GPU resources (e.g., on window resize).
+	WaitIdle()
 }
 
 var _ RendererBackend = &wgpuRendererBackendImpl{}
@@ -778,12 +782,18 @@ func (b *wgpuRendererBackendImpl) ConfigureSurface(width, height int) {
 		if err != nil {
 			panic(err)
 		}
+		if b.msaaTextureView != nil {
+			b.msaaTextureView.Release()
+		}
 		b.msaaTextureView, err = msaaTexture.CreateView(nil)
 		if err != nil {
 			panic(err)
 		}
 	} else {
 		// No MSAA — the render pass draws directly to the swapchain view.
+		if b.msaaTextureView != nil {
+			b.msaaTextureView.Release()
+		}
 		b.msaaTextureView = nil
 	}
 
@@ -803,6 +813,9 @@ func (b *wgpuRendererBackendImpl) ConfigureSurface(width, height int) {
 	})
 	if err != nil {
 		panic(err)
+	}
+	if b.depthTextureView != nil {
+		b.depthTextureView.Release()
 	}
 	b.depthTextureView, err = depthTexture.CreateView(nil)
 	if err != nil {
@@ -3045,6 +3058,10 @@ func (b *wgpuRendererBackendImpl) FlushFrame() {
 		cb.Release()
 	}
 	b.pendingCommandBuffers = b.pendingCommandBuffers[:0]
+}
+
+func (b *wgpuRendererBackendImpl) WaitIdle() {
+	b.device.Poll(true, nil)
 }
 
 // mergeBindGroupLayouts merges the bind group layout descriptors from a vertex and fragment shader

@@ -591,6 +591,10 @@ type Renderer interface {
 	// single queue submission and clears the pending slice.
 	FlushFrame()
 
+	// WaitIdle blocks until all in-flight GPU work has completed.
+	// Must be called before releasing GPU resources (e.g., on window resize).
+	WaitIdle()
+
 	// SampleCount returns the MSAA sample count for the main render pass.
 	//
 	// Returns:
@@ -645,6 +649,7 @@ func (r *renderer) BeginCompositionPass()                               { r.back
 func (r *renderer) EndCompositionPass()                                 { r.backend.EndCompositionPass() }
 func (r *renderer) EndCompositionFrame()                                { r.backend.EndCompositionFrame() }
 func (r *renderer) FlushFrame()                                         { r.backend.FlushFrame() }
+func (r *renderer) WaitIdle()                                           { r.backend.WaitIdle() }
 func (r *renderer) SampleCount() uint32                                 { return r.backend.SampleCount() }
 func (r *renderer) MaxTextureDimension2D() uint32                       { return r.backend.MaxTextureDimension2D() }
 func (r *renderer) SetInjections(injections map[string]string)          { r.injections = injections }

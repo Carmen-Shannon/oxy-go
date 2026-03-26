@@ -327,6 +327,7 @@ func (suite *engineTest) TestHandleRender() {
 		rendererMock.EXPECT().EndComputeFrame().Return().Maybe()
 		rendererMock.EXPECT().BeginGeometryFrame().Return(nil).Maybe()
 		suite.sceneMock.EXPECT().PrepareShadows().Return().Maybe()
+		suite.sceneMock.EXPECT().PrepareLights().Return().Maybe()
 		suite.sceneMock.EXPECT().PrepareGBuffer().Return().Maybe()
 		rendererMock.EXPECT().EndGeometryFrame().Return().Maybe()
 		suite.sceneMock.EXPECT().PrepareLightCulling().Return().Maybe()
@@ -378,6 +379,7 @@ func (suite *engineTest) TestHandleRender() {
 		rendererMock.EXPECT().EndComputeFrame().Return().Maybe()
 		rendererMock.EXPECT().BeginGeometryFrame().Return(nil).Maybe()
 		suite.sceneMock.EXPECT().PrepareShadows().Return().Maybe()
+		suite.sceneMock.EXPECT().PrepareLights().Return().Maybe()
 		suite.sceneMock.EXPECT().PrepareGBuffer().Return().Maybe()
 		rendererMock.EXPECT().EndGeometryFrame().Return().Maybe()
 		suite.sceneMock.EXPECT().PrepareLightCulling().Return().Maybe()
@@ -483,6 +485,7 @@ func (suite *engineTest) TestHandleRender() {
 		rendererMock.EXPECT().EndComputeFrame().Return().Maybe()
 		rendererMock.EXPECT().BeginGeometryFrame().Return(nil).Maybe()
 		suite.sceneMock.EXPECT().PrepareShadows().Return().Maybe()
+		suite.sceneMock.EXPECT().PrepareLights().Return().Maybe()
 		suite.sceneMock.EXPECT().PrepareGBuffer().Return().Maybe()
 		rendererMock.EXPECT().EndGeometryFrame().Return().Maybe()
 		suite.sceneMock.EXPECT().PrepareLightCulling().Return().Maybe()
@@ -580,8 +583,18 @@ func (suite *engineTest) TestHandleRender() {
 }
 
 func (suite *engineTest) TestResizeCallback() {
-	suite.Run("should call Resize on all registered scenes", func() {
-		suite.sceneMock.EXPECT().Resize(800, 600).Return().Once()
-		suite.engine.(*engine).resizeCallback(800, 600)
+	suite.Run("should send resize event to channel without calling Resize directly", func() {
+		eImpl := suite.engine.(*engine)
+		eImpl.resizeCallback(800, 600)
+		suite.Len(eImpl.resizeEvents, 1)
+	})
+
+	suite.Run("should replace the stale event with the latest dimensions", func() {
+		eImpl := suite.engine.(*engine)
+		eImpl.resizeCallback(800, 600)
+		eImpl.resizeCallback(1920, 1080)
+		suite.Len(eImpl.resizeEvents, 1)
+		dims := <-eImpl.resizeEvents
+		suite.Equal([2]int{1920, 1080}, dims)
 	})
 }

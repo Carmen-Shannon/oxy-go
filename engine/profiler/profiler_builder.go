@@ -31,6 +31,10 @@ func NewProfiler(options ...ProfilerBuilderOption) Profiler {
 		lastTime:       time.Now(),
 		updateInterval: time.Second,
 		memStats:       runtime.MemStats{},
+		sections:       make(map[string]*sectionStats),
+		sectionOrder:   []string{},
+		metrics:        make(map[string]*metricStats),
+		metricOrder:    []string{},
 	}
 	for _, opt := range options {
 		opt(p)

@@ -190,7 +190,7 @@ func (suite *lightTest) TestSetCastsShadows() {
 
 func (suite *lightTest) TestShadowBias() {
 	suite.Run("should return the shadow bias", func() {
-		suite.Equal(float32(0.005), suite.light.ShadowBias())
+		suite.Equal(float32(0.0002), suite.light.ShadowBias())
 	})
 }
 
