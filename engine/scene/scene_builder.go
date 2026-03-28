@@ -230,6 +230,11 @@ func NewScene(name string, cam camera.Camera, r renderer.Renderer, options ...Sc
 		if err := r.InitBindGroup(bgp, cameraVertShader.BindGroupLayoutDescriptor(cameraGroup), nil, nil); err != nil {
 			panic(fmt.Sprintf("scene: failed to init camera bind group: %v", err))
 		}
+		bgp.SetSlot(1)
+		if err := r.InitBindGroup(bgp, cameraVertShader.BindGroupLayoutDescriptor(cameraGroup), nil, nil); err != nil {
+			panic(fmt.Sprintf("scene: failed to init camera bind group slot 1: %v", err))
+		}
+		bgp.SetSlot(0)
 	}
 	return s
 }

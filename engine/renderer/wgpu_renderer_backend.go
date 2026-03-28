@@ -77,6 +77,32 @@ type wgpuRendererBackendImpl struct {
 	pendingCommandBuffers []*wgpu.CommandBuffer
 
 	maxTextureDimension2D uint32
+
+	// GPU timestamp query state. timestampEnabled is false when the adapter does not
+	// support FeatureNameTimestampQuery; all timestamp code is gated behind this flag.
+	timestampQuerySet      *wgpu.QuerySet
+	timestampResolveBuffer *wgpu.Buffer
+	timestampSlotCount     int
+	timestampEnabled       bool
+
+	// computeFrameCount tracks the current invocation of BeginComputeFrame within a
+	// frame, reset to 0 in FlushFrame. Used to route WriteTimestamp to the correct slot.
+	computeFrameCount int
+
+	// isHDRFrame is set true by BeginHDRFrame and false by BeginFrame so that
+	// EndFrame knows whether to write the HDR end timestamp (slot 7).
+	isHDRFrame bool
+
+	// Frames-in-flight control
+	frameInFlightCount int
+	currentFrameSlot   int
+	slotSubmitIndex    [2]wgpu.SubmissionIndex
+	slotSubmitValid    [2]bool
+
+	// gpuSerializedProfiling, when true, causes each End*Frame call to submit its command
+	// buffer immediately and poll for GPU completion. Allows the CPU profiler to measure
+	// actual GPU execution time. For diagnostic use only.
+	gpuSerializedProfiling bool
 }
 
 type wgpuRendererBackend interface {
@@ -662,11 +688,23 @@ type wgpuRendererBackend interface {
 
 	// FlushFrame submits all accumulated per-frame command buffers to the GPU in a
 	// single queue submission and clears the pending slice.
-	FlushFrame()
+	FlushFrame() wgpu.SubmissionIndex
 
 	// WaitIdle blocks until all in-flight GPU work has completed.
 	// Must be called before releasing GPU resources (e.g., on window resize).
 	WaitIdle()
+
+	// GPUTimings always returns nil. GPU timestamp readback via MapAsync is permanently
+	// disabled due to a library-level bug in github.com/Carmen-Shannon/webgpu.
+	GPUTimings() map[string]float64
+
+	// SyncGPUTimestamps is retained for interface compatibility. It is currently used as a
+	// frames-in-flight fence via Device.Poll; GPU timestamp readback via MapAsync is
+	// permanently disabled due to a library-level bug in github.com/Carmen-Shannon/webgpu.
+	SyncGPUTimestamps()
+
+	// CurrentFrameSlot returns the index of the frame slot currently being encoded (0 or 1).
+	CurrentFrameSlot() int
 }
 
 var _ RendererBackend = &wgpuRendererBackendImpl{}
@@ -686,13 +724,15 @@ func (b *wgpuRendererBackendImpl) SetRenderTargetFormat(format wgpu.TextureForma
 	b.renderTargetFormat = &f
 }
 
-func newWGPURendererBackend(surfaceDescriptor *wgpu.SurfaceDescriptor, forceFallbackAdapter bool, sampleCount MSAASampleCount) wgpuRendererBackend {
+func newWGPURendererBackend(surfaceDescriptor *wgpu.SurfaceDescriptor, forceFallbackAdapter bool, sampleCount MSAASampleCount, gpuSerializedProfiling bool) wgpuRendererBackend {
 	runtime.LockOSThread()
 	w := &wgpuRendererBackendImpl{
-		mu:          &sync.Mutex{},
-		instance:    wgpu.CreateInstance(nil),
-		presentMode: wgpu.PresentModeImmediate,
-		sampleCount: sampleCount,
+		mu:                     &sync.Mutex{},
+		instance:               wgpu.CreateInstance(nil),
+		presentMode:            wgpu.PresentModeImmediate,
+		sampleCount:            sampleCount,
+		frameInFlightCount:     2,
+		gpuSerializedProfiling: gpuSerializedProfiling,
 	}
 	w.surface = w.instance.CreateSurface(surfaceDescriptor)
 
@@ -723,6 +763,10 @@ func newWGPURendererBackend(surfaceDescriptor *wgpu.SurfaceDescriptor, forceFall
 	if w.sampleCount > 4 {
 		requiredFeatures = append(requiredFeatures, wgpu.NativeFeatureTextureAdapterSpecificFormatFeatures)
 	}
+	timestampSupported := a.HasFeature(wgpu.FeatureNameTimestampQuery)
+	if timestampSupported {
+		requiredFeatures = append(requiredFeatures, wgpu.FeatureNameTimestampQuery)
+	}
 
 	d, err := a.RequestDevice(&wgpu.DeviceDescriptor{
 		Label:            "Main Device",
@@ -738,6 +782,28 @@ func newWGPURendererBackend(surfaceDescriptor *wgpu.SurfaceDescriptor, forceFall
 	w.queue = d.GetQueue()
 	w.maxTextureDimension2D = limits.MaxTextureDimension2D
 
+	if timestampSupported {
+		const slotCount = 12
+		qs, qsErr := w.device.CreateQuerySet(&wgpu.QuerySetDescriptor{
+			Label: "Timestamp Query Set",
+			Type:  wgpu.QueryTypeTimestamp,
+			Count: slotCount,
+		})
+		if qsErr == nil {
+			resolveBuffer, rbErr := w.device.CreateBuffer(&wgpu.BufferDescriptor{
+				Label: "Timestamp Resolve Buffer",
+				Size:  slotCount * 8,
+				Usage: wgpu.BufferUsageQueryResolve | wgpu.BufferUsageCopySrc,
+			})
+			if rbErr == nil {
+				w.timestampQuerySet = qs
+				w.timestampResolveBuffer = resolveBuffer
+				w.timestampSlotCount = slotCount
+				w.timestampEnabled = true
+			}
+		}
+	}
+
 	return w
 }
 
@@ -752,12 +818,13 @@ func (b *wgpuRendererBackendImpl) ConfigureSurface(width, height int) {
 	}
 
 	b.surface.Configure(b.adapter, b.device, &wgpu.SurfaceConfiguration{
-		Usage:       wgpu.TextureUsageRenderAttachment,
-		Format:      *b.surfaceFormat,
-		Width:       uint32(width),
-		Height:      uint32(height),
-		PresentMode: b.presentMode,
-		AlphaMode:   capabilities.AlphaModes[0],
+		Usage:                      wgpu.TextureUsageRenderAttachment,
+		Format:                     *b.surfaceFormat,
+		Width:                      uint32(width),
+		Height:                     uint32(height),
+		PresentMode:                b.presentMode,
+		AlphaMode:                  capabilities.AlphaModes[0],
+		DesiredMaximumFrameLatency: 3,
 	})
 
 	count := uint32(b.sampleCount)
@@ -858,6 +925,8 @@ func (b *wgpuRendererBackendImpl) SetPresentMode(mode PresentMode) {
 	switch mode {
 	case PresentModeVSync:
 		b.presentMode = wgpu.PresentModeFifo
+	case PresentModeMailbox:
+		b.presentMode = wgpu.PresentModeMailbox
 	case PresentModeUncapped:
 		fallthrough
 	default:
@@ -896,8 +965,6 @@ func (b *wgpuRendererBackendImpl) ReadMappedBuffer(buf *wgpu.Buffer, offset, siz
 	}); err != nil {
 		return nil, err
 	}
-
-	// Block until the mapping completes.
 	b.device.Poll(true, nil)
 	status := <-done
 	if status != wgpu.BufferMapAsyncStatusSuccess {
@@ -923,12 +990,28 @@ func (b *wgpuRendererBackendImpl) BeginComputeFrame() error {
 		return nil
 	}
 
+	// Track which compute frame invocation this is within the current render frame.
+	b.computeFrameCount++
+
 	encoder, err := b.device.CreateCommandEncoder(nil)
 	if err != nil {
 		b.computeFrameDepth--
+		b.computeFrameCount--
 		return err
 	}
 	b.computeFrameEncoder = encoder
+
+	if b.timestampEnabled {
+		switch b.computeFrameCount {
+		case 1:
+			_ = b.computeFrameEncoder.WriteTimestamp(b.timestampQuerySet, 0)
+		case 2:
+			_ = b.computeFrameEncoder.WriteTimestamp(b.timestampQuerySet, 4)
+		case 3:
+			_ = b.computeFrameEncoder.WriteTimestamp(b.timestampQuerySet, 8)
+		}
+	}
+
 	return nil
 }
 
@@ -948,10 +1031,30 @@ func (b *wgpuRendererBackendImpl) EndComputeFrame() {
 	}
 	b.computeFrameDepth = 0
 
+	if b.timestampEnabled {
+		switch b.computeFrameCount {
+		case 1:
+			_ = b.computeFrameEncoder.WriteTimestamp(b.timestampQuerySet, 1)
+		case 2:
+			_ = b.computeFrameEncoder.WriteTimestamp(b.timestampQuerySet, 5)
+		case 3:
+			_ = b.computeFrameEncoder.WriteTimestamp(b.timestampQuerySet, 9)
+		}
+	}
+
 	commandBuffer, err := b.computeFrameEncoder.Finish(nil)
 	if err != nil {
 		b.computeFrameEncoder.Release()
 		b.computeFrameEncoder = nil
+		return
+	}
+
+	if b.gpuSerializedProfiling {
+		idx := b.queue.Submit(commandBuffer)
+		commandBuffer.Release()
+		b.computeFrameEncoder.Release()
+		b.computeFrameEncoder = nil
+		b.device.Poll(true, &wgpu.WrappedSubmissionIndex{Queue: b.queue, SubmissionIndex: idx})
 		return
 	}
 
@@ -1469,6 +1572,7 @@ func (b *wgpuRendererBackendImpl) BeginFrame() error {
 	b.framePass = pass
 	b.frameSurface = surfaceTexture
 	b.frameView = view
+	b.isHDRFrame = false
 
 	return nil
 }
@@ -1521,6 +1625,10 @@ func (b *wgpuRendererBackendImpl) EndFrame() {
 
 	b.framePass.End()
 
+	if b.timestampEnabled && b.isHDRFrame {
+		_ = b.frameEncoder.WriteTimestamp(b.timestampQuerySet, 7)
+	}
+
 	commandBuffer, err := b.frameEncoder.Finish(nil)
 	if err != nil {
 		b.frameEncoder.Release()
@@ -1534,6 +1642,16 @@ func (b *wgpuRendererBackendImpl) EndFrame() {
 		b.framePass = nil
 		b.frameSurface = nil
 		b.frameView = nil
+		return
+	}
+
+	if b.gpuSerializedProfiling {
+		idx := b.queue.Submit(commandBuffer)
+		commandBuffer.Release()
+		b.frameEncoder.Release()
+		b.frameEncoder = nil
+		b.framePass = nil
+		b.device.Poll(true, &wgpu.WrappedSubmissionIndex{Queue: b.queue, SubmissionIndex: idx})
 		return
 	}
 
@@ -1593,6 +1711,10 @@ func (b *wgpuRendererBackendImpl) BeginGeometryFrame() error {
 		return err
 	}
 	b.geometryFrameEncoder = encoder
+	if b.timestampEnabled {
+		_ = b.geometryFrameEncoder.WriteTimestamp(b.timestampQuerySet, 2)
+	}
+
 	return nil
 }
 
@@ -1613,10 +1735,23 @@ func (b *wgpuRendererBackendImpl) EndGeometryFrame() {
 		return
 	}
 
+	if b.timestampEnabled {
+		_ = b.geometryFrameEncoder.WriteTimestamp(b.timestampQuerySet, 3)
+	}
+
 	commandBuffer, err := b.geometryFrameEncoder.Finish(nil)
 	if err != nil {
 		b.geometryFrameEncoder.Release()
 		b.geometryFrameEncoder = nil
+		return
+	}
+
+	if b.gpuSerializedProfiling {
+		idx := b.queue.Submit(commandBuffer)
+		commandBuffer.Release()
+		b.geometryFrameEncoder.Release()
+		b.geometryFrameEncoder = nil
+		b.device.Poll(true, &wgpu.WrappedSubmissionIndex{Queue: b.queue, SubmissionIndex: idx})
 		return
 	}
 
@@ -2390,6 +2525,9 @@ func (b *wgpuRendererBackendImpl) BeginHDRFrame(colorView, resolveView, depthVie
 	if err != nil {
 		return err
 	}
+	if b.timestampEnabled {
+		_ = encoder.WriteTimestamp(b.timestampQuerySet, 6)
+	}
 
 	colorAttachment := wgpu.RenderPassColorAttachment{
 		LoadOp:     wgpu.LoadOpClear,
@@ -2416,6 +2554,7 @@ func (b *wgpuRendererBackendImpl) BeginHDRFrame(colorView, resolveView, depthVie
 
 	b.frameEncoder = encoder
 	b.framePass = pass
+	b.isHDRFrame = true
 	return nil
 }
 
@@ -2965,6 +3104,10 @@ func (b *wgpuRendererBackendImpl) BeginCompositionFrame() error {
 	b.compositionFrameEncoder = encoder
 	b.compositionSurface = surfaceTexture
 	b.compositionView = view
+	if b.timestampEnabled {
+		_ = b.compositionFrameEncoder.WriteTimestamp(b.timestampQuerySet, 10)
+	}
+
 	return nil
 }
 
@@ -3031,6 +3174,11 @@ func (b *wgpuRendererBackendImpl) EndCompositionFrame() {
 		return
 	}
 
+	if b.timestampEnabled {
+		_ = b.compositionFrameEncoder.WriteTimestamp(b.timestampQuerySet, 11)
+		_ = b.compositionFrameEncoder.ResolveQuerySet(b.timestampQuerySet, 0, uint32(b.timestampSlotCount), b.timestampResolveBuffer, 0)
+	}
+
 	commandBuffer, err := b.compositionFrameEncoder.Finish(nil)
 	if err != nil {
 		b.compositionFrameEncoder.Release()
@@ -3045,23 +3193,59 @@ func (b *wgpuRendererBackendImpl) EndCompositionFrame() {
 
 // FlushFrame submits all accumulated per-frame command buffers to the GPU in a single
 // queue submission, then releases each command buffer and clears the pending slice.
-func (b *wgpuRendererBackendImpl) FlushFrame() {
+// It stores the returned SubmissionIndex for the current slot, advances the slot, and
+// returns the index so callers can observe it if needed.
+func (b *wgpuRendererBackendImpl) FlushFrame() wgpu.SubmissionIndex {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if len(b.pendingCommandBuffers) == 0 {
-		return
+		b.currentFrameSlot = (b.currentFrameSlot + 1) % b.frameInFlightCount
+		return wgpu.SubmissionIndex(0)
 	}
 
-	b.queue.Submit(b.pendingCommandBuffers...)
+	idx := b.queue.Submit(b.pendingCommandBuffers...)
 	for _, cb := range b.pendingCommandBuffers {
 		cb.Release()
 	}
 	b.pendingCommandBuffers = b.pendingCommandBuffers[:0]
+	b.computeFrameCount = 0
+
+	b.slotSubmitIndex[b.currentFrameSlot] = idx
+	b.slotSubmitValid[b.currentFrameSlot] = true
+	b.currentFrameSlot = (b.currentFrameSlot + 1) % b.frameInFlightCount
+
+	return idx
 }
 
 func (b *wgpuRendererBackendImpl) WaitIdle() {
 	b.device.Poll(true, nil)
+	b.slotSubmitValid = [2]bool{}
+}
+
+// GPUTimings returns the GPU execution time in milliseconds for each render phase
+// from the previous frame, or nil if timestamp queries are not supported.
+func (b *wgpuRendererBackendImpl) GPUTimings() map[string]float64 {
+	return nil
+}
+
+// SyncGPUTimestamps waits for the prior occupant of the current frame slot to complete
+// by issuing a scoped Device.Poll targeted at that slot's SubmissionIndex. This avoids
+// a full GPU drain while still ensuring the slot's resources are safe to reuse. It is a
+// no-op when no submission has been recorded for the slot yet.
+func (b *wgpuRendererBackendImpl) SyncGPUTimestamps() {
+	slot := b.currentFrameSlot
+	if !b.slotSubmitValid[slot] {
+		return
+	}
+	b.device.Poll(true, &wgpu.WrappedSubmissionIndex{
+		Queue:           b.queue,
+		SubmissionIndex: b.slotSubmitIndex[slot],
+	})
+}
+
+func (b *wgpuRendererBackendImpl) CurrentFrameSlot() int {
+	return b.currentFrameSlot
 }
 
 // mergeBindGroupLayouts merges the bind group layout descriptors from a vertex and fragment shader

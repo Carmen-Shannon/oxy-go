@@ -23,20 +23,22 @@ type compositionHandlerImpl struct {
 	pipelineKeys map[string]string
 	bgps         map[string]bind_group_provider.BindGroupProvider
 
+	activeSlot int
+
 	// Offscreen HDR render target (RGBA16Float) that the lit pass writes to
 	// instead of the swapchain when composition is active.
-	hdrTexture     *wgpu.Texture
-	hdrTextureView *wgpu.TextureView
+	hdrTextures     [2]*wgpu.Texture
+	hdrTextureViews [2]*wgpu.TextureView
 
 	// MSAA resolve target for the HDR texture when MSAA is enabled.
 	// The lit pass renders to this multi-sampled texture, which resolves
 	// into hdrTexture at the end of the render pass.
-	msaaTexture     *wgpu.Texture
-	msaaTextureView *wgpu.TextureView
+	msaaTextures     [2]*wgpu.Texture
+	msaaTextureViews [2]*wgpu.TextureView
 
 	// Depth texture for the offscreen HDR render pass.
-	depthTexture     *wgpu.Texture
-	depthTextureView *wgpu.TextureView
+	depthTextures     [2]*wgpu.Texture
+	depthTextureViews [2]*wgpu.TextureView
 
 	// Linear sampler for sampling the HDR and SSR textures in the composition shader.
 	linearSampler *wgpu.Sampler
@@ -56,15 +58,15 @@ type compositionHandlerImpl struct {
 
 	// Bloom downsample chain texture and per-mip views. Each mip stores the
 	// progressively downsampled bright-pass result.
-	bloomDownTexture      *wgpu.Texture
-	bloomDownReadViews    []*wgpu.TextureView
-	bloomDownStorageViews []*wgpu.TextureView
+	bloomDownTextures        [2]*wgpu.Texture
+	bloomDownReadViewsArr    [2][]*wgpu.TextureView
+	bloomDownStorageViewsArr [2][]*wgpu.TextureView
 
 	// Bloom upsample chain texture and per-mip views. Each mip stores the
 	// progressively upsampled and blended bloom result. Mip 0 is the final
 	// bloom output sampled by the composition shader.
-	bloomUpTexture      *wgpu.Texture
-	bloomUpReadViews    []*wgpu.TextureView
-	bloomUpStorageViews []*wgpu.TextureView
-	bloomUpMip0View     *wgpu.TextureView
+	bloomUpTextures        [2]*wgpu.Texture
+	bloomUpReadViewsArr    [2][]*wgpu.TextureView
+	bloomUpStorageViewsArr [2][]*wgpu.TextureView
+	bloomUpMip0Views       [2]*wgpu.TextureView
 }

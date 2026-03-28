@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"errors"
 	"sync"
 	"testing"
 
@@ -128,6 +129,125 @@ func (suite *loaderImplTest) TestLoad() {
 		suite.NoError(err)
 		suite.NotNil(result)
 		suite.NotNil(suite.l.modelCache["fox.gltf"])
+	})
+}
+
+func (suite *loaderImplTest) TestLoadAll() {
+	suite.Run("unsupported extension returns error", func() {
+		_, err := suite.l.LoadAll("model.xyz")
+		suite.Error(err)
+	})
+
+	suite.Run("backend load error returns error", func() {
+		suite.mb.err = errors.New("backend error")
+		_, err := suite.l.LoadAll("model.gltf")
+		suite.Error(err)
+	})
+
+	suite.Run("single-material model returns one entry", func() {
+		suite.mb.result = &model.ImportedModel{
+			Name: "single",
+			Meshes: []model.ImportedMesh{
+				{Vertices: []model.GPUSkinnedVertex{{}}, Indices: []uint32{0}, MaterialIndex: 0},
+			},
+			Materials: []common.ImportedMaterial{{Name: "mat0"}},
+		}
+		result, err := suite.l.LoadAll("model.gltf")
+		suite.NoError(err)
+		suite.Len(result, 1)
+	})
+
+	suite.Run("multi-material model returns one entry per unique material", func() {
+		suite.mb.result = &model.ImportedModel{
+			Name: "multi",
+			Meshes: []model.ImportedMesh{
+				{Vertices: []model.GPUSkinnedVertex{{}}, Indices: []uint32{0}, MaterialIndex: 0},
+				{Vertices: []model.GPUSkinnedVertex{{}}, Indices: []uint32{0}, MaterialIndex: 1},
+			},
+			Materials: []common.ImportedMaterial{{Name: "mat0"}, {Name: "mat1"}},
+		}
+		result, err := suite.l.LoadAll("model.gltf")
+		suite.NoError(err)
+		suite.Len(result, 2)
+	})
+}
+
+func (suite *loaderImplTest) TestImportedToModels() {
+	suite.Run("empty meshes returns empty slice", func() {
+		result, err := suite.l.importedToModels(&model.ImportedModel{Name: "empty"})
+		suite.NoError(err)
+		suite.Len(result, 0)
+	})
+
+	suite.Run("single material group produces one model", func() {
+		imported := &model.ImportedModel{
+			Name: "one",
+			Meshes: []model.ImportedMesh{
+				{Vertices: []model.GPUSkinnedVertex{{}}, Indices: []uint32{0}, MaterialIndex: 0},
+				{Vertices: []model.GPUSkinnedVertex{{}}, Indices: []uint32{0}, MaterialIndex: 0},
+			},
+			Materials: []common.ImportedMaterial{{Name: "mat0"}},
+		}
+		result, err := suite.l.importedToModels(imported)
+		suite.NoError(err)
+		suite.Len(result, 1)
+		suite.Equal(2, result[0].IndexCount())
+	})
+
+	suite.Run("two material groups produce two models", func() {
+		imported := &model.ImportedModel{
+			Name: "two",
+			Meshes: []model.ImportedMesh{
+				{Vertices: []model.GPUSkinnedVertex{{}}, Indices: []uint32{0}, MaterialIndex: 0},
+				{Vertices: []model.GPUSkinnedVertex{{}}, Indices: []uint32{0}, MaterialIndex: 1},
+			},
+			Materials: []common.ImportedMaterial{{Name: "mat0"}, {Name: "mat1"}},
+		}
+		result, err := suite.l.importedToModels(imported)
+		suite.NoError(err)
+		suite.Len(result, 2)
+	})
+
+	suite.Run("skinned model when skeleton has bones", func() {
+		imported := &model.ImportedModel{
+			Name: "skinned",
+			Meshes: []model.ImportedMesh{
+				{Vertices: []model.GPUSkinnedVertex{{}}, Indices: []uint32{0}, MaterialIndex: 0},
+			},
+			Skeleton: &model.Skeleton{Bones: []model.Bone{{Name: "root"}}},
+		}
+		result, err := suite.l.importedToModels(imported)
+		suite.NoError(err)
+		suite.Len(result, 1)
+		suite.True(result[0].Skinned())
+	})
+
+	suite.Run("non-skinned model when no skeleton", func() {
+		imported := &model.ImportedModel{
+			Name: "static",
+			Meshes: []model.ImportedMesh{
+				{Vertices: []model.GPUSkinnedVertex{{}}, Indices: []uint32{0}, MaterialIndex: 0},
+			},
+		}
+		result, err := suite.l.importedToModels(imported)
+		suite.NoError(err)
+		suite.Len(result, 1)
+		suite.False(result[0].Skinned())
+	})
+
+	suite.Run("material index out of bounds uses empty material without panic", func() {
+		imported := &model.ImportedModel{
+			Name: "oob",
+			Meshes: []model.ImportedMesh{
+				{Vertices: []model.GPUSkinnedVertex{{}}, Indices: []uint32{0}, MaterialIndex: 5},
+			},
+			Materials: []common.ImportedMaterial{},
+		}
+		suite.NotPanics(func() {
+			result, err := suite.l.importedToModels(imported)
+			suite.NoError(err)
+			suite.Len(result, 1)
+		})
 	})
 }
 

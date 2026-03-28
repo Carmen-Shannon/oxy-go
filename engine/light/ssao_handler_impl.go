@@ -24,18 +24,20 @@ type ssaoHandlerImpl struct {
 	pipelineKeys map[string]string
 	bgps         map[string]bind_group_provider.BindGroupProvider
 
+	activeSlot int
+
 	// Raw SSAO output (R8Unorm, screen resolution).
-	rawTexture     *wgpu.Texture
-	rawTextureView *wgpu.TextureView
+	rawTextures     [2]*wgpu.Texture
+	rawTextureViews [2]*wgpu.TextureView
 
 	// Blurred SSAO output (R8Unorm, screen resolution).
-	blurredTexture     *wgpu.Texture
-	blurredTextureView *wgpu.TextureView
+	blurredTextures     [2]*wgpu.Texture
+	blurredTextureViews [2]*wgpu.TextureView
 
 	// Intermediate scratch texture for the separable bilateral blur
 	// (horizontal pass writes here, vertical pass reads from here).
-	scratchTexture     *wgpu.Texture
-	scratchTextureView *wgpu.TextureView
+	scratchTextures     [2]*wgpu.Texture
+	scratchTextureViews [2]*wgpu.TextureView
 
 	// Linear sampler used for the final SSAO texture bound to the lit shader.
 	linearSampler *wgpu.Sampler

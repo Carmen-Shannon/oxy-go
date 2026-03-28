@@ -181,39 +181,50 @@ type BindGroupProvider interface {
 	// Parameters:
 	//   - count: the index count
 	SetIndexCount(count int)
+
+	// SetSlot sets the active frame-in-flight slot for this provider.
+	// Slot-sensitive methods (Buffer, Buffers, SetBuffer, SetBuffers, BindGroup, SetBindGroup)
+	// will operate on the specified slot's resources.
+	//
+	// Parameters:
+	//   - slot: the frame-in-flight slot index (0 or 1)
+	SetSlot(slot int)
 }
 
 // Compile-time check that bindGroupProvider implements BindGroupProvider
 var _ BindGroupProvider = &bindGroupProvider{}
 
 func (p *bindGroupProvider) Label() string                                { return p.label }
-func (p *bindGroupProvider) BindGroup() *wgpu.BindGroup                   { return p.bindGroup }
+func (p *bindGroupProvider) BindGroup() *wgpu.BindGroup                   { return p.bindGroups[p.activeSlot] }
 func (p *bindGroupProvider) BindGroupLayout() *wgpu.BindGroupLayout       { return p.bindGroupLayout }
-func (p *bindGroupProvider) Buffer(binding int) *wgpu.Buffer              { return p.buffers[binding] }
-func (p *bindGroupProvider) Buffers() map[int]*wgpu.Buffer                { return p.buffers }
+func (p *bindGroupProvider) Buffer(binding int) *wgpu.Buffer              { return p.buffers[p.activeSlot][binding] }
+func (p *bindGroupProvider) Buffers() map[int]*wgpu.Buffer                { return p.buffers[p.activeSlot] }
 func (p *bindGroupProvider) TextureViews() map[int]*wgpu.TextureView      { return p.textureViews }
 func (p *bindGroupProvider) Sampler(binding int) *wgpu.Sampler            { return p.samplers[binding] }
 func (p *bindGroupProvider) Samplers() map[int]*wgpu.Sampler              { return p.samplers }
 func (p *bindGroupProvider) VertexBuffer() *wgpu.Buffer                   { return p.vertexBuffer }
 func (p *bindGroupProvider) IndexBuffer() *wgpu.Buffer                    { return p.indexBuffer }
 func (p *bindGroupProvider) IndexCount() int                              { return p.indexCount }
-func (p *bindGroupProvider) SetBindGroup(bg *wgpu.BindGroup)              { p.bindGroup = bg }
+func (p *bindGroupProvider) SetBindGroup(bg *wgpu.BindGroup)              { p.bindGroups[p.activeSlot] = bg }
 func (p *bindGroupProvider) SetBindGroupLayout(bgl *wgpu.BindGroupLayout) { p.bindGroupLayout = bgl }
-func (p *bindGroupProvider) SetBuffers(buffers map[int]*wgpu.Buffer)      { p.buffers = buffers }
-func (p *bindGroupProvider) SetVertexBuffer(buf *wgpu.Buffer)             { p.vertexBuffer = buf }
-func (p *bindGroupProvider) SetIndexBuffer(buf *wgpu.Buffer)              { p.indexBuffer = buf }
-func (p *bindGroupProvider) SetIndexCount(count int)                      { p.indexCount = count }
-func (p *bindGroupProvider) SetSamplers(samplers map[int]*wgpu.Sampler)   { p.samplers = samplers }
+func (p *bindGroupProvider) SetBuffers(buffers map[int]*wgpu.Buffer) {
+	p.buffers[p.activeSlot] = buffers
+}
+func (p *bindGroupProvider) SetVertexBuffer(buf *wgpu.Buffer)           { p.vertexBuffer = buf }
+func (p *bindGroupProvider) SetIndexBuffer(buf *wgpu.Buffer)            { p.indexBuffer = buf }
+func (p *bindGroupProvider) SetIndexCount(count int)                    { p.indexCount = count }
+func (p *bindGroupProvider) SetSamplers(samplers map[int]*wgpu.Sampler) { p.samplers = samplers }
+func (p *bindGroupProvider) SetSlot(slot int)                           { p.activeSlot = slot }
 
 func (p *bindGroupProvider) TextureView(binding int) *wgpu.TextureView {
 	return p.textureViews[binding]
 }
 
 func (p *bindGroupProvider) SetBuffer(binding int, buf *wgpu.Buffer) {
-	if p.buffers == nil {
-		p.buffers = make(map[int]*wgpu.Buffer)
+	if p.buffers[p.activeSlot] == nil {
+		p.buffers[p.activeSlot] = make(map[int]*wgpu.Buffer)
 	}
-	p.buffers[binding] = buf
+	p.buffers[p.activeSlot][binding] = buf
 }
 
 func (p *bindGroupProvider) SetTextureView(binding int, tv *wgpu.TextureView) {
@@ -247,16 +258,19 @@ func (p *bindGroupProvider) Release() {
 			delete(p.samplers, i)
 		}
 	}
-	for i, buf := range p.buffers {
-		if buf != nil {
-			buf.Release()
-			delete(p.buffers, i)
+	for slot := range p.buffers {
+		for i, buf := range p.buffers[slot] {
+			if buf != nil {
+				buf.Release()
+				delete(p.buffers[slot], i)
+			}
 		}
 	}
-
-	if p.bindGroup != nil {
-		p.bindGroup.Release()
-		p.bindGroup = nil
+	for i := range p.bindGroups {
+		if p.bindGroups[i] != nil {
+			p.bindGroups[i].Release()
+			p.bindGroups[i] = nil
+		}
 	}
 	if p.bindGroupLayout != nil {
 		p.bindGroupLayout.Release()

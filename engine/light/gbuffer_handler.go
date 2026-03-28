@@ -28,6 +28,13 @@ type GBufferHandler interface {
 	//   - enabled: true to mark as initialized
 	SetEnabled(enabled bool)
 
+	// SetSlot selects the active texture slot. Texture and view getters and
+	// setters read and write the [slot] index of the underlying arrays.
+	//
+	// Parameters:
+	//   - slot: the slot index (0 or 1)
+	SetSlot(slot int)
+
 	// ScreenWidth returns the current screen width in pixels used for texture sizing.
 	//
 	// Returns:
@@ -150,25 +157,38 @@ type GBufferHandler interface {
 
 var _ GBufferHandler = &gBufferHandlerImpl{}
 
-func (h *gBufferHandlerImpl) Enabled() bool                             { return h.enabled }
-func (h *gBufferHandlerImpl) SetEnabled(enabled bool)                   { h.enabled = enabled }
-func (h *gBufferHandlerImpl) ScreenWidth() int                          { return h.screenWidth }
-func (h *gBufferHandlerImpl) ScreenHeight() int                         { return h.screenHeight }
-func (h *gBufferHandlerImpl) PipelineKey(name string) string            { return h.pipelineKeys[name] }
-func (h *gBufferHandlerImpl) PipelineKeys() map[string]string           { return h.pipelineKeys }
-func (h *gBufferHandlerImpl) SetPipelineKey(name, key string)           { h.pipelineKeys[name] = key }
-func (h *gBufferHandlerImpl) NormalTexture() *wgpu.Texture              { return h.normalTexture }
-func (h *gBufferHandlerImpl) SetNormalTexture(t *wgpu.Texture)          { h.normalTexture = t }
-func (h *gBufferHandlerImpl) NormalTextureView() *wgpu.TextureView      { return h.normalTextureView }
-func (h *gBufferHandlerImpl) SetNormalTextureView(tv *wgpu.TextureView) { h.normalTextureView = tv }
-func (h *gBufferHandlerImpl) AlbedoTexture() *wgpu.Texture              { return h.albedoTexture }
-func (h *gBufferHandlerImpl) SetAlbedoTexture(t *wgpu.Texture)          { h.albedoTexture = t }
-func (h *gBufferHandlerImpl) AlbedoTextureView() *wgpu.TextureView      { return h.albedoTextureView }
-func (h *gBufferHandlerImpl) SetAlbedoTextureView(tv *wgpu.TextureView) { h.albedoTextureView = tv }
-func (h *gBufferHandlerImpl) DepthTexture() *wgpu.Texture               { return h.depthTexture }
-func (h *gBufferHandlerImpl) SetDepthTexture(t *wgpu.Texture)           { h.depthTexture = t }
-func (h *gBufferHandlerImpl) DepthTextureView() *wgpu.TextureView       { return h.depthTextureView }
-func (h *gBufferHandlerImpl) SetDepthTextureView(tv *wgpu.TextureView)  { h.depthTextureView = tv }
+func (h *gBufferHandlerImpl) Enabled() bool                    { return h.enabled }
+func (h *gBufferHandlerImpl) SetEnabled(enabled bool)          { h.enabled = enabled }
+func (h *gBufferHandlerImpl) ScreenWidth() int                 { return h.screenWidth }
+func (h *gBufferHandlerImpl) ScreenHeight() int                { return h.screenHeight }
+func (h *gBufferHandlerImpl) PipelineKey(name string) string   { return h.pipelineKeys[name] }
+func (h *gBufferHandlerImpl) PipelineKeys() map[string]string  { return h.pipelineKeys }
+func (h *gBufferHandlerImpl) SetPipelineKey(name, key string)  { h.pipelineKeys[name] = key }
+func (h *gBufferHandlerImpl) SetSlot(slot int)                 { h.activeSlot = slot }
+func (h *gBufferHandlerImpl) NormalTexture() *wgpu.Texture     { return h.normalTextures[h.activeSlot] }
+func (h *gBufferHandlerImpl) SetNormalTexture(t *wgpu.Texture) { h.normalTextures[h.activeSlot] = t }
+func (h *gBufferHandlerImpl) NormalTextureView() *wgpu.TextureView {
+	return h.normalTextureViews[h.activeSlot]
+}
+func (h *gBufferHandlerImpl) SetNormalTextureView(tv *wgpu.TextureView) {
+	h.normalTextureViews[h.activeSlot] = tv
+}
+func (h *gBufferHandlerImpl) AlbedoTexture() *wgpu.Texture     { return h.albedoTextures[h.activeSlot] }
+func (h *gBufferHandlerImpl) SetAlbedoTexture(t *wgpu.Texture) { h.albedoTextures[h.activeSlot] = t }
+func (h *gBufferHandlerImpl) AlbedoTextureView() *wgpu.TextureView {
+	return h.albedoTextureViews[h.activeSlot]
+}
+func (h *gBufferHandlerImpl) SetAlbedoTextureView(tv *wgpu.TextureView) {
+	h.albedoTextureViews[h.activeSlot] = tv
+}
+func (h *gBufferHandlerImpl) DepthTexture() *wgpu.Texture     { return h.depthTextures[h.activeSlot] }
+func (h *gBufferHandlerImpl) SetDepthTexture(t *wgpu.Texture) { h.depthTextures[h.activeSlot] = t }
+func (h *gBufferHandlerImpl) DepthTextureView() *wgpu.TextureView {
+	return h.depthTextureViews[h.activeSlot]
+}
+func (h *gBufferHandlerImpl) SetDepthTextureView(tv *wgpu.TextureView) {
+	h.depthTextureViews[h.activeSlot] = tv
+}
 
 func (h *gBufferHandlerImpl) Resize(width, height int) {
 	h.screenWidth = width

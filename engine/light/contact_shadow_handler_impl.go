@@ -16,9 +16,11 @@ type contactShadowHandlerImpl struct {
 	pipelineKeys map[string]string
 	bgps         map[string]bind_group_provider.BindGroupProvider
 
+	activeSlot int
+
 	// Contact shadow output (R32Float, screen resolution).
-	texture     *wgpu.Texture
-	textureView *wgpu.TextureView
+	textures     [2]*wgpu.Texture
+	textureViews [2]*wgpu.TextureView
 
 	// Linear sampler for the lit shader to sample the contact shadow texture.
 	linearSampler *wgpu.Sampler

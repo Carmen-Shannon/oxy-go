@@ -81,6 +81,24 @@ func WithForceSoftwareRenderer(force bool) RendererBuilderOption {
 	}
 }
 
+// WithGPUSerializedProfiling enables GPU serialized profiling mode.
+// When enabled, each render phase (compute, geometry, lit) submits its command buffer
+// immediately and polls for GPU completion before the next phase begins.
+// This allows the CPU profiler to measure actual GPU execution time per phase,
+// at the cost of eliminating GPU/CPU parallelism and significantly reducing throughput.
+// For diagnostic use only — do not enable in production.
+//
+// Parameters:
+//   - enabled: true to enable serialized GPU profiling, false for normal batched mode
+//
+// Returns:
+//   - RendererBuilderOption: a function that applies the GPU serialized profiling option
+func WithGPUSerializedProfiling(enabled bool) RendererBuilderOption {
+	return func(r *renderer) {
+		r.gpuSerializedProfiling = enabled
+	}
+}
+
 // NewRenderer creates a new Renderer instance with the specified backend type and surface descriptor.
 // The surface descriptor is platform-specific and is typically obtained from Window.GetSurfaceDescriptor().
 //
@@ -109,7 +127,7 @@ func NewRenderer(backendType RendererBackendType, window window.Window, options 
 		msaa = *r.pendingMSAA
 	}
 
-	r.backend = newWGPURendererBackend(window.SurfaceDescriptor(), r.forceFallbackAdapter, msaa)
+	r.backend = newWGPURendererBackend(window.SurfaceDescriptor(), r.forceFallbackAdapter, msaa, r.gpuSerializedProfiling)
 
 	if r.pendingPresentMode != nil {
 		r.backend.SetPresentMode(*r.pendingPresentMode)

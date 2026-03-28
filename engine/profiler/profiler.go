@@ -113,7 +113,7 @@ func (p *profiler) Tick() bool {
 					continue
 				}
 				avgVal := m.total / float64(m.count)
-				log.Printf("  %-24s avg: %.2f", label, avgVal)
+				log.Printf("  %-24s avg: %.2fms", label, avgVal)
 			}
 		}
 

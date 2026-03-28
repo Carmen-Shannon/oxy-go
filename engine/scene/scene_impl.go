@@ -222,14 +222,14 @@ func (s *scene) initSSAO() {
 	// When half-resolution is enabled, allocate SSAO textures at half the
 	// screen dimensions in each axis (quarter pixel count).
 	ssaoW := w
-	ssaoH := h
+	ssaoHeight := h
 	if s.lightHandler.SSAOHandler().HalfResolution() {
 		ssaoW = max(w/2, 1)
-		ssaoH = max(h/2, 1)
+		ssaoHeight = max(h/2, 1)
 	}
 
 	// 1. Create SSAO textures (raw, blurred, scratch at SSAO res).
-	rawView, rawTex, blurView, blurTex, scratchView, scratchTex, err := s.r.CreateSSAOTextures(ssaoW, ssaoH)
+	rawView, rawTex, blurView, blurTex, scratchView, scratchTex, err := s.r.CreateSSAOTextures(ssaoW, ssaoHeight)
 	if err != nil {
 		panic(fmt.Sprintf("scene: failed to create SSAO textures: %v", err))
 	}
@@ -313,8 +313,23 @@ func (s *scene) initSSAO() {
 		{Provider: ssaoBGP, Binding: 5, Offset: 0, Data: kernelData},
 	})
 
-	s.lightHandler.SSAOHandler().Resize(ssaoW, ssaoH)
+	s.lightHandler.SSAOHandler().Resize(w, h)
 	s.lightHandler.SSAOHandler().SetEnabled(true)
+
+	// Initialize slot 1 SSAO textures
+	ssaoH := s.lightHandler.SSAOHandler()
+	ssaoH.SetSlot(1)
+	rawView1, rawTex1, blurView1, blurTex1, scratchView1, scratchTex1, err := s.r.CreateSSAOTextures(ssaoW, ssaoHeight)
+	if err != nil {
+		panic(fmt.Sprintf("scene: failed to create SSAO textures slot 1: %v", err))
+	}
+	ssaoH.SetRawTexture(rawTex1)
+	ssaoH.SetRawTextureView(rawView1)
+	ssaoH.SetBlurredTexture(blurTex1)
+	ssaoH.SetBlurredTextureView(blurView1)
+	ssaoH.SetScratchTexture(scratchTex1)
+	ssaoH.SetScratchTextureView(scratchView1)
+	ssaoH.SetSlot(0)
 }
 
 // initSSAOLitBindGroup creates the SSAO bind group provider used by the lit
@@ -431,6 +446,21 @@ func (s *scene) initGBuffer() {
 	s.lightHandler.GBufferHandler().SetDepthTexture(depthTex)
 	s.lightHandler.GBufferHandler().SetDepthTextureView(depthView)
 
+	// Initialize slot 1
+	gbh := s.lightHandler.GBufferHandler()
+	gbh.SetSlot(1)
+	normView1, normTex1, albView1, albTex1, depthView1, depthTex1, err := s.r.CreateGBufferTextures(w, h)
+	if err != nil {
+		panic(fmt.Sprintf("scene: failed to create G-Buffer textures slot 1: %v", err))
+	}
+	gbh.SetNormalTexture(normTex1)
+	gbh.SetNormalTextureView(normView1)
+	gbh.SetAlbedoTexture(albTex1)
+	gbh.SetAlbedoTextureView(albView1)
+	gbh.SetDepthTexture(depthTex1)
+	gbh.SetDepthTextureView(depthView1)
+	gbh.SetSlot(0)
+
 	// Load shaders for the G-Buffer pass.
 	gbufferFrag := shader.NewShader("_gbuffer_frag", shader.ShaderTypeFragment, "engine/light/assets/gbuffer-frag.wgsl", shader.WithInjections(s.injections))
 	staticVert := shader.NewShader("_gbuffer_static_vert", shader.ShaderTypeVertex, "engine/light/assets/lit-vert.wgsl", shader.WithInjections(s.injections))
@@ -491,6 +521,16 @@ func (s *scene) initContactShadows() {
 	}
 	csHandler.SetTexture(csTex)
 	csHandler.SetTextureView(csView)
+
+	// Initialize slot 1
+	csHandler.SetSlot(1)
+	csView1, csTex1, err := s.r.CreateContactShadowTextures(w, h)
+	if err != nil {
+		panic(fmt.Sprintf("scene: failed to create contact shadow textures slot 1: %v", err))
+	}
+	csHandler.SetTexture(csTex1)
+	csHandler.SetTextureView(csView1)
+	csHandler.SetSlot(0)
 
 	// 2. Create linear sampler for the lit shader to sample the contact shadow texture.
 	csLinearSamp, err := s.r.CreateLinearSampler()
@@ -565,6 +605,11 @@ func (s *scene) initLightBindGroup(fragmentShader shader.Shader) {
 	if err := s.r.InitBindGroup(bgp, descriptor, nil, sizeOverrides); err != nil {
 		panic(fmt.Sprintf("scene: failed to init light bind group: %v", err))
 	}
+	bgp.SetSlot(1)
+	if err := s.r.InitBindGroup(bgp, descriptor, nil, sizeOverrides); err != nil {
+		panic(fmt.Sprintf("scene: failed to init light bind group slot 1: %v", err))
+	}
+	bgp.SetSlot(0)
 }
 
 // initShadowMap initializes the CSM atlas depth texture, per-cascade bind group
@@ -629,6 +674,11 @@ func (s *scene) initShadowMap(shadowVertShader, shadowSkinnedVertShader shader.S
 		if err := s.r.InitBindGroup(bgp, desc, nil, sizeOverrides); err != nil {
 			panic(fmt.Sprintf("scene: failed to init CSM data bind group %d: %v", i, err))
 		}
+		bgp.SetSlot(1)
+		if err := s.r.InitBindGroup(bgp, desc, nil, sizeOverrides); err != nil {
+			panic(fmt.Sprintf("scene: failed to init CSM data bind group %d slot 1: %v", i, err))
+		}
+		bgp.SetSlot(0)
 	}
 
 	// Compute 2D grid atlas dimensions.
@@ -677,6 +727,11 @@ func (s *scene) initShadowMap(shadowVertShader, shadowSkinnedVertShader shader.S
 		if err := s.r.InitBindGroup(bgp, desc, nil, sizeOverrides); err != nil {
 			panic(fmt.Sprintf("scene: failed to init spot shadow bind group %d: %v", i, err))
 		}
+		bgp.SetSlot(1)
+		if err := s.r.InitBindGroup(bgp, desc, nil, sizeOverrides); err != nil {
+			panic(fmt.Sprintf("scene: failed to init spot shadow bind group %d slot 1: %v", i, err))
+		}
+		bgp.SetSlot(0)
 	}
 
 	// Register shadow depth render pipelines for each ShadowCullMode variant.
@@ -861,6 +916,21 @@ func (s *scene) initLightCullResourcesLocked(cullComputeShader, litFragmentShade
 		panic(fmt.Sprintf("scene: failed to init light cull bind group: %v", err))
 	}
 
+	// Init cull BGP for slot 1: share lights storage buffer from slot 1, create fresh cull uniforms and tile buffers.
+	lightsBGP.SetSlot(1)
+	slot1LightsBuffer := lightsBGP.Buffer(1)
+	lightsBGP.SetSlot(0)
+	cullBGP.SetSlot(1)
+	if slot1LightsBuffer != nil {
+		cullBGP.SetBuffer(1, slot1LightsBuffer)
+	}
+	if err := s.r.InitBindGroup(cullBGP, cullDesc, nil, sizeOverrides); err != nil {
+		panic(fmt.Sprintf("scene: failed to init cull bind group slot 1: %v", err))
+	}
+	slot1CountsBuf := cullBGP.Buffer(2)
+	slot1IndicesBuf := cullBGP.Buffer(3)
+	cullBGP.SetSlot(0)
+
 	// ── 2. Register the cull compute pipeline ──────────────────────────
 	pipeKey := "light_cull_compute"
 	cp := pipeline.NewPipeline(pipeKey, pipeline.PipelineTypeCompute,
@@ -904,6 +974,19 @@ func (s *scene) initLightCullResourcesLocked(cullComputeShader, litFragmentShade
 	if err := s.r.InitBindGroup(tileBGP, tileDesc, nil, tileSizeOverrides); err != nil {
 		panic(fmt.Sprintf("scene: failed to init tile lit bind group: %v", err))
 	}
+
+	// Init tile BGP for slot 1: share slot-1 tile storage buffers from cull BGP, create fresh tile uniforms.
+	tileBGP.SetSlot(1)
+	if slot1CountsBuf != nil {
+		tileBGP.SetBuffer(1, slot1CountsBuf)
+	}
+	if slot1IndicesBuf != nil {
+		tileBGP.SetBuffer(2, slot1IndicesBuf)
+	}
+	if err := s.r.InitBindGroup(tileBGP, tileDesc, nil, tileSizeOverrides); err != nil {
+		panic(fmt.Sprintf("scene: failed to init tile lit bind group slot 1: %v", err))
+	}
+	tileBGP.SetSlot(0)
 
 	// ── 4. Write initial tile uniforms ─────────────────────────────────
 	tileUniforms := light.GPUTileUniforms{
@@ -952,6 +1035,20 @@ func (s *scene) initComposition() {
 	ch.SetMSAATextureView(msaaView)
 	ch.SetDepthTexture(depthTex)
 	ch.SetDepthTextureView(depthView)
+
+	// Initialize slot 1 composition textures
+	ch.SetSlot(1)
+	hdrView1, hdrTex1, msaaView1, msaaTex1, depthView1, depthTex1, err := s.r.CreateCompositionTextures(w, h, sampleCount)
+	if err != nil {
+		panic(fmt.Sprintf("scene: failed to create composition textures slot 1: %v", err))
+	}
+	ch.SetHDRTexture(hdrTex1)
+	ch.SetHDRTextureView(hdrView1)
+	ch.SetMSAATexture(msaaTex1)
+	ch.SetMSAATextureView(msaaView1)
+	ch.SetDepthTexture(depthTex1)
+	ch.SetDepthTextureView(depthView1)
+	ch.SetSlot(0)
 
 	// Override the render pipeline color target format to RGBA16Float so that
 	// all subsequently registered pipelines target the offscreen HDR texture
@@ -1057,6 +1154,17 @@ func (s *scene) initLuminance(ch light.CompositionHandler, compBGP bind_group_pr
 	if err := s.r.InitBindGroup(lumBGP, lumDesc, nil, lumSizeOverrides); err != nil {
 		panic(fmt.Sprintf("scene: failed to init luminance compute bind group: %v", err))
 	}
+
+	// Init luminance BGP for slot 1.
+	// expBuf (binding 2) is written by the GPU luminance compute shader each frame.
+	// Both slots share the same physical expBuf — within-frame GPU-GPU, queue ordering guarantees no cross-frame hazard.
+	// Only the luminance params buffer (binding 1) is CPU-written per frame and needs a fresh slot-1 copy.
+	lumBGP.SetSlot(1)
+	lumBGP.SetBuffer(2, expBuf)
+	if err := s.r.InitBindGroup(lumBGP, lumDesc, nil, lumSizeOverrides); err != nil {
+		panic(fmt.Sprintf("scene: failed to init luminance bind group slot 1: %v", err))
+	}
+	lumBGP.SetSlot(0)
 
 	compBGP.SetBuffer(5, expBuf)
 }
@@ -1253,6 +1361,25 @@ func (s *scene) initSSR() {
 	ssrHandler.SetHiZMipCount(mipCount)
 	ssrHandler.SetHiZMipReadViews(mipReadViews)
 	ssrHandler.SetHiZStorageViews(mipStorageViews)
+
+	// Initialize slot 1 SSR textures
+	ssrHandler.SetSlot(1)
+	ssrView1, ssrTex1, err := s.r.CreateSSRTextures(halfW, halfH)
+	if err != nil {
+		panic(fmt.Sprintf("scene: failed to create SSR textures slot 1: %v", err))
+	}
+	ssrHandler.SetSSRTexture(ssrTex1)
+	ssrHandler.SetSSRTextureView(ssrView1)
+	hizView1, hizTex1, mipReadViews1, mipStorageViews1, mipCount1, err := s.r.CreateHiZTextures(w, h)
+	if err != nil {
+		panic(fmt.Sprintf("scene: failed to create Hi-Z textures slot 1: %v", err))
+	}
+	ssrHandler.SetHiZTexture(hizTex1)
+	ssrHandler.SetHiZTextureView(hizView1)
+	ssrHandler.SetHiZMipCount(mipCount1)
+	ssrHandler.SetHiZMipReadViews(mipReadViews1)
+	ssrHandler.SetHiZStorageViews(mipStorageViews1)
+	ssrHandler.SetSlot(0)
 
 	// 4. Register Hi-Z init compute pipeline (copies depth → Hi-Z mip 0).
 	hizInitShader := shader.NewShader("_hiz_init", shader.ShaderTypeCompute, "engine/light/assets/hiz-init-compute.wgsl", shader.WithInjections(s.injections))
@@ -1732,6 +1859,11 @@ func (s *scene) reinitCameraBGPForLitPipeline(litFragShader shader.Shader) {
 	if err := s.r.InitBindGroup(bgp, mergedDesc, nil, nil); err != nil {
 		panic(fmt.Sprintf("scene: failed to reinit camera bind group for lit pipeline: %v", err))
 	}
+	bgp.SetSlot(1)
+	if err := s.r.InitBindGroup(bgp, mergedDesc, nil, nil); err != nil {
+		panic(fmt.Sprintf("scene: failed to reinit camera bind group slot 1 for lit pipeline: %v", err))
+	}
+	bgp.SetSlot(0)
 }
 
 // patchSyncMapEntry stages a write to the per-group sync_map buffer that maps the
@@ -2317,6 +2449,46 @@ func (s *scene) createAnimator(mdl model.Model, computeShader, vertexShader, fra
 		panic(fmt.Sprintf("scene: failed to init output BGP for model %q: %v", mdl.Name(), err))
 	}
 
+	// Slot-1 init for compute BGP and output BGP.
+	// CPU-written bindings get fresh slot-1 buffers; GPU-only bindings share slot-0 physical buffers.
+	computeProvider := anim.ComputeBindGroupProvider()
+	outputProvider := anim.OutputBindGroupProvider()
+
+	var slot0OutputBuf, slot0PackedBuf, slot0ScratchBuf *wgpu.Buffer
+	if computeOutputBinding >= 0 {
+		slot0OutputBuf = computeProvider.Buffer(computeOutputBinding)
+	}
+	if rawPackedBinding >= 0 {
+		slot0PackedBuf = computeProvider.Buffer(rawPackedBinding)
+	}
+	if rawScratchBinding >= 0 {
+		slot0ScratchBuf = computeProvider.Buffer(rawScratchBinding)
+	}
+
+	computeProvider.SetSlot(1)
+	if slot0OutputBuf != nil {
+		computeProvider.SetBuffer(computeOutputBinding, slot0OutputBuf)
+	}
+	if slot0PackedBuf != nil {
+		computeProvider.SetBuffer(rawPackedBinding, slot0PackedBuf)
+	}
+	if slot0ScratchBuf != nil {
+		computeProvider.SetBuffer(rawScratchBinding, slot0ScratchBuf)
+	}
+	if err := s.r.InitBindGroup(computeProvider, computeDesc, computeUsageOverrides, computeSizeOverrides); err != nil {
+		panic(fmt.Sprintf("scene: failed to init compute BGP slot 1 for model %q: %v", mdl.Name(), err))
+	}
+	computeProvider.SetSlot(0)
+
+	if slot0OutputBuf != nil {
+		outputProvider.SetSlot(1)
+		outputProvider.SetBuffer(outputInstanceBinding, slot0OutputBuf)
+		if err := s.r.InitBindGroup(outputProvider, outputDesc, nil, outputSizeOverrides); err != nil {
+			panic(fmt.Sprintf("scene: failed to init output BGP slot 1 for model %q: %v", mdl.Name(), err))
+		}
+		outputProvider.SetSlot(0)
+	}
+
 	// Register compute pipeline
 	cp := pipeline.NewPipeline(computeShader.Key(), pipeline.PipelineTypeCompute, pipeline.WithComputeShader(computeShader))
 	if err := s.r.RegisterPipelines(cp); err != nil {
@@ -2419,58 +2591,66 @@ func (s *scene) computeWorkgroupSize2D(pipeKey string, defaultX, defaultY uint32
 func (s *scene) releaseResolutionDependentResources() {
 	gbh := s.lightHandler.GBufferHandler()
 	if gbh.Enabled() {
-		if v := gbh.NormalTextureView(); v != nil {
-			v.Release()
+		for slot := 0; slot < 2; slot++ {
+			gbh.SetSlot(slot)
+			if v := gbh.NormalTextureView(); v != nil {
+				v.Release()
+			}
+			if t := gbh.NormalTexture(); t != nil {
+				t.Release()
+			}
+			gbh.SetNormalTextureView(nil)
+			gbh.SetNormalTexture(nil)
+			if v := gbh.AlbedoTextureView(); v != nil {
+				v.Release()
+			}
+			if t := gbh.AlbedoTexture(); t != nil {
+				t.Release()
+			}
+			gbh.SetAlbedoTextureView(nil)
+			gbh.SetAlbedoTexture(nil)
+			if v := gbh.DepthTextureView(); v != nil {
+				v.Release()
+			}
+			if t := gbh.DepthTexture(); t != nil {
+				t.Release()
+			}
+			gbh.SetDepthTextureView(nil)
+			gbh.SetDepthTexture(nil)
 		}
-		if t := gbh.NormalTexture(); t != nil {
-			t.Release()
-		}
-		gbh.SetNormalTextureView(nil)
-		gbh.SetNormalTexture(nil)
-		if v := gbh.AlbedoTextureView(); v != nil {
-			v.Release()
-		}
-		if t := gbh.AlbedoTexture(); t != nil {
-			t.Release()
-		}
-		gbh.SetAlbedoTextureView(nil)
-		gbh.SetAlbedoTexture(nil)
-		if v := gbh.DepthTextureView(); v != nil {
-			v.Release()
-		}
-		if t := gbh.DepthTexture(); t != nil {
-			t.Release()
-		}
-		gbh.SetDepthTextureView(nil)
-		gbh.SetDepthTexture(nil)
+		gbh.SetSlot(0)
 	}
 
 	ssaoH := s.lightHandler.SSAOHandler()
 	if ssaoH.Enabled() {
-		if v := ssaoH.RawTextureView(); v != nil {
-			v.Release()
+		for slot := 0; slot < 2; slot++ {
+			ssaoH.SetSlot(slot)
+			if v := ssaoH.RawTextureView(); v != nil {
+				v.Release()
+			}
+			if t := ssaoH.RawTexture(); t != nil {
+				t.Release()
+			}
+			ssaoH.SetRawTextureView(nil)
+			ssaoH.SetRawTexture(nil)
+			if v := ssaoH.BlurredTextureView(); v != nil {
+				v.Release()
+			}
+			if t := ssaoH.BlurredTexture(); t != nil {
+				t.Release()
+			}
+			ssaoH.SetBlurredTextureView(nil)
+			ssaoH.SetBlurredTexture(nil)
+			if v := ssaoH.ScratchTextureView(); v != nil {
+				v.Release()
+			}
+			if t := ssaoH.ScratchTexture(); t != nil {
+				t.Release()
+			}
+			ssaoH.SetScratchTextureView(nil)
+			ssaoH.SetScratchTexture(nil)
 		}
-		if t := ssaoH.RawTexture(); t != nil {
-			t.Release()
-		}
-		ssaoH.SetRawTextureView(nil)
-		ssaoH.SetRawTexture(nil)
-		if v := ssaoH.BlurredTextureView(); v != nil {
-			v.Release()
-		}
-		if t := ssaoH.BlurredTexture(); t != nil {
-			t.Release()
-		}
-		ssaoH.SetBlurredTextureView(nil)
-		ssaoH.SetBlurredTexture(nil)
-		if v := ssaoH.ScratchTextureView(); v != nil {
-			v.Release()
-		}
-		if t := ssaoH.ScratchTexture(); t != nil {
-			t.Release()
-		}
-		ssaoH.SetScratchTextureView(nil)
-		ssaoH.SetScratchTexture(nil)
+		ssaoH.SetSlot(0)
 		for _, key := range []string{"ssao_compute", "ssao_blur_h", "ssao_blur_v"} {
 			if bgp := ssaoH.Bgp(key); bgp != nil {
 				if bg := bgp.BindGroup(); bg != nil {
@@ -2490,14 +2670,18 @@ func (s *scene) releaseResolutionDependentResources() {
 
 	csh := s.lightHandler.ContactShadowHandler()
 	if csh.Enabled() {
-		if v := csh.TextureView(); v != nil {
-			v.Release()
+		for slot := 0; slot < 2; slot++ {
+			csh.SetSlot(slot)
+			if v := csh.TextureView(); v != nil {
+				v.Release()
+			}
+			if t := csh.Texture(); t != nil {
+				t.Release()
+			}
+			csh.SetTextureView(nil)
+			csh.SetTexture(nil)
 		}
-		if t := csh.Texture(); t != nil {
-			t.Release()
-		}
-		csh.SetTextureView(nil)
-		csh.SetTexture(nil)
+		csh.SetSlot(0)
 		if bgp := csh.Bgp("contact_shadow_compute"); bgp != nil {
 			if bg := bgp.BindGroup(); bg != nil {
 				bg.Release()
@@ -2518,30 +2702,71 @@ func (s *scene) releaseResolutionDependentResources() {
 
 	ch := s.lightHandler.CompositionHandler()
 	if ch.Enabled() {
-		if v := ch.HDRTextureView(); v != nil {
-			v.Release()
+		mipCount := ch.BloomMipCount()
+		for slot := 0; slot < 2; slot++ {
+			ch.SetSlot(slot)
+			if v := ch.HDRTextureView(); v != nil {
+				v.Release()
+			}
+			if t := ch.HDRTexture(); t != nil {
+				t.Release()
+			}
+			ch.SetHDRTextureView(nil)
+			ch.SetHDRTexture(nil)
+			if v := ch.MSAATextureView(); v != nil {
+				v.Release()
+			}
+			if t := ch.MSAATexture(); t != nil {
+				t.Release()
+			}
+			ch.SetMSAATextureView(nil)
+			ch.SetMSAATexture(nil)
+			if v := ch.DepthTextureView(); v != nil {
+				v.Release()
+			}
+			if t := ch.DepthTexture(); t != nil {
+				t.Release()
+			}
+			ch.SetDepthTextureView(nil)
+			ch.SetDepthTexture(nil)
+			if ch.BloomDownTexture() != nil {
+				ch.BloomDownTexture().Release()
+			}
+			for _, v := range ch.BloomDownReadViews() {
+				if v != nil {
+					v.Release()
+				}
+			}
+			for _, v := range ch.BloomDownStorageViews() {
+				if v != nil {
+					v.Release()
+				}
+			}
+			ch.SetBloomDownTexture(nil)
+			ch.SetBloomDownReadViews(nil)
+			ch.SetBloomDownStorageViews(nil)
+			if ch.BloomUpTexture() != nil {
+				ch.BloomUpTexture().Release()
+			}
+			for _, v := range ch.BloomUpReadViews() {
+				if v != nil {
+					v.Release()
+				}
+			}
+			for _, v := range ch.BloomUpStorageViews() {
+				if v != nil {
+					v.Release()
+				}
+			}
+			if ch.BloomUpMip0View() != nil {
+				ch.BloomUpMip0View().Release()
+			}
+			ch.SetBloomUpTexture(nil)
+			ch.SetBloomUpReadViews(nil)
+			ch.SetBloomUpStorageViews(nil)
+			ch.SetBloomUpMip0View(nil)
 		}
-		if t := ch.HDRTexture(); t != nil {
-			t.Release()
-		}
-		ch.SetHDRTextureView(nil)
-		ch.SetHDRTexture(nil)
-		if v := ch.MSAATextureView(); v != nil {
-			v.Release()
-		}
-		if t := ch.MSAATexture(); t != nil {
-			t.Release()
-		}
-		ch.SetMSAATextureView(nil)
-		ch.SetMSAATexture(nil)
-		if v := ch.DepthTextureView(); v != nil {
-			v.Release()
-		}
-		if t := ch.DepthTexture(); t != nil {
-			t.Release()
-		}
-		ch.SetDepthTextureView(nil)
-		ch.SetDepthTexture(nil)
+		ch.SetSlot(0)
 		if bgp := ch.Bgp("composition"); bgp != nil {
 			if bg := bgp.BindGroup(); bg != nil {
 				bg.Release()
@@ -2554,44 +2779,6 @@ func (s *scene) releaseResolutionDependentResources() {
 			}
 			bgp.SetBindGroup(nil)
 		}
-
-		mipCount := ch.BloomMipCount()
-		if ch.BloomDownTexture() != nil {
-			ch.BloomDownTexture().Release()
-		}
-		for _, v := range ch.BloomDownReadViews() {
-			if v != nil {
-				v.Release()
-			}
-		}
-		for _, v := range ch.BloomDownStorageViews() {
-			if v != nil {
-				v.Release()
-			}
-		}
-		ch.SetBloomDownTexture(nil)
-		ch.SetBloomDownReadViews(nil)
-		ch.SetBloomDownStorageViews(nil)
-		if ch.BloomUpTexture() != nil {
-			ch.BloomUpTexture().Release()
-		}
-		for _, v := range ch.BloomUpReadViews() {
-			if v != nil {
-				v.Release()
-			}
-		}
-		for _, v := range ch.BloomUpStorageViews() {
-			if v != nil {
-				v.Release()
-			}
-		}
-		if ch.BloomUpMip0View() != nil {
-			ch.BloomUpMip0View().Release()
-		}
-		ch.SetBloomUpTexture(nil)
-		ch.SetBloomUpReadViews(nil)
-		ch.SetBloomUpStorageViews(nil)
-		ch.SetBloomUpMip0View(nil)
 		for i := 0; i < mipCount; i++ {
 			if bgp := ch.Bgp(fmt.Sprintf("bloom_down_%d", i)); bgp != nil {
 				bgp.Release()
@@ -2604,41 +2791,45 @@ func (s *scene) releaseResolutionDependentResources() {
 
 	ssrH := s.lightHandler.SSRHandler()
 	if ssrH.Enabled() {
-		if v := ssrH.SSRTextureView(); v != nil {
-			v.Release()
+		hizMipCount := ssrH.HiZMipCount()
+		for slot := 0; slot < 2; slot++ {
+			ssrH.SetSlot(slot)
+			if v := ssrH.SSRTextureView(); v != nil {
+				v.Release()
+			}
+			if t := ssrH.SSRTexture(); t != nil {
+				t.Release()
+			}
+			ssrH.SetSSRTextureView(nil)
+			ssrH.SetSSRTexture(nil)
+			if v := ssrH.HiZTextureView(); v != nil {
+				v.Release()
+			}
+			if t := ssrH.HiZTexture(); t != nil {
+				t.Release()
+			}
+			for _, v := range ssrH.HiZMipReadViews() {
+				if v != nil {
+					v.Release()
+				}
+			}
+			for _, v := range ssrH.HiZStorageViews() {
+				if v != nil {
+					v.Release()
+				}
+			}
+			ssrH.SetHiZTextureView(nil)
+			ssrH.SetHiZTexture(nil)
+			ssrH.SetHiZMipReadViews(nil)
+			ssrH.SetHiZStorageViews(nil)
 		}
-		if t := ssrH.SSRTexture(); t != nil {
-			t.Release()
-		}
-		ssrH.SetSSRTextureView(nil)
-		ssrH.SetSSRTexture(nil)
+		ssrH.SetSlot(0)
 		if bgp := ssrH.Bgp("ssr_compute"); bgp != nil {
 			if bg := bgp.BindGroup(); bg != nil {
 				bg.Release()
 			}
 			bgp.SetBindGroup(nil)
 		}
-		hizMipCount := ssrH.HiZMipCount()
-		if v := ssrH.HiZTextureView(); v != nil {
-			v.Release()
-		}
-		if t := ssrH.HiZTexture(); t != nil {
-			t.Release()
-		}
-		for _, v := range ssrH.HiZMipReadViews() {
-			if v != nil {
-				v.Release()
-			}
-		}
-		for _, v := range ssrH.HiZStorageViews() {
-			if v != nil {
-				v.Release()
-			}
-		}
-		ssrH.SetHiZTextureView(nil)
-		ssrH.SetHiZTexture(nil)
-		ssrH.SetHiZMipReadViews(nil)
-		ssrH.SetHiZStorageViews(nil)
 		if bgp := ssrH.Bgp("hiz_init"); bgp != nil {
 			bgp.Release()
 		}
@@ -2704,6 +2895,77 @@ func (s *scene) resizePostProcessing(w, h int) {
 			}
 			if err := s.r.InitBindGroup(compBGP, compDesc, nil, sizeOverrides); err != nil {
 				panic(fmt.Sprintf("scene: failed to re-init composition bind group on resize: %v", err))
+			}
+		}
+	}
+}
+
+func (s *scene) SyncFrameSlot(slot int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Phase 4: switch post-processing handler texture slots.
+	if s.lightHandler != nil {
+		if gbh := s.lightHandler.GBufferHandler(); gbh != nil {
+			gbh.SetSlot(slot)
+		}
+		if ssao := s.lightHandler.SSAOHandler(); ssao != nil {
+			ssao.SetSlot(slot)
+		}
+		if cs := s.lightHandler.ContactShadowHandler(); cs != nil {
+			cs.SetSlot(slot)
+		}
+		if ch := s.lightHandler.CompositionHandler(); ch != nil {
+			ch.SetSlot(slot)
+			if lumBGP := ch.Bgp("luminance_compute"); lumBGP != nil {
+				lumBGP.SetSlot(slot)
+			}
+		}
+		if ssr := s.lightHandler.SSRHandler(); ssr != nil {
+			ssr.SetSlot(slot)
+		}
+
+		// Phase 3: switch confirmed dual-slot BGPs on the lighting handler.
+		if bgp := s.lightHandler.Bgp("lights"); bgp != nil {
+			bgp.SetSlot(slot)
+		}
+		if bgp := s.lightHandler.Bgp("light_cull"); bgp != nil {
+			bgp.SetSlot(slot)
+		}
+		if bgp := s.lightHandler.Bgp("tile_lit"); bgp != nil {
+			bgp.SetSlot(slot)
+		}
+
+		// Phase 3: switch confirmed dual-slot shadow handler BGPs.
+		if sh := s.lightHandler.ShadowHandler(); sh != nil {
+			for i := 0; i < sh.CascadeCount(); i++ {
+				if bgp := sh.Bgp(fmt.Sprintf("csm_data_%d", i)); bgp != nil {
+					bgp.SetSlot(slot)
+				}
+			}
+			for i := 0; i < sh.LightShadowAtlasSlots(); i++ {
+				if bgp := sh.Bgp(fmt.Sprintf("spot_shadow_%d", i)); bgp != nil {
+					bgp.SetSlot(slot)
+				}
+			}
+		}
+	}
+
+	// Phase 3: switch camera BGP.
+	if s.cam != nil {
+		if bgp := s.cam.BindGroupProvider(); bgp != nil {
+			bgp.SetSlot(slot)
+		}
+	}
+
+	// Phase 3: switch animator BGPs.
+	for _, animGroup := range s.animatorPool {
+		for _, a := range animGroup {
+			if compute := a.ComputeBindGroupProvider(); compute != nil {
+				compute.SetSlot(slot)
+			}
+			if output := a.OutputBindGroupProvider(); output != nil {
+				output.SetSlot(slot)
 			}
 		}
 	}

@@ -37,6 +37,7 @@ func main() {
 		eng.Window(),
 		renderer.WithPresentMode(renderer.PresentModeUncapped),
 		renderer.WithMSAA(renderer.MSAAOff),
+		renderer.WithGPUSerializedProfiling(false),
 	)
 
 	// ── Camera ──────────────────────────────────────────────────────────
@@ -75,7 +76,7 @@ func main() {
 				light.WithSSAOBias(0.025),
 				light.WithSSAOPower(2.0),
 				light.WithSSAOBlurRadius(2),
-				light.WithSSAOHalfResolution(false),
+				light.WithSSAOHalfResolution(true),
 			)),
 			light.WithCompositionHandler(light.NewCompositionHandler(
 				light.WithToneMappingEnabled(true),

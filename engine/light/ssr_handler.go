@@ -29,6 +29,13 @@ type SSRHandler interface {
 	//   - enabled: true to mark as initialized
 	SetEnabled(enabled bool)
 
+	// SetSlot selects the active texture slot. Texture and view getters and
+	// setters read and write the [slot] index of the underlying arrays.
+	//
+	// Parameters:
+	//   - slot: the slot index (0 or 1)
+	SetSlot(slot int)
+
 	// ScreenWidth returns the current screen width in pixels used for texture sizing.
 	//
 	// Returns:
@@ -230,34 +237,47 @@ type SSRHandler interface {
 
 var _ SSRHandler = &ssrHandlerImpl{}
 
-func (h *ssrHandlerImpl) Enabled() bool                                { return h.enabled }
-func (h *ssrHandlerImpl) SetEnabled(enabled bool)                      { h.enabled = enabled }
-func (h *ssrHandlerImpl) ScreenWidth() int                             { return h.screenWidth }
-func (h *ssrHandlerImpl) ScreenHeight() int                            { return h.screenHeight }
-func (h *ssrHandlerImpl) MaxSteps() int                                { return h.maxSteps }
-func (h *ssrHandlerImpl) MaxDistance() float32                         { return h.maxDistance }
-func (h *ssrHandlerImpl) Thickness() float32                           { return h.thickness }
-func (h *ssrHandlerImpl) Stride() float32                              { return h.stride }
-func (h *ssrHandlerImpl) RoughnessCutoff() float32                     { return h.roughnessCutoff }
-func (h *ssrHandlerImpl) PipelineKey(name string) string               { return h.pipelineKeys[name] }
-func (h *ssrHandlerImpl) PipelineKeys() map[string]string              { return h.pipelineKeys }
-func (h *ssrHandlerImpl) SetPipelineKey(name, key string)              { h.pipelineKeys[name] = key }
-func (h *ssrHandlerImpl) SSRTexture() *wgpu.Texture                    { return h.ssrTexture }
-func (h *ssrHandlerImpl) SetSSRTexture(t *wgpu.Texture)                { h.ssrTexture = t }
-func (h *ssrHandlerImpl) SSRTextureView() *wgpu.TextureView            { return h.ssrTextureView }
-func (h *ssrHandlerImpl) SetSSRTextureView(tv *wgpu.TextureView)       { h.ssrTextureView = tv }
-func (h *ssrHandlerImpl) LinearSampler() *wgpu.Sampler                 { return h.linearSampler }
-func (h *ssrHandlerImpl) SetLinearSampler(s *wgpu.Sampler)             { h.linearSampler = s }
-func (h *ssrHandlerImpl) HiZTexture() *wgpu.Texture                    { return h.hizTexture }
-func (h *ssrHandlerImpl) SetHiZTexture(t *wgpu.Texture)                { h.hizTexture = t }
-func (h *ssrHandlerImpl) HiZTextureView() *wgpu.TextureView            { return h.hizTextureView }
-func (h *ssrHandlerImpl) SetHiZTextureView(tv *wgpu.TextureView)       { h.hizTextureView = tv }
-func (h *ssrHandlerImpl) HiZMipCount() int                             { return h.hizMipCount }
-func (h *ssrHandlerImpl) SetHiZMipCount(count int)                     { h.hizMipCount = count }
-func (h *ssrHandlerImpl) HiZMipReadViews() []*wgpu.TextureView         { return h.hizMipReadViews }
-func (h *ssrHandlerImpl) SetHiZMipReadViews(views []*wgpu.TextureView) { h.hizMipReadViews = views }
-func (h *ssrHandlerImpl) HiZStorageViews() []*wgpu.TextureView         { return h.hizStorageViews }
-func (h *ssrHandlerImpl) SetHiZStorageViews(views []*wgpu.TextureView) { h.hizStorageViews = views }
+func (h *ssrHandlerImpl) Enabled() bool                     { return h.enabled }
+func (h *ssrHandlerImpl) SetEnabled(enabled bool)           { h.enabled = enabled }
+func (h *ssrHandlerImpl) ScreenWidth() int                  { return h.screenWidth }
+func (h *ssrHandlerImpl) ScreenHeight() int                 { return h.screenHeight }
+func (h *ssrHandlerImpl) MaxSteps() int                     { return h.maxSteps }
+func (h *ssrHandlerImpl) MaxDistance() float32              { return h.maxDistance }
+func (h *ssrHandlerImpl) Thickness() float32                { return h.thickness }
+func (h *ssrHandlerImpl) Stride() float32                   { return h.stride }
+func (h *ssrHandlerImpl) RoughnessCutoff() float32          { return h.roughnessCutoff }
+func (h *ssrHandlerImpl) PipelineKey(name string) string    { return h.pipelineKeys[name] }
+func (h *ssrHandlerImpl) PipelineKeys() map[string]string   { return h.pipelineKeys }
+func (h *ssrHandlerImpl) SetPipelineKey(name, key string)   { h.pipelineKeys[name] = key }
+func (h *ssrHandlerImpl) SetSlot(slot int)                  { h.activeSlot = slot }
+func (h *ssrHandlerImpl) SSRTexture() *wgpu.Texture         { return h.ssrTextures[h.activeSlot] }
+func (h *ssrHandlerImpl) SetSSRTexture(t *wgpu.Texture)     { h.ssrTextures[h.activeSlot] = t }
+func (h *ssrHandlerImpl) SSRTextureView() *wgpu.TextureView { return h.ssrTextureViews[h.activeSlot] }
+func (h *ssrHandlerImpl) SetSSRTextureView(tv *wgpu.TextureView) {
+	h.ssrTextureViews[h.activeSlot] = tv
+}
+func (h *ssrHandlerImpl) LinearSampler() *wgpu.Sampler      { return h.linearSampler }
+func (h *ssrHandlerImpl) SetLinearSampler(s *wgpu.Sampler)  { h.linearSampler = s }
+func (h *ssrHandlerImpl) HiZTexture() *wgpu.Texture         { return h.hizTextures[h.activeSlot] }
+func (h *ssrHandlerImpl) SetHiZTexture(t *wgpu.Texture)     { h.hizTextures[h.activeSlot] = t }
+func (h *ssrHandlerImpl) HiZTextureView() *wgpu.TextureView { return h.hizTextureViews[h.activeSlot] }
+func (h *ssrHandlerImpl) SetHiZTextureView(tv *wgpu.TextureView) {
+	h.hizTextureViews[h.activeSlot] = tv
+}
+func (h *ssrHandlerImpl) HiZMipCount() int         { return h.hizMipCount }
+func (h *ssrHandlerImpl) SetHiZMipCount(count int) { h.hizMipCount = count }
+func (h *ssrHandlerImpl) HiZMipReadViews() []*wgpu.TextureView {
+	return h.hizMipReadViewsArr[h.activeSlot]
+}
+func (h *ssrHandlerImpl) SetHiZMipReadViews(views []*wgpu.TextureView) {
+	h.hizMipReadViewsArr[h.activeSlot] = views
+}
+func (h *ssrHandlerImpl) HiZStorageViews() []*wgpu.TextureView {
+	return h.hizStorageViewsArr[h.activeSlot]
+}
+func (h *ssrHandlerImpl) SetHiZStorageViews(views []*wgpu.TextureView) {
+	h.hizStorageViewsArr[h.activeSlot] = views
+}
 
 func (h *ssrHandlerImpl) Bgp(key string) bind_group_provider.BindGroupProvider {
 	return h.bgps[key]

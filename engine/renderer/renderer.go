@@ -589,7 +589,7 @@ type Renderer interface {
 
 	// FlushFrame submits all accumulated per-frame command buffers to the GPU in a
 	// single queue submission and clears the pending slice.
-	FlushFrame()
+	FlushFrame() wgpu.SubmissionIndex
 
 	// WaitIdle blocks until all in-flight GPU work has completed.
 	// Must be called before releasing GPU resources (e.g., on window resize).
@@ -624,6 +624,20 @@ type Renderer interface {
 	// Parameters:
 	//   - injections: map of injection keys to WGSL-formatted values.
 	SetInjections(injections map[string]string)
+
+	// GPUTimings returns the GPU execution time in milliseconds for each render phase
+	// from the previous frame, keyed by phase label (e.g. "GPU_Compute1", "GPU_Geometry").
+	// Always returns nil — GPU timestamp readback via MapAsync is permanently disabled due to
+	// a library-level bug in github.com/Carmen-Shannon/webgpu.
+	GPUTimings() map[string]float64
+
+	// SyncGPUTimestamps is retained for interface compatibility. It performs a frames-in-flight
+	// fence via Device.Poll; GPU timestamp readback via MapAsync is permanently disabled due to
+	// a library-level bug in github.com/Carmen-Shannon/webgpu.
+	SyncGPUTimestamps()
+
+	// CurrentFrameSlot returns the index of the frame slot currently being encoded (0 or 1).
+	CurrentFrameSlot() int
 }
 
 var _ Renderer = &renderer{}
@@ -648,11 +662,14 @@ func (r *renderer) BeginCompositionFrame() error                        { return
 func (r *renderer) BeginCompositionPass()                               { r.backend.BeginCompositionPass() }
 func (r *renderer) EndCompositionPass()                                 { r.backend.EndCompositionPass() }
 func (r *renderer) EndCompositionFrame()                                { r.backend.EndCompositionFrame() }
-func (r *renderer) FlushFrame()                                         { r.backend.FlushFrame() }
+func (r *renderer) FlushFrame() wgpu.SubmissionIndex                    { return r.backend.FlushFrame() }
 func (r *renderer) WaitIdle()                                           { r.backend.WaitIdle() }
 func (r *renderer) SampleCount() uint32                                 { return r.backend.SampleCount() }
 func (r *renderer) MaxTextureDimension2D() uint32                       { return r.backend.MaxTextureDimension2D() }
 func (r *renderer) SetInjections(injections map[string]string)          { r.injections = injections }
+func (r *renderer) GPUTimings() map[string]float64                      { return r.backend.GPUTimings() }
+func (r *renderer) SyncGPUTimestamps()                                  { r.backend.SyncGPUTimestamps() }
+func (r *renderer) CurrentFrameSlot() int                               { return r.backend.CurrentFrameSlot() }
 
 func (r *renderer) Pipeline(key string) pipeline.Pipeline {
 	r.mu.Lock()

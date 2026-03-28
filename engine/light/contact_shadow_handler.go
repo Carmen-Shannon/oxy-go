@@ -31,6 +31,13 @@ type ContactShadowHandler interface {
 	//   - enabled: true to mark as initialized
 	SetEnabled(enabled bool)
 
+	// SetSlot selects the active texture slot. Texture and view getters and
+	// setters read and write the [slot] index of the underlying arrays.
+	//
+	// Parameters:
+	//   - slot: the slot index (0 or 1)
+	SetSlot(slot int)
+
 	// StepCount returns the number of ray march steps per pixel.
 	//
 	// Returns:
@@ -136,20 +143,25 @@ type ContactShadowHandler interface {
 
 var _ ContactShadowHandler = &contactShadowHandlerImpl{}
 
-func (h *contactShadowHandlerImpl) Enabled() bool                       { return h.enabled }
-func (h *contactShadowHandlerImpl) SetEnabled(enabled bool)             { h.enabled = enabled }
-func (h *contactShadowHandlerImpl) StepCount() int                      { return h.stepCount }
-func (h *contactShadowHandlerImpl) MaxDistance() float32                { return h.maxDistance }
-func (h *contactShadowHandlerImpl) Thickness() float32                  { return h.thickness }
-func (h *contactShadowHandlerImpl) PipelineKey(name string) string      { return h.pipelineKeys[name] }
-func (h *contactShadowHandlerImpl) PipelineKeys() map[string]string     { return h.pipelineKeys }
-func (h *contactShadowHandlerImpl) SetPipelineKey(name, key string)     { h.pipelineKeys[name] = key }
-func (h *contactShadowHandlerImpl) Texture() *wgpu.Texture              { return h.texture }
-func (h *contactShadowHandlerImpl) SetTexture(t *wgpu.Texture)          { h.texture = t }
-func (h *contactShadowHandlerImpl) TextureView() *wgpu.TextureView      { return h.textureView }
-func (h *contactShadowHandlerImpl) SetTextureView(tv *wgpu.TextureView) { h.textureView = tv }
-func (h *contactShadowHandlerImpl) LinearSampler() *wgpu.Sampler        { return h.linearSampler }
-func (h *contactShadowHandlerImpl) SetLinearSampler(s *wgpu.Sampler)    { h.linearSampler = s }
+func (h *contactShadowHandlerImpl) Enabled() bool                   { return h.enabled }
+func (h *contactShadowHandlerImpl) SetEnabled(enabled bool)         { h.enabled = enabled }
+func (h *contactShadowHandlerImpl) StepCount() int                  { return h.stepCount }
+func (h *contactShadowHandlerImpl) MaxDistance() float32            { return h.maxDistance }
+func (h *contactShadowHandlerImpl) Thickness() float32              { return h.thickness }
+func (h *contactShadowHandlerImpl) PipelineKey(name string) string  { return h.pipelineKeys[name] }
+func (h *contactShadowHandlerImpl) PipelineKeys() map[string]string { return h.pipelineKeys }
+func (h *contactShadowHandlerImpl) SetPipelineKey(name, key string) { h.pipelineKeys[name] = key }
+func (h *contactShadowHandlerImpl) SetSlot(slot int)                { h.activeSlot = slot }
+func (h *contactShadowHandlerImpl) Texture() *wgpu.Texture          { return h.textures[h.activeSlot] }
+func (h *contactShadowHandlerImpl) SetTexture(t *wgpu.Texture)      { h.textures[h.activeSlot] = t }
+func (h *contactShadowHandlerImpl) TextureView() *wgpu.TextureView {
+	return h.textureViews[h.activeSlot]
+}
+func (h *contactShadowHandlerImpl) SetTextureView(tv *wgpu.TextureView) {
+	h.textureViews[h.activeSlot] = tv
+}
+func (h *contactShadowHandlerImpl) LinearSampler() *wgpu.Sampler     { return h.linearSampler }
+func (h *contactShadowHandlerImpl) SetLinearSampler(s *wgpu.Sampler) { h.linearSampler = s }
 
 func (h *contactShadowHandlerImpl) Bgp(key string) bind_group_provider.BindGroupProvider {
 	return h.bgps[key]

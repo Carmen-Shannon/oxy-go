@@ -12,7 +12,7 @@
 //@oxy:include indirect_args
 
 //@oxy:group 0 0 storage_uniform globals global_data
-//@oxy:group 0 1 storage_read_write instance_data array<animation_data>
+//@oxy:group 0 1 storage_read instance_data array<animation_data>
 //@oxy:provider 0 2 animator_output
 @group(0) @binding(2) var<storage, read_write> output_transforms: array<f32>;
 //@oxy:group 0 3 storage_read_write indirect_args indirect_args
@@ -67,16 +67,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
-    // Read and update rotation (frame-rate independent)
+    // Read instance transform data (rotation is advanced on CPU and uploaded each frame).
     var anim = instance_data[idx];
-    anim.rot = anim.rot + anim.rot_speed * globals.delta_time;
-
-    // Wrap to [0, 2π) to prevent float32 precision loss in sin/cos
-    let TWO_PI = vec3<f32>(6.283185307, 6.283185307, 6.283185307);
-    anim.rot = fract(anim.rot / TWO_PI) * TWO_PI;
-
-    // Write back updated rotation
-    instance_data[idx].rot = anim.rot;
 
     // Frustum cull — scale bounding radius by the instance's largest axis
     // so that non-uniformly scaled instances are not incorrectly culled.

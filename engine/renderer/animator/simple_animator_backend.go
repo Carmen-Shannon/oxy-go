@@ -524,6 +524,38 @@ func (s *simpleAnimatorBackendImpl) PrepareFrame(deltaTime float32, binding int)
 		return
 	}
 
+	// Advance CPU-side rotation for all rotating instances and mark them dirty so
+	// Flush uploads the current rotation to the active frame slot this frame.
+	const twoPi = float32(6.283185307)
+	for i := uint32(0); i < s.instanceCount; i++ {
+		d := &s.instanceData[i]
+		if d.RotSpeed[0] == 0 && d.RotSpeed[1] == 0 && d.RotSpeed[2] == 0 {
+			continue
+		}
+		d.Rot[0] += d.RotSpeed[0] * deltaTime
+		d.Rot[1] += d.RotSpeed[1] * deltaTime
+		d.Rot[2] += d.RotSpeed[2] * deltaTime
+		for d.Rot[0] >= twoPi {
+			d.Rot[0] -= twoPi
+		}
+		for d.Rot[0] < 0 {
+			d.Rot[0] += twoPi
+		}
+		for d.Rot[1] >= twoPi {
+			d.Rot[1] -= twoPi
+		}
+		for d.Rot[1] < 0 {
+			d.Rot[1] += twoPi
+		}
+		for d.Rot[2] >= twoPi {
+			d.Rot[2] -= twoPi
+		}
+		for d.Rot[2] < 0 {
+			d.Rot[2] += twoPi
+		}
+		s.enqueueDirty(i)
+	}
+
 	s.perFrameSlice[0] = GPUGlobalData{
 		InstanceCount:  s.instanceCount,
 		DeltaTime:      deltaTime,

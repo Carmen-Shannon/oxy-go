@@ -122,6 +122,14 @@ type Scene interface {
 	//   - id: the object's unique ID
 	RemoveGameObject(id uint64)
 
+	// SyncFrameSlot switches all dual-slot GPU resources (BGPs and post-processing textures)
+	// to the given frame slot. Must be called once per frame after SyncGPUTimestamps and
+	// before any Prepare* calls.
+	//
+	// Parameters:
+	//   - slot: the frame slot index to activate (0 or 1)
+	SyncFrameSlot(slot int)
+
 	// PrepareCompute updates camera matrices, advances animation state,
 	// uploads staged buffer writes, and dispatches all compute shaders for this scene.
 	// Must be called within a BeginComputeFrame/EndComputeFrame block on the renderer.
@@ -267,13 +275,21 @@ type Scene interface {
 	// bloom is disabled or the composition handler has not been initialized.
 	PrepareBloom()
 
-	// PrepareComposition runs the fullscreen composition pass: acquires the
-	// swapchain, samples the HDR lit texture and optional SSR texture, applies
-	// ACES tone mapping and gamma correction, and writes the final LDR result
-	// to the swapchain. Must be called after DrawCalls (and PrepareSSR if active)
-	// and before Present. No-ops if the composition subsystem has not been
-	// initialized.
+	// PrepareComposition runs the fullscreen composition pass: samples the HDR lit
+	// texture and optional SSR texture, applies ACES tone mapping and gamma
+	// correction, and writes the final LDR result to the swapchain.
+	// AcquireCompositionFrame must be called before this method each frame.
+	// Must be called after DrawCalls (and PrepareSSR if active) and before Present.
+	// No-ops if the composition subsystem has not been initialized.
 	PrepareComposition()
+
+	// AcquireCompositionFrame acquires the swapchain image for the composition
+	// pass. Must be called immediately before PrepareComposition each frame.
+	// No-ops if the renderer is nil or the scene is inactive, returning nil.
+	//
+	// Returns:
+	//   - error: an error if the swapchain image could not be acquired
+	AcquireCompositionFrame() error
 
 	// BeginHDRFrame starts the HDR render pass using this scene's composition
 	// handler textures. Returns an error if the composition handler is
@@ -854,14 +870,19 @@ func (s *scene) PrepareComposition() {
 		{Provider: compBGP, Binding: 4, Offset: 0, Data: compParams.Marshal()},
 	})
 
-	// Run the fullscreen composition pass: acquire swapchain → render → submit.
-	if err := s.r.BeginCompositionFrame(); err != nil {
-		return
-	}
 	s.r.BeginCompositionPass()
 	_ = s.r.CompositionDrawCall(compHandler.PipelineKey("composition"), []bind_group_provider.BindGroupProvider{compBGP})
 	s.r.EndCompositionPass()
 	s.r.EndCompositionFrame()
+}
+
+func (s *scene) AcquireCompositionFrame() error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.r == nil || !s.active {
+		return nil
+	}
+	return s.r.BeginCompositionFrame()
 }
 
 func (s *scene) BeginHDRFrame() error {
@@ -1036,6 +1057,26 @@ func (s *scene) PrepareShadows() {
 	maxSlots := sh.LightShadowAtlasSlots()
 	tileSize := sh.LightShadowTileSize()
 
+	// If any skeletal shadow-caster is active, all spot/point caches are stale
+	// because bone positions may have changed. This is conservative by design.
+	hasSkeletal := false
+	for _, anims := range s.animatorPool {
+		for _, a := range anims {
+			if a.BackendType() == animator.BackendTypeSkeletal && a.Model() != nil && a.Model().CastsShadows() {
+				hasSkeletal = true
+				break
+			}
+		}
+		if hasSkeletal {
+			break
+		}
+	}
+	if hasSkeletal {
+		sh.MarkAllDirty()
+	}
+
+	dirtyByLight := make(map[light.Light]bool)
+
 	for _, l := range s.lightHandler.Lights() {
 		if slotIdx >= maxSlots {
 			break
@@ -1103,110 +1144,28 @@ func (s *scene) PrepareShadows() {
 			Data:     spotUniform.Marshal(),
 		})
 
+		dirtyByLight[l] = sh.CheckAndMarkDirty(l)
 		slotIdx++
 	}
 
-	// Point light cube shadow map entries.
+	// Determine whether any enabled shadow-casting point light exists so the
+	// bail check below does not prematurely skip the unified point-light loop.
+	hasPointShadows := false
 	for _, l := range s.lightHandler.Lights() {
-		if slotIdx+5 >= maxSlots {
+		if l.Enabled() && l.CastsShadows() && l.Type() == light.LightTypePoint {
+			hasPointShadows = true
 			break
 		}
-		if !l.Enabled() || !l.CastsShadows() || l.Type() != light.LightTypePoint {
-			continue
-		}
-
-		pos := l.Position()
-		rng := l.Range()
-		near := float32(math.Max(1.0, float64(rng)*0.005))
-		far := rng
-
-		var proj [16]float32
-		common.Perspective(proj[:], math.Pi/2.0, 1.0, near, far)
-
-		type cubeFace struct {
-			dir [3]float32
-			up  [3]float32
-		}
-		faces := [6]cubeFace{
-			{dir: [3]float32{1, 0, 0}, up: [3]float32{0, -1, 0}},
-			{dir: [3]float32{-1, 0, 0}, up: [3]float32{0, -1, 0}},
-			{dir: [3]float32{0, 1, 0}, up: [3]float32{0, 0, 1}},
-			{dir: [3]float32{0, -1, 0}, up: [3]float32{0, 0, -1}},
-			{dir: [3]float32{0, 0, 1}, up: [3]float32{0, -1, 0}},
-			{dir: [3]float32{0, 0, -1}, up: [3]float32{0, -1, 0}},
-		}
-
-		s.lightShadowMap[l] = uint32(len(s.lightShadowEntries))
-
-		cols := sh.LightShadowAtlasCols()
-		rows := maxSlots / cols
-
-		for fi := 0; fi < 6; fi++ {
-			target := [3]float32{
-				pos[0] + faces[fi].dir[0],
-				pos[1] + faces[fi].dir[1],
-				pos[2] + faces[fi].dir[2],
-			}
-			var view, vp [16]float32
-			common.LookAt(view[:], pos[0], pos[1], pos[2], target[0], target[1], target[2], faces[fi].up[0], faces[fi].up[1], faces[fi].up[2])
-			common.Mul4(vp[:], proj[:], view[:])
-
-			si := slotIdx + fi
-			col := si % cols
-			row := si / cols
-			atlasRect := [4]float32{
-				float32(col) / float32(cols),
-				float32(row) / float32(rows),
-				1.0 / float32(cols),
-				1.0 / float32(rows),
-			}
-
-			entry := light.GPULightShadowEntry{
-				LightVP:    vp,
-				AtlasRect:  atlasRect,
-				Bias:       l.ShadowBias(),
-				Near:       near,
-				Far:        far,
-				ShadowType: light.ShadowTypeCubeFace,
-			}
-			s.lightShadowEntries = append(s.lightShadowEntries, entry)
-
-			bgpKey := fmt.Sprintf("spot_shadow_%d", si)
-			bgp := sh.Bgp(bgpKey)
-			uniform := light.GPUShadowUniform{LightVP: vp}
-			writes = append(writes, bind_group_provider.BufferWrite{
-				Provider: bgp,
-				Binding:  0,
-				Offset:   0,
-				Data:     uniform.Marshal(),
-			})
-		}
-
-		slotIdx += 6
-	}
-
-	// Write light shadow entry data to csm_shadow_lit BGP binding 4.
-	csmShadowLitBGP := sh.Bgp("csm_shadow_lit")
-	if csmShadowLitBGP != nil && csmShadowLitBGP.Buffer(4) != nil && len(s.lightShadowEntries) > 0 {
-		entryData := make([]byte, 0, len(s.lightShadowEntries)*96)
-		for _, e := range s.lightShadowEntries {
-			entryData = append(entryData, e.Marshal()...)
-		}
-		writes = append(writes, bind_group_provider.BufferWrite{
-			Provider: csmShadowLitBGP,
-			Binding:  4,
-			Offset:   0,
-			Data:     entryData,
-		})
 	}
 
 	// Bail if no shadow work at all.
-	if shadowLight == nil && len(s.lightShadowEntries) == 0 {
+	if shadowLight == nil && len(s.lightShadowEntries) == 0 && !hasPointShadows {
 		return
 	}
 
 	s.r.WriteBuffers(writes)
 
+	atlasCleared := false
 	if err := s.r.BeginShadowFrame(); err != nil {
 		return
 	}
@@ -1282,12 +1241,21 @@ func (s *scene) PrepareShadows() {
 		}
 	}
 
-	// Spot and point shadow depth passes.
-	spotAtlasCleared := false
-	for i, entry := range s.lightShadowEntries {
-		if entry.ShadowType != light.ShadowTypeSpot {
+	// Spot and point shadow depth passes — only re-render dirty lights.
+	// Clean lights retain their cached atlas tile content from prior frames.
+	for _, l := range s.lightHandler.Lights() {
+		if !l.Enabled() || !l.CastsShadows() || l.Type() != light.LightTypeSpot {
 			continue
 		}
+		slotI, ok := s.lightShadowMap[l]
+		if !ok {
+			continue
+		}
+		if !dirtyByLight[l] {
+			continue
+		}
+
+		i := int(slotI)
 		bgpKey := fmt.Sprintf("spot_shadow_%d", i)
 		spotBGP := sh.Bgp(bgpKey)
 		cols := sh.LightShadowAtlasCols()
@@ -1298,9 +1266,9 @@ func (s *scene) PrepareShadows() {
 		s.r.BeginShadowDepthPass(
 			sh.LightShadowAtlasView(),
 			x, y, uint32(tileSize), uint32(tileSize),
-			!spotAtlasCleared,
+			!atlasCleared,
 		)
-		spotAtlasCleared = true
+		atlasCleared = true
 
 		for _, anim := range s.animatorPool {
 			for _, a := range anim {
@@ -1358,84 +1326,178 @@ func (s *scene) PrepareShadows() {
 		}
 
 		s.r.EndShadowPass()
+		sh.CommitSnapshot(l)
 	}
 
-	// Point light cube face shadow depth passes.
-	for i, entry := range s.lightShadowEntries {
-		if entry.ShadowType != light.ShadowTypeCubeFace {
+	// Unified point light loop: VP computation, buffer writes, dirty check, and render.
+	// All six cube-face passes for each light are handled in a single iteration,
+	// eliminating the cross-loop dirty-flag dependency of the prior two-loop design.
+	for _, l := range s.lightHandler.Lights() {
+		if slotIdx+5 >= maxSlots {
+			break
+		}
+		if !l.Enabled() || !l.CastsShadows() || l.Type() != light.LightTypePoint {
 			continue
 		}
-		bgpKey := fmt.Sprintf("spot_shadow_%d", i)
-		spotBGP := sh.Bgp(bgpKey)
+
+		pos := l.Position()
+		rng := l.Range()
+		near := float32(math.Max(1.0, float64(rng)*0.005))
+		far := rng
+
+		var proj [16]float32
+		common.Perspective(proj[:], math.Pi/2.0, 1.0, near, far)
+
+		type cubeFace struct {
+			dir [3]float32
+			up  [3]float32
+		}
+		faces := [6]cubeFace{
+			{dir: [3]float32{1, 0, 0}, up: [3]float32{0, -1, 0}},
+			{dir: [3]float32{-1, 0, 0}, up: [3]float32{0, -1, 0}},
+			{dir: [3]float32{0, 1, 0}, up: [3]float32{0, 0, 1}},
+			{dir: [3]float32{0, -1, 0}, up: [3]float32{0, 0, -1}},
+			{dir: [3]float32{0, 0, 1}, up: [3]float32{0, -1, 0}},
+			{dir: [3]float32{0, 0, -1}, up: [3]float32{0, -1, 0}},
+		}
+
+		s.lightShadowMap[l] = uint32(len(s.lightShadowEntries))
 
 		cols := sh.LightShadowAtlasCols()
-		col := uint32(i % cols)
-		row := uint32(i / cols)
-		x := col * uint32(tileSize)
-		y := row * uint32(tileSize)
-		s.r.BeginShadowDepthPass(
-			sh.LightShadowAtlasView(),
-			x, y, uint32(tileSize), uint32(tileSize),
-			!spotAtlasCleared,
-		)
-		spotAtlasCleared = true
+		rows := maxSlots / cols
 
-		for _, anim := range s.animatorPool {
-			for _, a := range anim {
-				if a.InstanceCount() == 0 {
-					continue
-				}
-				mdl := a.Model()
-				if mdl == nil || !mdl.CastsShadows() {
-					continue
-				}
-				meshProvider := mdl.MeshProvider()
-				if meshProvider == nil {
-					continue
-				}
+		var ptWrites []bind_group_provider.BufferWrite
+		for fi := 0; fi < 6; fi++ {
+			target := [3]float32{
+				pos[0] + faces[fi].dir[0],
+				pos[1] + faces[fi].dir[1],
+				pos[2] + faces[fi].dir[2],
+			}
+			var view, vp [16]float32
+			common.LookAt(view[:], pos[0], pos[1], pos[2], target[0], target[1], target[2], faces[fi].up[0], faces[fi].up[1], faces[fi].up[2])
+			common.Mul4(vp[:], proj[:], view[:])
 
-				cullMode := mdl.ShadowCullMode()
-				pipeKey := s.shadowPipelineKey(mdl.Skinned(), cullMode)
-				if pipeKey == "" {
-					continue
-				}
+			si := slotIdx + fi
+			col := si % cols
+			row := si / cols
+			atlasRect := [4]float32{
+				float32(col) / float32(cols),
+				float32(row) / float32(rows),
+				1.0 / float32(cols),
+				1.0 / float32(rows),
+			}
 
-				shadowBindGroups := []bind_group_provider.BindGroupProvider{
-					spotBGP,
-					a.OutputBindGroupProvider(),
-				}
+			entry := light.GPULightShadowEntry{
+				LightVP:    vp,
+				AtlasRect:  atlasRect,
+				Bias:       l.ShadowBias(),
+				Near:       near,
+				Far:        far,
+				ShadowType: light.ShadowTypeCubeFace,
+			}
+			s.lightShadowEntries = append(s.lightShadowEntries, entry)
 
-				if a.CullingEnabled() {
-					if key := mdl.ComputePipelineKey(); key != "" {
-						if rp := s.r.Pipeline(key); rp != nil {
-							if cs := rp.Shader(shader.ShaderTypeCompute); cs != nil {
-								indirectBinding := 0
-								for _, decl := range cs.Declarations() {
-									if decl.Type == shader.AnnotationTypeBindingGroup && decl.Binding != nil {
-										typeArg := string(decl.Args[2])
-										if stripped, ok := strings.CutPrefix(typeArg, "array<"); ok {
-											typeArg = strings.TrimSuffix(stripped, ">")
+			bgpKey := fmt.Sprintf("spot_shadow_%d", si)
+			bgp := sh.Bgp(bgpKey)
+			uniform := light.GPUShadowUniform{LightVP: vp}
+			ptWrites = append(ptWrites, bind_group_provider.BufferWrite{
+				Provider: bgp,
+				Binding:  0,
+				Offset:   0,
+				Data:     uniform.Marshal(),
+			})
+		}
+		s.r.WriteBuffers(ptWrites)
+
+		dirty := sh.CheckAndMarkDirty(l)
+		if dirty {
+			for fi := 0; fi < 6; fi++ {
+				si := slotIdx + fi
+				bgpKey := fmt.Sprintf("spot_shadow_%d", si)
+				spotBGP := sh.Bgp(bgpKey)
+				col := uint32(si % cols)
+				row := uint32(si / cols)
+				x := col * uint32(tileSize)
+				y := row * uint32(tileSize)
+				s.r.BeginShadowDepthPass(
+					sh.LightShadowAtlasView(),
+					x, y, uint32(tileSize), uint32(tileSize),
+					!atlasCleared,
+				)
+				atlasCleared = true
+
+				for _, anim := range s.animatorPool {
+					for _, a := range anim {
+						if a.InstanceCount() == 0 {
+							continue
+						}
+						mdl := a.Model()
+						if mdl == nil || !mdl.CastsShadows() {
+							continue
+						}
+						meshProvider := mdl.MeshProvider()
+						if meshProvider == nil {
+							continue
+						}
+
+						cullMode := mdl.ShadowCullMode()
+						pipeKey := s.shadowPipelineKey(mdl.Skinned(), cullMode)
+						if pipeKey == "" {
+							continue
+						}
+
+						shadowBindGroups := []bind_group_provider.BindGroupProvider{
+							spotBGP,
+							a.OutputBindGroupProvider(),
+						}
+
+						if a.CullingEnabled() {
+							if key := mdl.ComputePipelineKey(); key != "" {
+								if rp := s.r.Pipeline(key); rp != nil {
+									if cs := rp.Shader(shader.ShaderTypeCompute); cs != nil {
+										indirectBinding := 0
+										for _, decl := range cs.Declarations() {
+											if decl.Type == shader.AnnotationTypeBindingGroup && decl.Binding != nil {
+												typeArg := string(decl.Args[2])
+												if stripped, ok := strings.CutPrefix(typeArg, "array<"); ok {
+													typeArg = strings.TrimSuffix(stripped, ">")
+												}
+												if shader.AnnotationArg(typeArg) == shader.AnnotationArgIndirectArgs {
+													indirectBinding = *decl.Binding
+													break
+												}
+											}
 										}
-										if shader.AnnotationArg(typeArg) == shader.AnnotationArgIndirectArgs {
-											indirectBinding = *decl.Binding
-											break
+										if indBuf := a.IndirectBuffer(indirectBinding); indBuf != nil {
+											_ = s.r.ShadowDrawCallIndirect(pipeKey, meshProvider, indBuf, shadowBindGroups)
+											continue
 										}
 									}
 								}
-								if indBuf := a.IndirectBuffer(indirectBinding); indBuf != nil {
-									_ = s.r.ShadowDrawCallIndirect(pipeKey, meshProvider, indBuf, shadowBindGroups)
-									continue
-								}
 							}
 						}
+
+						_ = s.r.ShadowDrawCall(pipeKey, meshProvider, uint32(a.InstanceCount()), shadowBindGroups)
 					}
 				}
 
-				_ = s.r.ShadowDrawCall(pipeKey, meshProvider, uint32(a.InstanceCount()), shadowBindGroups)
+				s.r.EndShadowPass()
 			}
 		}
+		sh.CommitSnapshot(l)
+		slotIdx += 6
+	}
 
-		s.r.EndShadowPass()
+	// Write the complete shadow entry data (spot + point) to csm_shadow_lit
+	// binding 4 now that all entries have been populated by both loops.
+	if csmBGP := sh.Bgp("csm_shadow_lit"); csmBGP != nil && csmBGP.Buffer(4) != nil && len(s.lightShadowEntries) > 0 {
+		entryData := make([]byte, 0, len(s.lightShadowEntries)*96)
+		for _, e := range s.lightShadowEntries {
+			entryData = append(entryData, e.Marshal()...)
+		}
+		s.r.WriteBuffers([]bind_group_provider.BufferWrite{
+			{Provider: csmBGP, Binding: 4, Offset: 0, Data: entryData},
+		})
 	}
 
 	s.r.EndShadowFrame()
@@ -1669,6 +1731,8 @@ func (s *scene) RemoveGameObject(id uint64) {
 	// Remove attached light from scene tracking lists
 	if l := obj.Light(); l != nil {
 		s.lightHandler.RemoveLight(l)
+		sh := s.lightHandler.ShadowHandler()
+		sh.OnLightRemoved(l)
 		for i, o := range s.lightObjects {
 			if o == obj {
 				s.lightObjects = append(s.lightObjects[:i], s.lightObjects[i+1:]...)

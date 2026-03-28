@@ -30,6 +30,13 @@ type SSAOHandler interface {
 	//   - enabled: true to mark as initialized
 	SetEnabled(enabled bool)
 
+	// SetSlot selects the active texture slot. Texture and view getters and
+	// setters read and write the [slot] index of the underlying arrays.
+	//
+	// Parameters:
+	//   - slot: the slot index (0 or 1)
+	SetSlot(slot int)
+
 	// ScreenWidth returns the current screen width in pixels used for texture sizing.
 	//
 	// Returns:
@@ -241,35 +248,46 @@ type SSAOHandler interface {
 
 var _ SSAOHandler = &ssaoHandlerImpl{}
 
-func (h *ssaoHandlerImpl) Enabled() bool                              { return h.enabled }
-func (h *ssaoHandlerImpl) SetEnabled(enabled bool)                    { h.enabled = enabled }
-func (h *ssaoHandlerImpl) ScreenWidth() int                           { return h.screenWidth }
-func (h *ssaoHandlerImpl) ScreenHeight() int                          { return h.screenHeight }
-func (h *ssaoHandlerImpl) SampleCount() int                           { return h.sampleCount }
-func (h *ssaoHandlerImpl) MaxSamples() int                            { return h.maxSamples }
-func (h *ssaoHandlerImpl) ScreenRadius() float32                      { return h.screenRadius }
-func (h *ssaoHandlerImpl) Bias() float32                              { return h.bias }
-func (h *ssaoHandlerImpl) Power() float32                             { return h.power }
-func (h *ssaoHandlerImpl) BlurRadius() int                            { return h.blurRadius }
-func (h *ssaoHandlerImpl) PipelineKey(name string) string             { return h.pipelineKeys[name] }
-func (h *ssaoHandlerImpl) PipelineKeys() map[string]string            { return h.pipelineKeys }
-func (h *ssaoHandlerImpl) SetPipelineKey(name, key string)            { h.pipelineKeys[name] = key }
-func (h *ssaoHandlerImpl) RawTexture() *wgpu.Texture                  { return h.rawTexture }
-func (h *ssaoHandlerImpl) SetRawTexture(t *wgpu.Texture)              { h.rawTexture = t }
-func (h *ssaoHandlerImpl) RawTextureView() *wgpu.TextureView          { return h.rawTextureView }
-func (h *ssaoHandlerImpl) SetRawTextureView(tv *wgpu.TextureView)     { h.rawTextureView = tv }
-func (h *ssaoHandlerImpl) BlurredTexture() *wgpu.Texture              { return h.blurredTexture }
-func (h *ssaoHandlerImpl) SetBlurredTexture(t *wgpu.Texture)          { h.blurredTexture = t }
-func (h *ssaoHandlerImpl) BlurredTextureView() *wgpu.TextureView      { return h.blurredTextureView }
-func (h *ssaoHandlerImpl) SetBlurredTextureView(tv *wgpu.TextureView) { h.blurredTextureView = tv }
-func (h *ssaoHandlerImpl) ScratchTexture() *wgpu.Texture              { return h.scratchTexture }
-func (h *ssaoHandlerImpl) SetScratchTexture(t *wgpu.Texture)          { h.scratchTexture = t }
-func (h *ssaoHandlerImpl) ScratchTextureView() *wgpu.TextureView      { return h.scratchTextureView }
-func (h *ssaoHandlerImpl) SetScratchTextureView(tv *wgpu.TextureView) { h.scratchTextureView = tv }
-func (h *ssaoHandlerImpl) LinearSampler() *wgpu.Sampler               { return h.linearSampler }
-func (h *ssaoHandlerImpl) SetLinearSampler(s *wgpu.Sampler)           { h.linearSampler = s }
-func (h *ssaoHandlerImpl) HalfResolution() bool                       { return h.halfResolution }
-func (h *ssaoHandlerImpl) SetHalfResolution(enabled bool)             { h.halfResolution = enabled }
+func (h *ssaoHandlerImpl) Enabled() bool                     { return h.enabled }
+func (h *ssaoHandlerImpl) SetEnabled(enabled bool)           { h.enabled = enabled }
+func (h *ssaoHandlerImpl) ScreenWidth() int                  { return h.screenWidth }
+func (h *ssaoHandlerImpl) ScreenHeight() int                 { return h.screenHeight }
+func (h *ssaoHandlerImpl) SampleCount() int                  { return h.sampleCount }
+func (h *ssaoHandlerImpl) MaxSamples() int                   { return h.maxSamples }
+func (h *ssaoHandlerImpl) ScreenRadius() float32             { return h.screenRadius }
+func (h *ssaoHandlerImpl) Bias() float32                     { return h.bias }
+func (h *ssaoHandlerImpl) Power() float32                    { return h.power }
+func (h *ssaoHandlerImpl) BlurRadius() int                   { return h.blurRadius }
+func (h *ssaoHandlerImpl) PipelineKey(name string) string    { return h.pipelineKeys[name] }
+func (h *ssaoHandlerImpl) PipelineKeys() map[string]string   { return h.pipelineKeys }
+func (h *ssaoHandlerImpl) SetPipelineKey(name, key string)   { h.pipelineKeys[name] = key }
+func (h *ssaoHandlerImpl) SetSlot(slot int)                  { h.activeSlot = slot }
+func (h *ssaoHandlerImpl) RawTexture() *wgpu.Texture         { return h.rawTextures[h.activeSlot] }
+func (h *ssaoHandlerImpl) SetRawTexture(t *wgpu.Texture)     { h.rawTextures[h.activeSlot] = t }
+func (h *ssaoHandlerImpl) RawTextureView() *wgpu.TextureView { return h.rawTextureViews[h.activeSlot] }
+func (h *ssaoHandlerImpl) SetRawTextureView(tv *wgpu.TextureView) {
+	h.rawTextureViews[h.activeSlot] = tv
+}
+func (h *ssaoHandlerImpl) BlurredTexture() *wgpu.Texture     { return h.blurredTextures[h.activeSlot] }
+func (h *ssaoHandlerImpl) SetBlurredTexture(t *wgpu.Texture) { h.blurredTextures[h.activeSlot] = t }
+func (h *ssaoHandlerImpl) BlurredTextureView() *wgpu.TextureView {
+	return h.blurredTextureViews[h.activeSlot]
+}
+func (h *ssaoHandlerImpl) SetBlurredTextureView(tv *wgpu.TextureView) {
+	h.blurredTextureViews[h.activeSlot] = tv
+}
+func (h *ssaoHandlerImpl) ScratchTexture() *wgpu.Texture     { return h.scratchTextures[h.activeSlot] }
+func (h *ssaoHandlerImpl) SetScratchTexture(t *wgpu.Texture) { h.scratchTextures[h.activeSlot] = t }
+func (h *ssaoHandlerImpl) ScratchTextureView() *wgpu.TextureView {
+	return h.scratchTextureViews[h.activeSlot]
+}
+func (h *ssaoHandlerImpl) SetScratchTextureView(tv *wgpu.TextureView) {
+	h.scratchTextureViews[h.activeSlot] = tv
+}
+func (h *ssaoHandlerImpl) LinearSampler() *wgpu.Sampler     { return h.linearSampler }
+func (h *ssaoHandlerImpl) SetLinearSampler(s *wgpu.Sampler) { h.linearSampler = s }
+func (h *ssaoHandlerImpl) HalfResolution() bool             { return h.halfResolution }
+func (h *ssaoHandlerImpl) SetHalfResolution(enabled bool)   { h.halfResolution = enabled }
 
 func (h *ssaoHandlerImpl) Bgp(key string) bind_group_provider.BindGroupProvider {
 	return h.bgps[key]

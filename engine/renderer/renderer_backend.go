@@ -19,6 +19,11 @@ const (
 	// PresentModeUncapped presents frames immediately without waiting for vertical blank.
 	// May cause screen tearing but provides the lowest latency.
 	PresentModeUncapped
+
+	// PresentModeMailbox is a low-latency mode that allows the GPU to replace the current frame with a newer one if the application produces frames faster than the display refresh rate.
+	// This can reduce latency and stuttering compared to VSync, while avoiding tearing that may occur with Uncapped mode.
+	// Support for this mode is adapter-dependent and may not be available on all hardware.
+	PresentModeMailbox
 )
 
 // MSAASampleCount controls the number of samples used for multisample anti-aliasing (MSAA).

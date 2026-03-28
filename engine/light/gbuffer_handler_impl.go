@@ -11,15 +11,17 @@ type gBufferHandlerImpl struct {
 
 	pipelineKeys map[string]string
 
+	activeSlot int
+
 	// G-Buffer MRT textures and views.
-	normalTexture     *wgpu.Texture
-	normalTextureView *wgpu.TextureView
-	albedoTexture     *wgpu.Texture
-	albedoTextureView *wgpu.TextureView
+	normalTextures     [2]*wgpu.Texture
+	normalTextureViews [2]*wgpu.TextureView
+	albedoTextures     [2]*wgpu.Texture
+	albedoTextureViews [2]*wgpu.TextureView
 
 	// Shared depth texture for the G-Buffer pass. When nil, the G-Buffer
 	// pass creates its own depth texture; otherwise it reuses the depth
 	// texture from the main render pass.
-	depthTexture     *wgpu.Texture
-	depthTextureView *wgpu.TextureView
+	depthTextures     [2]*wgpu.Texture
+	depthTextureViews [2]*wgpu.TextureView
 }

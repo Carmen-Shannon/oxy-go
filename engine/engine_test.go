@@ -10,6 +10,7 @@ import (
 	renderer_mocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/mocks"
 	scene_mocks "github.com/Carmen-Shannon/oxy-go/engine/scene/mocks"
 	window_mocks "github.com/Carmen-Shannon/oxy-go/engine/window/mocks"
+	"github.com/cogentcore/webgpu/wgpu"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
@@ -339,8 +340,12 @@ func (suite *engineTest) TestHandleRender() {
 		suite.sceneMock.EXPECT().PrepareSSR().Return().Maybe()
 		suite.sceneMock.EXPECT().PrepareLuminance(mock.AnythingOfType("float32")).Return().Maybe()
 		suite.sceneMock.EXPECT().PrepareBloom().Return().Maybe()
+		rendererMock.EXPECT().SyncGPUTimestamps().Return().Maybe()
+		rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
+		suite.sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
+		suite.sceneMock.EXPECT().AcquireCompositionFrame().Return(nil).Maybe()
 		suite.sceneMock.EXPECT().PrepareComposition().Return().Maybe()
-		rendererMock.EXPECT().FlushFrame().Return().Maybe()
+		rendererMock.EXPECT().FlushFrame().Return(wgpu.SubmissionIndex(0)).Maybe()
 
 		eImpl.wg.Add(1)
 		go eImpl.handleRender()
@@ -385,11 +390,14 @@ func (suite *engineTest) TestHandleRender() {
 		suite.sceneMock.EXPECT().PrepareLightCulling().Return().Maybe()
 		suite.sceneMock.EXPECT().PrepareSSAO().Return().Maybe()
 		suite.sceneMock.EXPECT().PrepareContactShadows().Return().Maybe()
+		rendererMock.EXPECT().SyncGPUTimestamps().Return().Maybe()
+		rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
+		suite.sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
 		suite.sceneMock.EXPECT().BeginHDRFrame().Return(fmt.Errorf("hdr unavailable")).Maybe()
 		rendererMock.EXPECT().BeginFrame().Return(nil).Maybe()
 		suite.sceneMock.EXPECT().DrawCalls().Return(nil).Maybe()
 		rendererMock.EXPECT().EndFrame().Return().Maybe()
-		rendererMock.EXPECT().FlushFrame().Return().Maybe()
+		rendererMock.EXPECT().FlushFrame().Return(wgpu.SubmissionIndex(0)).Maybe()
 
 		eImpl.wg.Add(1)
 		go eImpl.handleRender()
@@ -491,6 +499,9 @@ func (suite *engineTest) TestHandleRender() {
 		suite.sceneMock.EXPECT().PrepareLightCulling().Return().Maybe()
 		suite.sceneMock.EXPECT().PrepareSSAO().Return().Maybe()
 		suite.sceneMock.EXPECT().PrepareContactShadows().Return().Maybe()
+		rendererMock.EXPECT().SyncGPUTimestamps().Return().Maybe()
+		rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
+		suite.sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
 		suite.sceneMock.EXPECT().BeginHDRFrame().Return(nil).Maybe()
 		suite.sceneMock.EXPECT().DrawCalls().RunAndReturn(func() error {
 			panic("test render panic")

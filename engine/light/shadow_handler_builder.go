@@ -128,6 +128,8 @@ func NewShadowHandler(opts ...ShadowHandlerOption) ShadowHandler {
 		lightShadowTileSize:   1024,
 		pipelineKeys:          make(map[string]string),
 		bgps:                  make(map[string]bind_group_provider.BindGroupProvider),
+		snapshots:             make(map[Light]lightSnapshot),
+		dirtyFlags:            make(map[Light]bool),
 	}
 	for _, opt := range opts {
 		opt(h)

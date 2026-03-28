@@ -15,3 +15,5 @@ require (
 	github.com/stretchr/objx v0.5.2 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/cogentcore/webgpu => github.com/Carmen-Shannon/webgpu v0.23.1

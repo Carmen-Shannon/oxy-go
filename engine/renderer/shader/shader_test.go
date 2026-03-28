@@ -442,6 +442,21 @@ fn fs_nab() -> @location(0) vec4<f32> {
 }
 
 @group(0) @binding(0) var myPlainTex: texture_2d;`
+
+	// splitFieldWGSL has a struct with an attribute-only comma token (@location(0) alone,
+	// not followed by an identifier: type pair) to exercise the fieldRegex no-match
+	// else-continue in parseStructFields.
+	splitFieldWGSL = `struct Split {
+    @location(0),
+    x: f32,
+}
+
+@fragment
+fn fs_split() -> @location(0) vec4<f32> {
+    return vec4<f32>(1.0, 0.0, 0.0, 1.0);
+}
+
+@group(0) @binding(0) var<uniform> color: vec4<f32>;`
 )
 
 type newShaderTest struct {
@@ -467,6 +482,7 @@ type newShaderTest struct {
 	invalidArrayCountFragPath       string
 	computeStructLayoutCoveragePath string
 	noAngleBracketTexturePath       string
+	splitFragPath                   string
 	unknownVertexFormatVS           shader.Shader
 	readOnlyStorageFrag             shader.Shader
 	lineCommentVS                   shader.Shader
@@ -474,6 +490,7 @@ type newShaderTest struct {
 	invalidArrayCountFrag           shader.Shader
 	computeStructLayoutCoverageFrag shader.Shader
 	noAngleBracketTextureFrag       shader.Shader
+	splitFrag                       shader.Shader
 }
 
 func TestNewShader(t *testing.T) {
@@ -529,6 +546,10 @@ func (suite *newShaderTest) SetupSuite() {
 	suite.invalidArrayCountFrag = shader.NewShader("iac-frag", shader.ShaderTypeFragment, suite.invalidArrayCountFragPath)
 	suite.computeStructLayoutCoverageFrag = shader.NewShader("csl-frag", shader.ShaderTypeFragment, suite.computeStructLayoutCoveragePath)
 	suite.noAngleBracketTextureFrag = shader.NewShader("nab-frag", shader.ShaderTypeFragment, suite.noAngleBracketTexturePath)
+
+	suite.splitFragPath = filepath.Join(tmp, "split_frag.wgsl")
+	suite.Require().NoError(os.WriteFile(suite.splitFragPath, []byte(splitFieldWGSL), 0o644))
+	suite.splitFrag = shader.NewShader("split-frag", shader.ShaderTypeFragment, suite.splitFragPath)
 }
 
 func (suite *newShaderTest) TestNewShader() {
@@ -801,5 +822,17 @@ func (suite *newShaderTest) TestNoAngleBracketTexture() {
 	s := suite.noAngleBracketTextureFrag
 	suite.Run("texture binding without angle-bracket type parameter is tracked by variable name", func() {
 		suite.Equal("myPlainTex", s.BindGroupVarName(0, 0))
+	})
+}
+
+func (suite *newShaderTest) TestSplitFieldShader() {
+	suite.Run("struct with attribute-only token parsed without panic", func() {
+		suite.NotNil(suite.splitFrag)
+	})
+	suite.Run("entry point is fs_split", func() {
+		suite.Equal("fs_split", suite.splitFrag.EntryPoint())
+	})
+	suite.Run("ShaderType is fragment", func() {
+		suite.Equal(shader.ShaderTypeFragment, suite.splitFrag.ShaderType())
 	})
 }

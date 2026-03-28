@@ -180,6 +180,35 @@ func (suite *gltfMeshExtractorImplTest) TestExtractAllMeshes() {
 		suite.Equal("mesh0", result[0].Name)
 		suite.Equal("mesh1", result[1].Name)
 	})
+
+	suite.Run("with active scene, extracts meshes via node walk", func() {
+		sceneIdx := 0
+		meshIdx := 0
+		suite.mockParser.doc = &gltfDocument{
+			Scene:  &sceneIdx,
+			Scenes: []gltfScene{{Nodes: []int{0}}},
+			Nodes:  []gltfNode{{Mesh: &meshIdx}},
+			Meshes: []gltfMesh{{
+				Name:       "scene_mesh",
+				Primitives: []gltfPrimitive{{Attributes: map[string]int{"POSITION": 0}}},
+			}},
+		}
+		suite.mockParser.vec3Result = [][3]float32{{1, 2, 3}}
+		result, err := suite.extractor.ExtractAllMeshes()
+		suite.NoError(err)
+		suite.Len(result, 1)
+	})
+
+	suite.Run("with active scene, node walk error propagates", func() {
+		sceneIdx := 0
+		suite.mockParser.doc = &gltfDocument{
+			Scene:  &sceneIdx,
+			Scenes: []gltfScene{{Nodes: []int{99}}},
+			Nodes:  []gltfNode{},
+		}
+		_, err := suite.extractor.ExtractAllMeshes()
+		suite.Error(err)
+	})
 }
 
 func (suite *gltfMeshExtractorImplTest) TestExtractPrimitive() {
@@ -747,4 +776,256 @@ func (suite *gltfMeshExtractorImplTest) TestGenerateTangents() {
 		suite.NotPanics(func() { generateTangents(v, idx) })
 		suite.Equal([4]float32{1, 0, 0, 1}, v[0].Tangent)
 	})
+}
+
+func (suite *gltfMeshExtractorImplTest) TestGltfWalkNode() {
+	impl := func() *gltfMeshExtractorImpl {
+		return suite.extractor.(*gltfMeshExtractorImpl)
+	}
+	identity := identityMatrix()
+
+	suite.Run("node index out of range returns error", func() {
+		doc := &gltfDocument{Nodes: []gltfNode{}}
+		_, err := impl().gltfWalkNode(doc, 0, identity)
+		suite.Error(err)
+	})
+
+	suite.Run("node index negative returns error", func() {
+		doc := &gltfDocument{Nodes: []gltfNode{{}}}
+		_, err := impl().gltfWalkNode(doc, -1, identity)
+		suite.Error(err)
+	})
+
+	suite.Run("node with no mesh and no children returns empty", func() {
+		doc := &gltfDocument{Nodes: []gltfNode{{}}}
+		result, err := impl().gltfWalkNode(doc, 0, identity)
+		suite.NoError(err)
+		suite.Len(result, 0)
+	})
+
+	suite.Run("node with mesh out of range returns error", func() {
+		meshIdx := 99
+		doc := &gltfDocument{
+			Nodes:  []gltfNode{{Mesh: &meshIdx}},
+			Meshes: []gltfMesh{},
+		}
+		_, err := impl().gltfWalkNode(doc, 0, identity)
+		suite.Error(err)
+	})
+
+	suite.Run("node with valid mesh, no skin, applies world transform", func() {
+		meshIdx := 0
+		doc := &gltfDocument{
+			Nodes: []gltfNode{{Mesh: &meshIdx}},
+			Meshes: []gltfMesh{{
+				Name:       "m",
+				Primitives: []gltfPrimitive{{Attributes: map[string]int{"POSITION": 0}}},
+			}},
+		}
+		suite.mockParser.doc = doc
+		suite.mockParser.vec3Result = [][3]float32{{0, 0, 0}}
+		result, err := impl().gltfWalkNode(doc, 0, identity)
+		suite.NoError(err)
+		suite.Len(result, 1)
+	})
+
+	suite.Run("node with mesh and skin skips world transform", func() {
+		meshIdx := 0
+		skinIdx := 0
+		doc := &gltfDocument{
+			Nodes: []gltfNode{{Mesh: &meshIdx, Skin: &skinIdx}},
+			Meshes: []gltfMesh{{
+				Name:       "skinned",
+				Primitives: []gltfPrimitive{{Attributes: map[string]int{"POSITION": 0}}},
+			}},
+		}
+		suite.mockParser.doc = doc
+		suite.mockParser.vec3Result = [][3]float32{{1, 2, 3}}
+		result, err := impl().gltfWalkNode(doc, 0, identity)
+		suite.NoError(err)
+		suite.Len(result, 1)
+		suite.InDelta(float32(1), result[0].Vertices[0].Position[0], 1e-6)
+	})
+
+	suite.Run("extractPrimitive error propagates", func() {
+		meshIdx := 0
+		suite.mockParser.readVec3Err = errors.New("pos read error")
+		doc := &gltfDocument{
+			Nodes: []gltfNode{{Mesh: &meshIdx}},
+			Meshes: []gltfMesh{{
+				Primitives: []gltfPrimitive{{Attributes: map[string]int{"POSITION": 0}}},
+			}},
+		}
+		suite.mockParser.doc = doc
+		_, err := impl().gltfWalkNode(doc, 0, identity)
+		suite.Error(err)
+	})
+
+	suite.Run("node with valid child node recurses successfully", func() {
+		meshIdx := 0
+		parentNode := gltfNode{Children: []int{1}}
+		childNode := gltfNode{Mesh: &meshIdx}
+		doc := &gltfDocument{
+			Nodes: []gltfNode{parentNode, childNode},
+			Meshes: []gltfMesh{{
+				Name:       "child_mesh",
+				Primitives: []gltfPrimitive{{Attributes: map[string]int{"POSITION": 0}}},
+			}},
+		}
+		suite.mockParser.doc = doc
+		suite.mockParser.vec3Result = [][3]float32{{0, 0, 0}}
+		result, err := impl().gltfWalkNode(doc, 0, identity)
+		suite.NoError(err)
+		suite.Len(result, 1)
+	})
+
+	suite.Run("child node walk error propagates", func() {
+		parentNode := gltfNode{Children: []int{99}}
+		doc := &gltfDocument{
+			Nodes: []gltfNode{parentNode},
+		}
+		suite.mockParser.doc = doc
+		_, err := impl().gltfWalkNode(doc, 0, identity)
+		suite.Error(err)
+	})
+}
+
+func (suite *gltfMeshExtractorImplTest) TestGltfQuatToMatrix() {
+	suite.Run("identity quaternion produces identity rotation matrix", func() {
+		m := gltfQuatToMatrix([4]float32{0, 0, 0, 1})
+		suite.InDelta(float32(1), m[0], 1e-6)
+		suite.InDelta(float32(0), m[1], 1e-6)
+		suite.InDelta(float32(0), m[2], 1e-6)
+		suite.InDelta(float32(0), m[4], 1e-6)
+		suite.InDelta(float32(1), m[5], 1e-6)
+		suite.InDelta(float32(0), m[6], 1e-6)
+		suite.InDelta(float32(0), m[8], 1e-6)
+		suite.InDelta(float32(0), m[9], 1e-6)
+		suite.InDelta(float32(1), m[10], 1e-6)
+		suite.InDelta(float32(1), m[15], 1e-6)
+	})
+
+	suite.Run("180-degree rotation around Y: q=(0,1,0,0) produces correct matrix", func() {
+		m := gltfQuatToMatrix([4]float32{0, 1, 0, 0})
+		suite.InDelta(float32(-1), m[0], 1e-6)
+		suite.InDelta(float32(1), m[5], 1e-6)
+		suite.InDelta(float32(-1), m[10], 1e-6)
+		suite.InDelta(float32(1), m[15], 1e-6)
+	})
+}
+
+func (suite *gltfMeshExtractorImplTest) TestGltfNodeLocalMatrix() {
+	suite.Run("node with explicit matrix returns it directly", func() {
+		mat := [16]float32{1, 0, 0, 0, 0, 2, 0, 0, 0, 0, 3, 0, 4, 5, 6, 1}
+		node := &gltfNode{Matrix: &mat}
+		result := gltfNodeLocalMatrix(node)
+		suite.Equal(mat, result)
+	})
+
+	suite.Run("node with all nil TRS produces identity matrix", func() {
+		node := &gltfNode{}
+		m := gltfNodeLocalMatrix(node)
+		suite.InDelta(float32(1), m[0], 1e-6)
+		suite.InDelta(float32(1), m[5], 1e-6)
+		suite.InDelta(float32(1), m[10], 1e-6)
+		suite.InDelta(float32(1), m[15], 1e-6)
+		suite.InDelta(float32(0), m[12], 1e-6)
+		suite.InDelta(float32(0), m[13], 1e-6)
+		suite.InDelta(float32(0), m[14], 1e-6)
+	})
+
+	suite.Run("node with translation sets m[12..14]", func() {
+		t := [3]float32{3, 5, 7}
+		node := &gltfNode{Translation: &t}
+		m := gltfNodeLocalMatrix(node)
+		suite.InDelta(float32(3), m[12], 1e-6)
+		suite.InDelta(float32(5), m[13], 1e-6)
+		suite.InDelta(float32(7), m[14], 1e-6)
+	})
+
+	suite.Run("node with uniform scale multiplies rotation columns", func() {
+		s := [3]float32{2, 2, 2}
+		node := &gltfNode{Scale: &s}
+		m := gltfNodeLocalMatrix(node)
+		suite.InDelta(float32(2), m[0], 1e-6)
+		suite.InDelta(float32(2), m[5], 1e-6)
+		suite.InDelta(float32(2), m[10], 1e-6)
+	})
+}
+
+func (suite *gltfMeshExtractorImplTest) TestGltfTransformPoint() {
+	suite.Run("identity matrix returns same point", func() {
+		m := identityMatrix()
+		p := [3]float32{1, 2, 3}
+		result := gltfTransformPoint(m, p)
+		suite.InDelta(float32(1), result[0], 1e-6)
+		suite.InDelta(float32(2), result[1], 1e-6)
+		suite.InDelta(float32(3), result[2], 1e-6)
+	})
+
+	suite.Run("translation matrix shifts point by translation", func() {
+		m := identityMatrix()
+		m[12], m[13], m[14] = 5, 0, 0
+		p := [3]float32{0, 0, 0}
+		result := gltfTransformPoint(m, p)
+		suite.InDelta(float32(5), result[0], 1e-6)
+		suite.InDelta(float32(0), result[1], 1e-6)
+		suite.InDelta(float32(0), result[2], 1e-6)
+	})
+}
+
+func (suite *gltfMeshExtractorImplTest) TestGltfTransformNormal() {
+	suite.Run("identity matrix returns same normal", func() {
+		m := identityMatrix()
+		n := [3]float32{0, 1, 0}
+		result := gltfTransformNormal(m, n)
+		suite.InDelta(float32(0), result[0], 1e-6)
+		suite.InDelta(float32(1), result[1], 1e-6)
+		suite.InDelta(float32(0), result[2], 1e-6)
+	})
+
+	suite.Run("singular matrix returns original normal unchanged", func() {
+		var m [16]float32
+		n := [3]float32{0, 1, 0}
+		result := gltfTransformNormal(m, n)
+		suite.InDelta(float32(0), result[0], 1e-6)
+		suite.InDelta(float32(1), result[1], 1e-6)
+		suite.InDelta(float32(0), result[2], 1e-6)
+	})
+}
+
+func (suite *gltfMeshExtractorImplTest) TestGltfApplyWorldTransform() {
+	suite.Run("identity matrix leaves positions unchanged", func() {
+		imported := &model.ImportedMesh{
+			Vertices: []model.GPUSkinnedVertex{
+				{GPUVertex: model.GPUVertex{Position: [3]float32{1, 2, 3}, Normal: [3]float32{0, 1, 0}}},
+			},
+		}
+		m := identityMatrix()
+		gltfApplyWorldTransform(imported, m)
+		suite.InDelta(float32(1), imported.Vertices[0].Position[0], 1e-6)
+		suite.InDelta(float32(2), imported.Vertices[0].Position[1], 1e-6)
+		suite.InDelta(float32(3), imported.Vertices[0].Position[2], 1e-6)
+	})
+
+	suite.Run("translation matrix shifts vertex positions and updates bounding box", func() {
+		imported := &model.ImportedMesh{
+			Vertices: []model.GPUSkinnedVertex{
+				{GPUVertex: model.GPUVertex{Position: [3]float32{0, 0, 0}, Normal: [3]float32{0, 1, 0}}},
+			},
+		}
+		m := identityMatrix()
+		m[12] = 10
+		gltfApplyWorldTransform(imported, m)
+		suite.InDelta(float32(10), imported.Vertices[0].Position[0], 1e-6)
+		suite.InDelta(float32(10), imported.BoundingMin[0], 1e-6)
+		suite.InDelta(float32(10), imported.BoundingMax[0], 1e-6)
+	})
+}
+
+// identityMatrix returns a column-major 4×4 identity matrix as [16]float32.
+func identityMatrix() [16]float32 {
+	var m [16]float32
+	m[0], m[5], m[10], m[15] = 1, 1, 1, 1
+	return m
 }

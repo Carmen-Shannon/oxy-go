@@ -19,8 +19,9 @@ type renderer struct {
 	backend     RendererBackend
 
 	// Pre-creation config collected from builder options
-	forceFallbackAdapter bool
-	pendingPresentMode   *PresentMode
-	pendingMSAA          *MSAASampleCount
-	injections           map[string]string
+	forceFallbackAdapter   bool
+	pendingPresentMode     *PresentMode
+	pendingMSAA            *MSAASampleCount
+	injections             map[string]string
+	gpuSerializedProfiling bool
 }

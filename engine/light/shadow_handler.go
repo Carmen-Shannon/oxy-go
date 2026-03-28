@@ -215,6 +215,37 @@ type ShadowHandler interface {
 	// Returns:
 	//   - int: the tile size in texels
 	LightShadowTileSize() int
+
+	// CheckAndMarkDirty compares the light's current fields to the stored snapshot.
+	// Returns true if the light is dirty (no snapshot, fields changed, or externally
+	// marked dirty). The dirty flag is set internally; call CommitSnapshot after
+	// rendering to clear it.
+	//
+	// Parameters:
+	//   - l: the light to check
+	//
+	// Returns:
+	//   - bool: true if the light requires a depth re-render this frame
+	CheckAndMarkDirty(l Light) bool
+
+	// MarkAllDirty marks all currently-tracked lights as dirty. Called when any
+	// skeletal shadow-caster is active in the scene, ensuring animated geometry
+	// changes are reflected in all spot/point shadow maps.
+	MarkAllDirty()
+
+	// CommitSnapshot stores the light's current field values as the accepted
+	// snapshot and clears the dirty flag. Call after a successful depth render.
+	//
+	// Parameters:
+	//   - l: the light whose snapshot to commit
+	CommitSnapshot(l Light)
+
+	// OnLightRemoved cleans up all snapshot and dirty-flag state for a removed
+	// light, preventing stale entries from accumulating over time.
+	//
+	// Parameters:
+	//   - l: the light that was removed from the scene
+	OnLightRemoved(l Light)
 }
 
 var _ ShadowHandler = &shadowHandlerImpl{}

@@ -41,6 +41,7 @@ func main() {
 		renderer.BackendTypeWGPU,
 		eng.Window(),
 		renderer.WithPresentMode(renderer.PresentModeUncapped),
+		renderer.WithGPUSerializedProfiling(true),
 	)
 
 	// ── Camera ──────────────────────────────────────────────────────────

@@ -14,13 +14,15 @@ type bindGroupProvider struct {
 
 	// The following fields are GPU allocated resources and must be released when no longer needed. They are populated by the Renderer during initialization, not by user-creation.
 
-	// bindGroup is the GPU bind group created for this provider, or nil if not initialized with the Renderer.
-	bindGroup *wgpu.BindGroup
+	// activeSlot is the currently active frame-in-flight slot (0 or 1). Defaults to 0.
+	activeSlot int
+	// bindGroups holds one bind group per frame-in-flight slot.
+	bindGroups [2]*wgpu.BindGroup
 	// bindGroupLayout is the GPU bind group layout created for this provider, or nil if not initialized with the Renderer.
 	// TODO: Investigate whether this even needs to remain persisted anywhere, once the layout is created via the Shader that holds the BindGroupLayoutDescriptor what do we need this for?
 	bindGroupLayout *wgpu.BindGroupLayout
-	// buffers holds the GPU buffers created for this provider, keyed by binding index.
-	buffers map[int]*wgpu.Buffer
+	// buffers holds the GPU buffers created for this provider per frame-in-flight slot, keyed by binding index.
+	buffers [2]map[int]*wgpu.Buffer
 	// textureViews holds the GPU texture views created for this provider, keyed by binding index.
 	textureViews map[int]*wgpu.TextureView
 	// samplers holds the GPU samplers created for this provider, keyed by binding index.

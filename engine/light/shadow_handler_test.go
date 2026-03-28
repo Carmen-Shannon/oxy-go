@@ -230,3 +230,80 @@ func (suite *shadowHandlerTest) TestSetLightShadowAtlasView() {
 		suite.Nil(suite.handler.LightShadowAtlasView())
 	})
 }
+
+func (suite *shadowHandlerTest) TestCheckAndMarkDirty() {
+	suite.Run("no prior snapshot marks dirty and returns true", func() {
+		l := light.NewLight(light.LightTypePoint)
+		suite.True(suite.handler.CheckAndMarkDirty(l))
+	})
+
+	suite.Run("unchanged light with committed snapshot returns false", func() {
+		l := light.NewLight(light.LightTypePoint)
+		suite.handler.CommitSnapshot(l)
+		suite.False(suite.handler.CheckAndMarkDirty(l))
+	})
+
+	suite.Run("changed position marks dirty and returns true", func() {
+		l := light.NewLight(light.LightTypePoint)
+		suite.handler.CommitSnapshot(l)
+		l.SetPosition(10, 20, 30)
+		suite.True(suite.handler.CheckAndMarkDirty(l))
+	})
+
+	suite.Run("previously externally marked dirty returns true even if snapshot matches", func() {
+		l := light.NewLight(light.LightTypePoint)
+		suite.handler.CommitSnapshot(l)
+		suite.handler.MarkAllDirty()
+		suite.True(suite.handler.CheckAndMarkDirty(l))
+	})
+}
+
+func (suite *shadowHandlerTest) TestMarkAllDirty() {
+	suite.Run("marks all committed lights dirty", func() {
+		l1 := light.NewLight(light.LightTypePoint)
+		l2 := light.NewLight(light.LightTypeSpot)
+		suite.handler.CommitSnapshot(l1)
+		suite.handler.CommitSnapshot(l2)
+		suite.handler.MarkAllDirty()
+		suite.True(suite.handler.CheckAndMarkDirty(l1))
+		suite.True(suite.handler.CheckAndMarkDirty(l2))
+	})
+
+	suite.Run("lights without snapshots are unaffected", func() {
+		suite.NotPanics(func() { suite.handler.MarkAllDirty() })
+	})
+}
+
+func (suite *shadowHandlerTest) TestCommitSnapshot() {
+	suite.Run("commit stores snapshot and clears dirty flag", func() {
+		l := light.NewLight(light.LightTypePoint)
+		suite.handler.CheckAndMarkDirty(l)
+		suite.handler.CommitSnapshot(l)
+		suite.False(suite.handler.CheckAndMarkDirty(l))
+	})
+
+	suite.Run("re-commit after change clears dirty", func() {
+		l := light.NewLight(light.LightTypePoint)
+		suite.handler.CommitSnapshot(l)
+		l.SetPosition(5, 5, 5)
+		suite.handler.CheckAndMarkDirty(l)
+		suite.handler.CommitSnapshot(l)
+		suite.False(suite.handler.CheckAndMarkDirty(l))
+	})
+}
+
+func (suite *shadowHandlerTest) TestOnLightRemoved() {
+	suite.Run("removes snapshot and dirty flag", func() {
+		l := light.NewLight(light.LightTypePoint)
+		suite.handler.CommitSnapshot(l)
+		suite.handler.OnLightRemoved(l)
+		suite.True(suite.handler.CheckAndMarkDirty(l))
+		suite.handler.CommitSnapshot(l)
+		suite.False(suite.handler.CheckAndMarkDirty(l))
+	})
+
+	suite.Run("removing unknown light does not panic", func() {
+		l := light.NewLight(light.LightTypePoint)
+		suite.NotPanics(func() { suite.handler.OnLightRemoved(l) })
+	})
+}

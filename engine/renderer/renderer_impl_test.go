@@ -522,7 +522,7 @@ func (suite *rendererImplTest) TestEndCompositionFrame() {
 
 func (suite *rendererImplTest) TestFlushFrame() {
 	suite.Run("should call FlushFrame on the backend", func() {
-		suite.backendMock.EXPECT().FlushFrame().Return().Once()
+		suite.backendMock.EXPECT().FlushFrame().Return(wgpu.SubmissionIndex(0)).Once()
 		suite.r.FlushFrame()
 	})
 }
@@ -531,6 +531,13 @@ func (suite *rendererImplTest) TestWaitIdle() {
 	suite.Run("should call WaitIdle on the backend", func() {
 		suite.backendMock.EXPECT().WaitIdle().Return().Once()
 		suite.r.WaitIdle()
+	})
+}
+
+func (suite *rendererImplTest) TestSyncGPUTimestamps() {
+	suite.Run("should call SyncGPUTimestamps on the backend", func() {
+		suite.backendMock.EXPECT().SyncGPUTimestamps().Return().Once()
+		suite.r.SyncGPUTimestamps()
 	})
 }
 

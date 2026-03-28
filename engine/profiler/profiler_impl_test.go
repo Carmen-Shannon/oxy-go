@@ -183,3 +183,83 @@ func (suite *profilerImplTest) TestTickResets() {
 		suite.Equal(int64(0), m.count)
 	})
 }
+
+func (suite *profilerImplTest) TestTickWithZeroCounts() {
+	suite.Run("section with zero count is skipped during logging", func() {
+		p := &profiler{
+			sections:       make(map[string]*sectionStats),
+			sectionOrder:   []string{},
+			metrics:        make(map[string]*metricStats),
+			metricOrder:    []string{},
+			updateInterval: time.Nanosecond,
+			lastTime:       time.Time{},
+		}
+		// Register section but never call stop — count stays 0
+		p.Section("uncompleted")
+		result := p.Tick()
+		suite.True(result)
+		// Section must still exist but have been skipped in logging
+		suite.Equal(int64(0), p.sections["uncompleted"].count)
+	})
+
+	suite.Run("metric with zero count after reset is skipped during logging", func() {
+		p := &profiler{
+			sections:       make(map[string]*sectionStats),
+			sectionOrder:   []string{},
+			metrics:        make(map[string]*metricStats),
+			metricOrder:    []string{},
+			updateInterval: time.Nanosecond,
+			lastTime:       time.Time{},
+		}
+		p.Record("m", 1.0)
+		// First Tick: logs m (count=1), then resets count to 0
+		first := p.Tick()
+		suite.True(first)
+		// Reset lastTime so the second Tick also fires
+		p.lastTime = time.Time{}
+		// Second Tick: finds m in metricOrder but count==0 → continue
+		second := p.Tick()
+		suite.True(second)
+		suite.Equal(int64(0), p.metrics["m"].count)
+	})
+
+	suite.Run("section with zero count after reset is skipped in both logging loops", func() {
+		p := &profiler{
+			sections:       make(map[string]*sectionStats),
+			sectionOrder:   []string{},
+			metrics:        make(map[string]*metricStats),
+			metricOrder:    []string{},
+			updateInterval: time.Nanosecond,
+			lastTime:       time.Time{},
+		}
+		stop := p.Section("s")
+		stop()
+		// First Tick: logs s (count=1), then resets count to 0
+		first := p.Tick()
+		suite.True(first)
+		// Reset lastTime so the second Tick also fires
+		p.lastTime = time.Time{}
+		// Second Tick: finds s in sectionOrder but count==0 → continue in both loops
+		second := p.Tick()
+		suite.True(second)
+		suite.Equal(int64(0), p.sections["s"].count)
+	})
+
+	suite.Run("section with non-zero time computes percentage", func() {
+		p := &profiler{
+			sections:       make(map[string]*sectionStats),
+			sectionOrder:   []string{},
+			metrics:        make(map[string]*metricStats),
+			metricOrder:    []string{},
+			updateInterval: time.Nanosecond,
+			lastTime:       time.Time{},
+		}
+		stop := p.Section("timed")
+		time.Sleep(time.Microsecond)
+		stop()
+		result := p.Tick()
+		suite.True(result)
+		// After Tick the section is reset; minNs returns to MaxInt64
+		suite.Equal(int64(math.MaxInt64), p.sections["timed"].minNs)
+	})
+}
