@@ -31,6 +31,16 @@ jobs:
       - name: Install Go dependencies
         run: go mod download
 
+      - name: Install Mesa software Vulkan
+        run: |
+          brew install vulkan-loader mesa
+          MESA_PREFIX=$(brew --prefix mesa)
+          MOLTENVK_ICD="$(brew --prefix molten-vk)/share/vulkan/icd.d/MoltenVK_icd.json"
+          LVP_ICD=$(find "${MESA_PREFIX}/share/vulkan/icd.d" -name "lvp_icd*.json" | head -1)
+          LOADER_LIB="$(brew --prefix vulkan-loader)/lib"
+          echo "VK_ICD_FILENAMES=${MOLTENVK_ICD}:${LVP_ICD}" >> "$GITHUB_ENV"
+          echo "DYLD_LIBRARY_PATH=${LOADER_LIB}" >> "$GITHUB_ENV"
+
       - name: Install mockery
         run: go install github.com/vektra/mockery/v2@v2.53.5
 
@@ -68,6 +78,14 @@ jobs:
           MESA_DIR="$(cygpath --windows "$(pwd)/mesa")"
           echo "VK_DRIVER_FILES=${MESA_DIR}\\lvp_icd.x86_64.json" >> "$GITHUB_ENV"
           echo "GALLIUM_DRIVER=llvmpipe" >> "$GITHUB_ENV"
+
+      - name: Install Vulkan SDK
+        shell: bash
+        run: |
+          VULKAN_SDK_VERSION="1.4.328.1"
+          curl.exe -L --retry 5 "https://sdk.lunarg.com/sdk/download/${VULKAN_SDK_VERSION}/windows/vulkansdk-windows-X64-${VULKAN_SDK_VERSION}.exe" -o vulkan-sdk-installer.exe
+          ./vulkan-sdk-installer.exe --accept-licenses --default-answer --confirm-command install
+          echo "C:/VulkanSDK/${VULKAN_SDK_VERSION}/Bin" >> "$GITHUB_PATH"
 
       - name: Install mockery
         run: go install github.com/vektra/mockery/v2@v2.53.5
