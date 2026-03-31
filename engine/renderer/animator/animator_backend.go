@@ -13,11 +13,10 @@ const (
 	BackendTypeSkeletal
 )
 
-// AnimatorBackend is the union interface that all animation backends must implement.
-// It embeds both simpleAnimatorBackend and skeletalAnimatorBackend, requiring concrete
-// implementations to provide the full method set. Methods that do not apply to a given
-// backend type are implemented as no-ops.
+// AnimatorBackend is the interface all animation backends must implement.
+// It covers the common per-instance transform, culling, and lifecycle operations.
+// Skeletal-only capabilities (bones, clips, playback) are provided by skeletalAnimatorBackend
+// and accessed via type assertion in the animator delegation layer.
 type AnimatorBackend interface {
 	simpleAnimatorBackend
-	skeletalAnimatorBackend
 }

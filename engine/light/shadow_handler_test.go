@@ -85,8 +85,8 @@ func (suite *shadowHandlerTest) TestShadowInnerRadius() {
 }
 
 func (suite *shadowHandlerTest) TestLightShadowTileSize() {
-	suite.Run("should return 1024 by default", func() {
-		suite.Equal(1024, suite.handler.LightShadowTileSize())
+	suite.Run("should return 512 by default", func() {
+		suite.Equal(512, suite.handler.LightShadowTileSize())
 	})
 }
 
@@ -305,5 +305,21 @@ func (suite *shadowHandlerTest) TestOnLightRemoved() {
 	suite.Run("removing unknown light does not panic", func() {
 		l := light.NewLight(light.LightTypePoint)
 		suite.NotPanics(func() { suite.handler.OnLightRemoved(l) })
+	})
+}
+
+func (suite *shadowHandlerTest) TestForceMarkDirty() {
+	suite.Run("should mark a clean light dirty", func() {
+		l := light.NewLight(light.LightTypePoint)
+		suite.handler.CommitSnapshot(l)
+		suite.handler.CommitSnapshot(l)
+		suite.handler.ForceMarkDirty(l)
+		suite.True(suite.handler.CheckAndMarkDirty(l))
+	})
+
+	suite.Run("should not panic when called on a light with no prior snapshot", func() {
+		l := light.NewLight(light.LightTypePoint)
+		suite.NotPanics(func() { suite.handler.ForceMarkDirty(l) })
+		suite.True(suite.handler.CheckAndMarkDirty(l))
 	})
 }

@@ -376,6 +376,7 @@ func (s *scene) RemoveLight(l light.Light) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lightHandler.RemoveLight(l)
+	delete(s.lightPrevSlotMap, l)
 }
 
 func (s *scene) DetachLight(obj game_object.GameObject) {
@@ -594,13 +595,13 @@ func (s *scene) PrepareSSAO() {
 	// Each dispatch is a separate compute pass to ensure automatic GPU barriers
 	// between the SSAO compute output and the blur reads (READ-AFTER-WRITE).
 	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-		{PipelineKey: s.lightHandler.SSAOHandler().PipelineKey("ssao_compute"), Provider: ssaoBGP, WorkGroupCount: wg},
+		{PipelineKey: s.lightHandler.SSAOHandler().PipelineKey("ssao_compute"), Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ssaoBGP}}, WorkGroupCount: wg},
 	})
 	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-		{PipelineKey: s.lightHandler.SSAOHandler().PipelineKey("ssao_blur"), Provider: blurHBGP, WorkGroupCount: wg},
+		{PipelineKey: s.lightHandler.SSAOHandler().PipelineKey("ssao_blur"), Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: blurHBGP}}, WorkGroupCount: wg},
 	})
 	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-		{PipelineKey: s.lightHandler.SSAOHandler().PipelineKey("ssao_blur"), Provider: blurVBGP, WorkGroupCount: wg},
+		{PipelineKey: s.lightHandler.SSAOHandler().PipelineKey("ssao_blur"), Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: blurVBGP}}, WorkGroupCount: wg},
 	})
 }
 
@@ -669,7 +670,7 @@ func (s *scene) PrepareContactShadows() {
 		return
 	}
 	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-		{PipelineKey: csHandler.PipelineKey("contact_shadow_compute"), Provider: csBGP, WorkGroupCount: [3]uint32{workGroupsX, workGroupsY, 1}},
+		{PipelineKey: csHandler.PipelineKey("contact_shadow_compute"), Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: csBGP}}, WorkGroupCount: [3]uint32{workGroupsX, workGroupsY, 1}},
 	})
 	s.r.EndComputeFrame()
 }
@@ -686,6 +687,17 @@ func (s *scene) PrepareSSR() {
 
 	w := ssrHandler.ScreenWidth()
 	h := ssrHandler.ScreenHeight()
+
+	// Determine which slot's Hi-Z BGPs to use for this frame.
+	slot := s.r.CurrentFrameSlot()
+	hizInitKey := "hiz_init"
+	hizInitMaxKey := "hiz_init_max"
+	downKeySuffix := ""
+	if slot == 1 {
+		hizInitKey = "hiz_init_1"
+		hizInitMaxKey = "hiz_init_max_1"
+		downKeySuffix = "_1"
+	}
 
 	// Build and write SSR uniform parameters.
 	ssrParams := light.GPUSSRParams{
@@ -715,14 +727,14 @@ func (s *scene) PrepareSSR() {
 	mipCount := ssrHandler.HiZMipCount()
 
 	// Pass 0: copy GBuffer depth → Hi-Z mip 0 (full resolution).
-	hizInitBGP := ssrHandler.Bgp("hiz_init")
+	hizInitBGP := ssrHandler.Bgp(hizInitKey)
 	hizIWGX, hizIWGY := s.computeWorkgroupSize2D(ssrHandler.PipelineKey("hiz_init"), 8, 8)
 	initWGX := (uint32(w) + hizIWGX - 1) / hizIWGX
 	initWGY := (uint32(h) + hizIWGY - 1) / hizIWGY
 	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
 		{
 			PipelineKey:    ssrHandler.PipelineKey("hiz_init"),
-			Provider:       hizInitBGP,
+			Providers:      []renderer.ComputeGroupProvider{{Group: 0, Provider: hizInitBGP}},
 			WorkGroupCount: [3]uint32{initWGX, initWGY, 1},
 		},
 	})
@@ -735,16 +747,42 @@ func (s *scene) PrepareSSR() {
 	for i := 1; i < mipCount; i++ {
 		mipW = max(mipW/2, 1)
 		mipH = max(mipH/2, 1)
-		bgp := ssrHandler.Bgp(fmt.Sprintf("hiz_down_%d", i))
+		bgp := ssrHandler.Bgp(fmt.Sprintf("hiz_down_%d%s", i, downKeySuffix))
 		wgX := (uint32(mipW) + hizDWGX - 1) / hizDWGX
 		wgY := (uint32(mipH) + hizDWGY - 1) / hizDWGY
 		s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
 			{
 				PipelineKey:    ssrHandler.PipelineKey("hiz_downsample"),
-				Provider:       bgp,
+				Providers:      []renderer.ComputeGroupProvider{{Group: 0, Provider: bgp}},
 				WorkGroupCount: [3]uint32{wgX, wgY, 1},
 			},
 		})
+	}
+
+	// ── MAX Hi-Z pyramid: mip 0 init + downsample chain ──────────────────────────
+	// Mip 0: copy GBuffer depth → MAX mip 0 (same pipeline as min init, different BGP).
+	hizInitMaxBGP := ssrHandler.Bgp(hizInitMaxKey)
+	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{{
+		PipelineKey:    ssrHandler.PipelineKey("hiz_init"),
+		Providers:      []renderer.ComputeGroupProvider{{Group: 0, Provider: hizInitMaxBGP}},
+		WorkGroupCount: [3]uint32{initWGX, initWGY, 1},
+	}})
+
+	// Mips 1..N-1: max-downsample.
+	mipWMax := w
+	mipHMax := h
+	hizDMaxWGX, hizDMaxWGY := s.computeWorkgroupSize2D(ssrHandler.PipelineKey("hiz_downsample_max"), 8, 8)
+	for i := 1; i < mipCount; i++ {
+		mipWMax = max(mipWMax/2, 1)
+		mipHMax = max(mipHMax/2, 1)
+		bgpMax := ssrHandler.Bgp(fmt.Sprintf("hiz_down_max_%d%s", i, downKeySuffix))
+		wgMaxX := (uint32(mipWMax) + hizDMaxWGX - 1) / hizDMaxWGX
+		wgMaxY := (uint32(mipHMax) + hizDMaxWGY - 1) / hizDMaxWGY
+		s.r.DispatchComputeBatch([]renderer.ComputeDispatch{{
+			PipelineKey:    ssrHandler.PipelineKey("hiz_downsample_max"),
+			Providers:      []renderer.ComputeGroupProvider{{Group: 0, Provider: bgpMax}},
+			WorkGroupCount: [3]uint32{wgMaxX, wgMaxY, 1},
+		}})
 	}
 
 	// --- SSR compute dispatch at half-resolution ---
@@ -762,7 +800,7 @@ func (s *scene) PrepareSSR() {
 	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
 		{
 			PipelineKey:    ssrHandler.PipelineKey("ssr_compute"),
-			Provider:       ssrBGP,
+			Providers:      []renderer.ComputeGroupProvider{{Group: 0, Provider: ssrBGP}},
 			WorkGroupCount: [3]uint32{workGroupsX, workGroupsY, 1},
 		},
 	})
@@ -825,7 +863,7 @@ func (s *scene) PrepareBloom() {
 		wgX := (uint32(mipDims[i][0]) + 7) / 8
 		wgY := (uint32(mipDims[i][1]) + 7) / 8
 		s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-			{PipelineKey: downKey, Provider: ch.Bgp(fmt.Sprintf("bloom_down_%d", i)), WorkGroupCount: [3]uint32{wgX, wgY, 1}},
+			{PipelineKey: downKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ch.Bgp(fmt.Sprintf("bloom_down_%d", i))}}, WorkGroupCount: [3]uint32{wgX, wgY, 1}},
 		})
 	}
 
@@ -835,7 +873,7 @@ func (s *scene) PrepareBloom() {
 		wgX := (uint32(mipDims[i][0]) + 7) / 8
 		wgY := (uint32(mipDims[i][1]) + 7) / 8
 		s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-			{PipelineKey: upKey, Provider: ch.Bgp(fmt.Sprintf("bloom_up_%d", i)), WorkGroupCount: [3]uint32{wgX, wgY, 1}},
+			{PipelineKey: upKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ch.Bgp(fmt.Sprintf("bloom_up_%d", i))}}, WorkGroupCount: [3]uint32{wgX, wgY, 1}},
 		})
 	}
 
@@ -969,6 +1007,28 @@ func (s *scene) PrepareLights() {
 	s.r.WriteBuffers(writes)
 }
 
+// shadowTransformEntry caches a single instance's position and scale for
+// use across all shadow pass iterations within a frame.
+type shadowTransformEntry struct {
+	pos   [3]float32
+	scale [3]float32
+}
+
+// worldAABB transforms a model-space AABB to world space using instance
+// position and scale. Per-axis min/max swap handles negative scale correctly.
+func worldAABB(modelMin, modelMax [3]float32, pos, scale [3]float32) (wMin, wMax [3]float32) {
+	for i := range 3 {
+		lo := scale[i] * modelMin[i]
+		hi := scale[i] * modelMax[i]
+		if lo > hi {
+			lo, hi = hi, lo
+		}
+		wMin[i] = pos[i] + lo
+		wMax[i] = pos[i] + hi
+	}
+	return
+}
+
 func (s *scene) PrepareShadows() {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1057,25 +1117,21 @@ func (s *scene) PrepareShadows() {
 	maxSlots := sh.LightShadowAtlasSlots()
 	tileSize := sh.LightShadowTileSize()
 
-	// If any skeletal shadow-caster is active, all spot/point caches are stale
-	// because bone positions may have changed. This is conservative by design.
-	hasSkeletal := false
-	for _, anims := range s.animatorPool {
-		for _, a := range anims {
-			if a.BackendType() == animator.BackendTypeSkeletal && a.Model() != nil && a.Model().CastsShadows() {
-				hasSkeletal = true
-				break
-			}
-		}
-		if hasSkeletal {
-			break
-		}
-	}
-	if hasSkeletal {
-		sh.MarkAllDirty()
+	if s.lightPrevSlotMap == nil {
+		s.lightPrevSlotMap = make(map[light.Light]uint32)
 	}
 
-	dirtyByLight := make(map[light.Light]bool)
+	// Extract camera frustum for per-light visibility rejection.
+	// Lights whose entire influence sphere lies outside the camera frustum are skipped entirely —
+	// no atlas slot, no shadow depth pass, no lightShadowMap entry.
+	var cameraFrustum common.Frustum
+	hasCameraFrustum := !s.cullingDisabled && s.cam != nil
+	if hasCameraFrustum {
+		vp := s.cam.ViewProjectionMatrix()
+		cameraFrustum = common.ExtractFrustumFromMatrix(vp[:])
+	}
+
+	spotFrustums := make(map[light.Light]common.Frustum)
 
 	for _, l := range s.lightHandler.Lights() {
 		if slotIdx >= maxSlots {
@@ -1110,6 +1166,7 @@ func (s *scene) PrepareShadows() {
 		common.LookAt(view[:], pos[0], pos[1], pos[2], target[0], target[1], target[2], up[0], up[1], up[2])
 		common.Perspective(proj[:], fovY, 1.0, near, far)
 		common.Mul4(vp[:], proj[:], view[:])
+		spotFrustums[l] = common.ExtractFrustumFromMatrix(vp[:])
 
 		cols := sh.LightShadowAtlasCols()
 		rows := maxSlots / cols
@@ -1133,6 +1190,11 @@ func (s *scene) PrepareShadows() {
 
 		s.lightShadowMap[l] = uint32(slotIdx)
 		s.lightShadowEntries = append(s.lightShadowEntries, entry)
+		newSlot := uint32(slotIdx)
+		if prev, ok := s.lightPrevSlotMap[l]; ok && prev != newSlot {
+			sh.ForceMarkDirty(l)
+		}
+		s.lightPrevSlotMap[l] = newSlot
 
 		spotUniform := light.GPUShadowUniform{LightVP: vp}
 		bgpKey := fmt.Sprintf("spot_shadow_%d", slotIdx)
@@ -1144,7 +1206,6 @@ func (s *scene) PrepareShadows() {
 			Data:     spotUniform.Marshal(),
 		})
 
-		dirtyByLight[l] = sh.CheckAndMarkDirty(l)
 		slotIdx++
 	}
 
@@ -1164,6 +1225,50 @@ func (s *scene) PrepareShadows() {
 	}
 
 	s.r.WriteBuffers(writes)
+
+	for _, anims := range s.animatorPool {
+		for _, a := range anims {
+			if a.InstanceCount() == 0 {
+				continue
+			}
+			mdl := a.Model()
+			if mdl == nil || !mdl.CastsShadows() {
+				continue
+			}
+			if buf, ok := s.shadowIndirectBuffers[a]; ok && buf != nil {
+				args := animator.GPUIndirectArgs{
+					IndexCount:    uint32(mdl.IndexCount()),
+					InstanceCount: a.InstanceCount(),
+					FirstIndex:    0,
+					BaseVertex:    0,
+					FirstInstance: 0,
+				}
+				s.r.WriteRawBuffer(buf, 0, args.Marshal())
+			}
+		}
+	}
+
+	// Build a per-frame transform cache for all shadow-casting animators.
+	// One lock acquisition per instance at cache-build time; zero locks during face iteration.
+	shadowTransforms := make(map[animator.Animator][]shadowTransformEntry)
+	for _, anims := range s.animatorPool {
+		for _, a := range anims {
+			count := a.InstanceCount()
+			if count == 0 {
+				continue
+			}
+			mdl := a.Model()
+			if mdl == nil || !mdl.CastsShadows() {
+				continue
+			}
+			entries := make([]shadowTransformEntry, count)
+			for idx := uint32(0); idx < count; idx++ {
+				p, sc := a.InstanceTransform(idx)
+				entries[idx] = shadowTransformEntry{pos: p, scale: sc}
+			}
+			shadowTransforms[a] = entries
+		}
+	}
 
 	atlasCleared := false
 	if err := s.r.BeginShadowFrame(); err != nil {
@@ -1207,33 +1312,9 @@ func (s *scene) PrepareShadows() {
 						a.OutputBindGroupProvider(),
 					}
 
-					if a.CullingEnabled() {
-						if key := mdl.ComputePipelineKey(); key != "" {
-							if rp := s.r.Pipeline(key); rp != nil {
-								if cs := rp.Shader(shader.ShaderTypeCompute); cs != nil {
-									indirectBinding := 0
-									for _, decl := range cs.Declarations() {
-										if decl.Type == shader.AnnotationTypeBindingGroup && decl.Binding != nil {
-											typeArg := string(decl.Args[2])
-											if stripped, ok := strings.CutPrefix(typeArg, "array<"); ok {
-												typeArg = strings.TrimSuffix(stripped, ">")
-											}
-											if shader.AnnotationArg(typeArg) == shader.AnnotationArgIndirectArgs {
-												indirectBinding = *decl.Binding
-												break
-											}
-										}
-									}
-									if indBuf := a.IndirectBuffer(indirectBinding); indBuf != nil {
-										_ = s.r.ShadowDrawCallIndirect(pipeKey, meshProvider, indBuf, shadowBindGroups)
-										continue
-									}
-								}
-							}
-						}
+					if buf, ok := s.shadowIndirectBuffers[a]; ok && buf != nil {
+						_ = s.r.ShadowDrawCallIndirect(pipeKey, meshProvider, buf, shadowBindGroups)
 					}
-
-					_ = s.r.ShadowDrawCall(pipeKey, meshProvider, uint32(a.InstanceCount()), shadowBindGroups)
 				}
 			}
 
@@ -1249,9 +1330,6 @@ func (s *scene) PrepareShadows() {
 		}
 		slotI, ok := s.lightShadowMap[l]
 		if !ok {
-			continue
-		}
-		if !dirtyByLight[l] {
 			continue
 		}
 
@@ -1270,6 +1348,9 @@ func (s *scene) PrepareShadows() {
 		)
 		atlasCleared = true
 
+		spotFrustum := spotFrustums[l]
+		lPos := l.Position()
+		lRange := l.Range()
 		for _, anim := range s.animatorPool {
 			for _, a := range anim {
 				if a.InstanceCount() == 0 {
@@ -1290,43 +1371,49 @@ func (s *scene) PrepareShadows() {
 					continue
 				}
 
+				// Sphere rejection + frustum cull using pre-built transform cache.
+				mdlMin, mdlMax := mdl.BoundingMin(), mdl.BoundingMax()
+				boundR := mdl.BoundingRadius()
+				visible := false
+				for _, entry := range shadowTransforms[a] {
+					iPos := entry.pos
+					iScale := entry.scale
+					dx := iPos[0] - lPos[0]
+					dy := iPos[1] - lPos[1]
+					dz := iPos[2] - lPos[2]
+					dist := float32(math.Sqrt(float64(dx*dx + dy*dy + dz*dz)))
+					maxS := iScale[0]
+					if iScale[1] > maxS {
+						maxS = iScale[1]
+					}
+					if iScale[2] > maxS {
+						maxS = iScale[2]
+					}
+					if dist > lRange+boundR*maxS {
+						continue
+					}
+					wMin, wMax := worldAABB(mdlMin, mdlMax, iPos, iScale)
+					if spotFrustum.IntersectAABB(wMin, wMax) {
+						visible = true
+						break
+					}
+				}
+				if !visible {
+					continue
+				}
+
 				shadowBindGroups := []bind_group_provider.BindGroupProvider{
 					spotBGP,
 					a.OutputBindGroupProvider(),
 				}
 
-				if a.CullingEnabled() {
-					if key := mdl.ComputePipelineKey(); key != "" {
-						if rp := s.r.Pipeline(key); rp != nil {
-							if cs := rp.Shader(shader.ShaderTypeCompute); cs != nil {
-								indirectBinding := 0
-								for _, decl := range cs.Declarations() {
-									if decl.Type == shader.AnnotationTypeBindingGroup && decl.Binding != nil {
-										typeArg := string(decl.Args[2])
-										if stripped, ok := strings.CutPrefix(typeArg, "array<"); ok {
-											typeArg = strings.TrimSuffix(stripped, ">")
-										}
-										if shader.AnnotationArg(typeArg) == shader.AnnotationArgIndirectArgs {
-											indirectBinding = *decl.Binding
-											break
-										}
-									}
-								}
-								if indBuf := a.IndirectBuffer(indirectBinding); indBuf != nil {
-									_ = s.r.ShadowDrawCallIndirect(pipeKey, meshProvider, indBuf, shadowBindGroups)
-									continue
-								}
-							}
-						}
-					}
+				if buf, ok := s.shadowIndirectBuffers[a]; ok && buf != nil {
+					_ = s.r.ShadowDrawCallIndirect(pipeKey, meshProvider, buf, shadowBindGroups)
 				}
-
-				_ = s.r.ShadowDrawCall(pipeKey, meshProvider, uint32(a.InstanceCount()), shadowBindGroups)
 			}
 		}
 
 		s.r.EndShadowPass()
-		sh.CommitSnapshot(l)
 	}
 
 	// Unified point light loop: VP computation, buffer writes, dirty check, and render.
@@ -1362,11 +1449,17 @@ func (s *scene) PrepareShadows() {
 		}
 
 		s.lightShadowMap[l] = uint32(len(s.lightShadowEntries))
+		newSlot := s.lightShadowMap[l]
+		if prev, ok := s.lightPrevSlotMap[l]; ok && prev != newSlot {
+			sh.ForceMarkDirty(l)
+		}
+		s.lightPrevSlotMap[l] = newSlot
 
 		cols := sh.LightShadowAtlasCols()
 		rows := maxSlots / cols
 
 		var ptWrites []bind_group_provider.BufferWrite
+		var faceFrustums [6]common.Frustum
 		for fi := 0; fi < 6; fi++ {
 			target := [3]float32{
 				pos[0] + faces[fi].dir[0],
@@ -1376,6 +1469,7 @@ func (s *scene) PrepareShadows() {
 			var view, vp [16]float32
 			common.LookAt(view[:], pos[0], pos[1], pos[2], target[0], target[1], target[2], faces[fi].up[0], faces[fi].up[1], faces[fi].up[2])
 			common.Mul4(vp[:], proj[:], view[:])
+			faceFrustums[fi] = common.ExtractFrustumFromMatrix(vp[:])
 
 			si := slotIdx + fi
 			col := si % cols
@@ -1409,9 +1503,10 @@ func (s *scene) PrepareShadows() {
 		}
 		s.r.WriteBuffers(ptWrites)
 
-		dirty := sh.CheckAndMarkDirty(l)
-		if dirty {
+		lightVisible := !hasCameraFrustum || cameraFrustum.IntersectSphere(pos, l.Range())
+		if lightVisible {
 			for fi := 0; fi < 6; fi++ {
+				faceFrustum := faceFrustums[fi]
 				si := slotIdx + fi
 				bgpKey := fmt.Sprintf("spot_shadow_%d", si)
 				spotBGP := sh.Bgp(bgpKey)
@@ -1446,45 +1541,51 @@ func (s *scene) PrepareShadows() {
 							continue
 						}
 
+						// Sphere rejection + frustum cull using pre-built transform cache.
+						mdlMin, mdlMax := mdl.BoundingMin(), mdl.BoundingMax()
+						boundR := mdl.BoundingRadius()
+						visible := false
+						for _, entry := range shadowTransforms[a] {
+							iPos := entry.pos
+							iScale := entry.scale
+							dx := iPos[0] - pos[0]
+							dy := iPos[1] - pos[1]
+							dz := iPos[2] - pos[2]
+							dist := float32(math.Sqrt(float64(dx*dx + dy*dy + dz*dz)))
+							maxS := iScale[0]
+							if iScale[1] > maxS {
+								maxS = iScale[1]
+							}
+							if iScale[2] > maxS {
+								maxS = iScale[2]
+							}
+							if dist > rng+boundR*maxS {
+								continue
+							}
+							wMin, wMax := worldAABB(mdlMin, mdlMax, iPos, iScale)
+							if faceFrustum.IntersectAABB(wMin, wMax) {
+								visible = true
+								break
+							}
+						}
+						if !visible {
+							continue
+						}
+
 						shadowBindGroups := []bind_group_provider.BindGroupProvider{
 							spotBGP,
 							a.OutputBindGroupProvider(),
 						}
 
-						if a.CullingEnabled() {
-							if key := mdl.ComputePipelineKey(); key != "" {
-								if rp := s.r.Pipeline(key); rp != nil {
-									if cs := rp.Shader(shader.ShaderTypeCompute); cs != nil {
-										indirectBinding := 0
-										for _, decl := range cs.Declarations() {
-											if decl.Type == shader.AnnotationTypeBindingGroup && decl.Binding != nil {
-												typeArg := string(decl.Args[2])
-												if stripped, ok := strings.CutPrefix(typeArg, "array<"); ok {
-													typeArg = strings.TrimSuffix(stripped, ">")
-												}
-												if shader.AnnotationArg(typeArg) == shader.AnnotationArgIndirectArgs {
-													indirectBinding = *decl.Binding
-													break
-												}
-											}
-										}
-										if indBuf := a.IndirectBuffer(indirectBinding); indBuf != nil {
-											_ = s.r.ShadowDrawCallIndirect(pipeKey, meshProvider, indBuf, shadowBindGroups)
-											continue
-										}
-									}
-								}
-							}
+						if buf, ok := s.shadowIndirectBuffers[a]; ok && buf != nil {
+							_ = s.r.ShadowDrawCallIndirect(pipeKey, meshProvider, buf, shadowBindGroups)
 						}
-
-						_ = s.r.ShadowDrawCall(pipeKey, meshProvider, uint32(a.InstanceCount()), shadowBindGroups)
 					}
 				}
 
 				s.r.EndShadowPass()
 			}
 		}
-		sh.CommitSnapshot(l)
 		slotIdx += 6
 	}
 
@@ -1556,7 +1657,7 @@ func (s *scene) PrepareLightCulling() {
 		return
 	}
 	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-		{PipelineKey: s.lightHandler.PipelineKey("light_cull"), Provider: cullBGP, WorkGroupCount: [3]uint32{uint32(s.lightHandler.TileCountX()), uint32(s.lightHandler.TileCountY()), 1}},
+		{PipelineKey: s.lightHandler.PipelineKey("light_cull"), Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: cullBGP}}, WorkGroupCount: [3]uint32{uint32(s.lightHandler.TileCountX()), uint32(s.lightHandler.TileCountY()), 1}},
 	})
 	s.r.EndComputeFrame()
 }
@@ -1775,6 +1876,11 @@ func (s *scene) RemoveGameObject(id uint64) {
 		}
 	}
 
+	// Prune empty animator from pool.
+	if anim != nil && anim.InstanceCount() == 0 {
+		s.pruneAnimator(anim)
+	}
+
 	// Sentinel the removed body's sync_map entry and deactivate its GPU slot.
 	if s.physicsHandler != nil {
 		s.patchSyncMapEntry(anim, obj.ID(), 0xFFFFFFFF)
@@ -1791,6 +1897,17 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 	hasFrustum := false
 	s.cam.Update()
 	vpMat := s.cam.ViewProjectionMatrix()
+
+	// Gather Hi-Z data for animator occlusion culling.
+	hiZMipCount := 0
+	projX := float32(0)
+	if s.lightHandler != nil {
+		if ssrHandler := s.lightHandler.SSRHandler(); ssrHandler != nil {
+			hiZMipCount = ssrHandler.HiZMipCount()
+		}
+	}
+	projMat := s.cam.ProjectionMatrix()
+	projX = projMat[0]
 	if camBGP := s.cam.BindGroupProvider(); camBGP != nil {
 		camUniform := camera.GPUCameraUniform{
 			ViewProj: vpMat,
@@ -1912,6 +2029,11 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 					if hasFrustum {
 						aCap.SetFrustumPlanes(gpuPlanes)
 					}
+
+					aCap.SetScreenSize(s.screenWidth, s.screenHeight)
+					aCap.SetProjectionX(projX)
+					aCap.SetHiZMipCount(hiZMipCount)
+					aCap.SetViewProj(vpMat)
 
 					aCap.PrepareFrame(deltaTime, uniformBinding)
 					aCap.Flush(instanceBinding, boneBinding, modelBinding)
@@ -2086,28 +2208,28 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 				// Each physics pipeline stage depends on the previous stage's output.
 				// Separate compute passes provide automatic GPU barriers (READ-AFTER-WRITE).
 				s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-					{PipelineKey: pvKey, Provider: ph.Bgp("particle_values"), WorkGroupCount: physDispatchGroups(pvKey, particleCount)},
+					{PipelineKey: pvKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ph.Bgp("particle_values")}}, WorkGroupCount: physDispatchGroups(pvKey, particleCount)},
 				})
 				s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-					{PipelineKey: arKey, Provider: ph.Bgp("aabb_reduce"), WorkGroupCount: physDispatchGroups(arKey, particleCount)},
+					{PipelineKey: arKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ph.Bgp("aabb_reduce")}}, WorkGroupCount: physDispatchGroups(arKey, particleCount)},
 				})
 				s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-					{PipelineKey: gbKey, Provider: ph.Bgp("grid_build_params"), WorkGroupCount: physDispatchGroups(gbKey, 1)},
+					{PipelineKey: gbKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ph.Bgp("grid_build_params")}}, WorkGroupCount: physDispatchGroups(gbKey, 1)},
 				})
 				s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-					{PipelineKey: gcKey, Provider: ph.Bgp("grid_clear"), WorkGroupCount: physDispatchGroups(gcKey, uint32(ph.MaxGridCells()))},
+					{PipelineKey: gcKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ph.Bgp("grid_clear")}}, WorkGroupCount: physDispatchGroups(gcKey, uint32(ph.MaxGridCells()))},
 				})
 				s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-					{PipelineKey: giKey, Provider: ph.Bgp("grid_insert"), WorkGroupCount: physDispatchGroups(giKey, particleCount)},
+					{PipelineKey: giKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ph.Bgp("grid_insert")}}, WorkGroupCount: physDispatchGroups(giKey, particleCount)},
 				})
 				s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-					{PipelineKey: crKey, Provider: ph.Bgp("collision"), WorkGroupCount: physDispatchGroups(crKey, particleCount)},
+					{PipelineKey: crKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ph.Bgp("collision")}}, WorkGroupCount: physDispatchGroups(crKey, particleCount)},
 				})
 				s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-					{PipelineKey: cmKey, Provider: ph.Bgp("momenta"), WorkGroupCount: physDispatchGroups(cmKey, bodyCount)},
+					{PipelineKey: cmKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ph.Bgp("momenta")}}, WorkGroupCount: physDispatchGroups(cmKey, bodyCount)},
 				})
 				s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-					{PipelineKey: iKey, Provider: ph.Bgp("integrate"), WorkGroupCount: physDispatchGroups(iKey, bodyCount)},
+					{PipelineKey: iKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ph.Bgp("integrate")}}, WorkGroupCount: physDispatchGroups(iKey, bodyCount)},
 				})
 			}
 
@@ -2123,7 +2245,7 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 					if bgp, ok := s.physicsSyncGroup[i]; ok {
 						syncDispatches = append(syncDispatches, renderer.ComputeDispatch{
 							PipelineKey:    syncKey,
-							Provider:       bgp,
+							Providers:      []renderer.ComputeGroupProvider{{Group: 0, Provider: bgp}},
 							WorkGroupCount: syncWG,
 						})
 					}
@@ -2186,8 +2308,11 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 			instCount := a.InstanceCount()
 			groups := (instCount + xSize - 1) / xSize
 			animDispatches = append(animDispatches, renderer.ComputeDispatch{
-				PipelineKey:    key,
-				Provider:       a.ComputeBindGroupProvider(),
+				PipelineKey: key,
+				Providers: []renderer.ComputeGroupProvider{
+					{Group: 0, Provider: a.ComputeBindGroupProvider()},
+					{Group: 1, Provider: a.HiZBindGroupProvider()},
+				},
 				WorkGroupCount: [3]uint32{groups, 1, 1},
 			})
 		}
@@ -2219,7 +2344,7 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 					}
 					boneDispatches = append(boneDispatches, renderer.ComputeDispatch{
 						PipelineKey:    boneUpdateKey,
-						Provider:       bg.bgp,
+						Providers:      []renderer.ComputeGroupProvider{{Group: 0, Provider: bg.bgp}},
 						WorkGroupCount: [3]uint32{groups, 1, 1},
 					})
 				}

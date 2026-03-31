@@ -39,4 +39,11 @@ type ssrHandlerImpl struct {
 	hizMipCount        int                    // Number of mip levels in the Hi-Z pyramid.
 	hizMipReadViewsArr [2][]*wgpu.TextureView // Per-mip read views for downsample input.
 	hizStorageViewsArr [2][]*wgpu.TextureView // Per-mip storage views (write) for downsample output.
+
+	// MAX Hi-Z depth pyramid (R32Float, full mip chain, max-depth per cell).
+	// Used by occlusion culling: min_ndc_z > max_hiz_sample means fully occluded.
+	maxHizTextures        [2]*wgpu.Texture
+	maxHizTextureViews    [2]*wgpu.TextureView
+	maxHizMipReadViewsArr [2][]*wgpu.TextureView
+	maxHizStorageViewsArr [2][]*wgpu.TextureView
 }

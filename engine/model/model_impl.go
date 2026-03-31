@@ -18,6 +18,8 @@ type model struct {
 	effectProvider        bind_group_provider.BindGroupProvider
 	computePipelineKey    string
 	boundingRadius        float32
+	boundingMin           [3]float32
+	boundingMax           [3]float32
 	vertexData, indexData []byte
 	indexCount            int
 	shadowCullMode        ShadowCullMode

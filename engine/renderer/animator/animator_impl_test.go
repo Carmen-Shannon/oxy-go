@@ -754,13 +754,6 @@ func (suite *animatorImplTest) TestSetOutputBindGroupProvider() {
 	})
 }
 
-func (suite *animatorImplTest) TestSimpleBoneCount() {
-	suite.Run("should always return 0 on simple animator", func() {
-		result := suite.simple.(*animator).backend.(*simpleAnimatorBackendImpl).BoneCount()
-		suite.Equal(uint32(0), result)
-	})
-}
-
 func (suite *animatorImplTest) TestSkeletalBoneCount() {
 	suite.Run("should return 0 before SetBoneCount on skeletal animator", func() {
 		b := suite.skeletal.(*animator).backend.(*skeletalAnimatorBackendImpl)
@@ -1086,5 +1079,339 @@ func (suite *animatorImplTest) TestSkeletalSetInstanceRotationDirtyRangeExpandEn
 		suite.skeletal.SetInstanceRotation(0, [3]float32{}, [3]float32{0, 0.1, 0})
 		suite.skeletal.SetInstanceRotation(1, [3]float32{}, [3]float32{0, 0.2, 0})
 		suite.NotPanics(func() { suite.skeletal.Flush(0, 1, 2) })
+	})
+}
+
+func (suite *animatorImplTest) TestSetScreenSize() {
+	suite.Run("should store width and height on simple animator backend", func() {
+		suite.simple.SetScreenSize(1920, 1080)
+		b := suite.simple.(*animator).backend.(*simpleAnimatorBackendImpl)
+		suite.Equal(1920, b.screenWidth)
+		suite.Equal(1080, b.screenHeight)
+	})
+	suite.Run("should store width and height on skeletal animator backend", func() {
+		suite.skeletal.SetScreenSize(2560, 1440)
+		b := suite.skeletal.(*animator).backend.(*skeletalAnimatorBackendImpl)
+		suite.Equal(2560, b.screenWidth)
+		suite.Equal(1440, b.screenHeight)
+	})
+}
+
+func (suite *animatorImplTest) TestSetProjectionX() {
+	suite.Run("should store projX on simple animator backend", func() {
+		suite.simple.SetProjectionX(1.5)
+		b := suite.simple.(*animator).backend.(*simpleAnimatorBackendImpl)
+		suite.InDelta(1.5, float64(b.projX), 1e-6)
+	})
+	suite.Run("should store projX on skeletal animator backend", func() {
+		suite.skeletal.SetProjectionX(2.75)
+		b := suite.skeletal.(*animator).backend.(*skeletalAnimatorBackendImpl)
+		suite.InDelta(2.75, float64(b.projX), 1e-6)
+	})
+}
+
+func (suite *animatorImplTest) TestSetHiZMipCount() {
+	suite.Run("should store hiZMipCount on simple animator backend", func() {
+		suite.simple.SetHiZMipCount(6)
+		b := suite.simple.(*animator).backend.(*simpleAnimatorBackendImpl)
+		suite.Equal(6, b.hiZMipCount)
+	})
+	suite.Run("should store hiZMipCount on skeletal animator backend", func() {
+		suite.skeletal.SetHiZMipCount(4)
+		b := suite.skeletal.(*animator).backend.(*skeletalAnimatorBackendImpl)
+		suite.Equal(4, b.hiZMipCount)
+	})
+}
+
+func (suite *animatorImplTest) TestSetViewProj() {
+	suite.Run("should store viewProj on simple animator backend", func() {
+		vp := [16]float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}
+		suite.simple.SetViewProj(vp)
+		b := suite.simple.(*animator).backend.(*simpleAnimatorBackendImpl)
+		suite.Equal(vp, b.viewProj)
+	})
+	suite.Run("should store viewProj on skeletal animator backend", func() {
+		vp := [16]float32{2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2}
+		suite.skeletal.SetViewProj(vp)
+		b := suite.skeletal.(*animator).backend.(*skeletalAnimatorBackendImpl)
+		suite.Equal(vp, b.viewProj)
+	})
+}
+
+func (suite *animatorImplTest) TestSimplePrepareFrameRotation() {
+	suite.Run("should skip rotation update and continue when instance has zero RotSpeed", func() {
+		suite.simple.AddInstance() // RotSpeed is {0,0,0} by default
+		b := suite.simple.(*animator).backend.(*simpleAnimatorBackendImpl)
+		suite.simple.PrepareFrame(0.016, 0)
+		suite.Equal([3]float32{}, b.instanceData[0].Rot)
+	})
+	suite.Run("should advance rotation when instance has non-zero RotSpeed", func() {
+		suite.simple.AddInstance()
+		b := suite.simple.(*animator).backend.(*simpleAnimatorBackendImpl)
+		b.instanceData[0].RotSpeed = [3]float32{1.0, 1.0, 1.0}
+		suite.simple.PrepareFrame(0.016, 0)
+		suite.NotEqual(float32(0), b.instanceData[0].Rot[0])
+		suite.NotEmpty(b.dirtyIndices)
+	})
+	suite.Run("should wrap rotation above twoPi for all axes", func() {
+		suite.simple.AddInstance()
+		b := suite.simple.(*animator).backend.(*simpleAnimatorBackendImpl)
+		b.instanceData[0].RotSpeed = [3]float32{7.0, 7.0, 7.0}
+		suite.simple.PrepareFrame(1.0, 0)
+		const twoPi = float32(6.283185307)
+		suite.GreaterOrEqual(b.instanceData[0].Rot[0], float32(0))
+		suite.Less(b.instanceData[0].Rot[0], twoPi)
+		suite.GreaterOrEqual(b.instanceData[0].Rot[1], float32(0))
+		suite.Less(b.instanceData[0].Rot[1], twoPi)
+		suite.GreaterOrEqual(b.instanceData[0].Rot[2], float32(0))
+		suite.Less(b.instanceData[0].Rot[2], twoPi)
+	})
+	suite.Run("should wrap rotation below zero for all axes", func() {
+		suite.simple.AddInstance()
+		b := suite.simple.(*animator).backend.(*simpleAnimatorBackendImpl)
+		b.instanceData[0].RotSpeed = [3]float32{-7.0, -7.0, -7.0}
+		suite.simple.PrepareFrame(1.0, 0)
+		const twoPi = float32(6.283185307)
+		suite.GreaterOrEqual(b.instanceData[0].Rot[0], float32(0))
+		suite.Less(b.instanceData[0].Rot[0], twoPi)
+		suite.GreaterOrEqual(b.instanceData[0].Rot[1], float32(0))
+		suite.Less(b.instanceData[0].Rot[1], twoPi)
+		suite.GreaterOrEqual(b.instanceData[0].Rot[2], float32(0))
+		suite.Less(b.instanceData[0].Rot[2], twoPi)
+	})
+}
+
+func (suite *animatorImplTest) TestSimpleFlushMissingBranches() {
+	suite.Run("should return 0 when needsRebuild is true even with dirty indices", func() {
+		suite.simple.AddInstance()
+		suite.simple.SetInstanceTransform(0, [3]float32{1, 0, 0}, [3]float32{1, 1, 1})
+		b := suite.simple.(*animator).backend.(*simpleAnimatorBackendImpl)
+		b.needsRebuild = true
+		count := suite.simple.Flush(0, 0, 0)
+		suite.Equal(uint32(0), count)
+	})
+	suite.Run("should clear dirty indices after two flushes", func() {
+		suite.simple.AddInstance()
+		suite.simple.SetInstanceTransform(0, [3]float32{1, 0, 0}, [3]float32{1, 1, 1})
+		suite.simple.Flush(0, 0, 0)
+		suite.simple.Flush(0, 0, 0)
+		b := suite.simple.(*animator).backend.(*simpleAnimatorBackendImpl)
+		suite.Empty(b.dirtyIndices)
+		suite.Equal(0, b.flushCountdown)
+	})
+}
+
+func (suite *animatorImplTest) TestSimpleHiZBindGroupProvider() {
+	suite.Run("should return non-nil HiZ provider from simple animator backend", func() {
+		b := suite.simple.(*animator).backend.(*simpleAnimatorBackendImpl)
+		result := b.HiZBindGroupProvider()
+		suite.NotNil(result)
+	})
+}
+
+func (suite *animatorImplTest) TestSimpleSetBoundingBox() {
+	suite.Run("should store bounding box on simple animator backend", func() {
+		b := suite.simple.(*animator).backend.(*simpleAnimatorBackendImpl)
+		b.SetBoundingBox([3]float32{-1, -2, -3}, [3]float32{1, 2, 3})
+		suite.Equal([3]float32{-1, -2, -3}, b.boundingMin)
+		suite.Equal([3]float32{1, 2, 3}, b.boundingMax)
+	})
+}
+
+func (suite *animatorImplTest) TestSkeletalRemoveInstanceMissingBranches() {
+	suite.Run("should return 0 and false when index is out of range on non-empty skeletal backend", func() {
+		suite.skeletal.AddInstance()
+		suite.skeletal.AddInstance()
+		idx, swapped := suite.skeletal.RemoveInstance(5)
+		suite.Equal(uint32(0), idx)
+		suite.False(swapped)
+		suite.Equal(uint32(2), suite.skeletal.InstanceCount())
+	})
+	suite.Run("should update existing dirty range start when removing a swapped instance with lower index", func() {
+		suite.skeletal.AddInstance()
+		suite.skeletal.AddInstance()
+		suite.skeletal.AddInstance()
+		b := suite.skeletal.(*animator).backend.(*skeletalAnimatorBackendImpl)
+		b.dirty = true
+		b.dirtyStart = 2
+		b.dirtyEnd = 3
+		suite.skeletal.RemoveInstance(0)
+		suite.Equal(uint32(0), b.dirtyStart)
+	})
+	suite.Run("should update existing dirty range end when removing a swapped instance with higher index", func() {
+		suite.skeletal.AddInstance()
+		suite.skeletal.AddInstance()
+		suite.skeletal.AddInstance()
+		suite.skeletal.AddInstance()
+		b := suite.skeletal.(*animator).backend.(*skeletalAnimatorBackendImpl)
+		b.dirty = true
+		b.dirtyStart = 0
+		b.dirtyEnd = 2
+		suite.skeletal.RemoveInstance(2)
+		suite.Equal(uint32(3), b.dirtyEnd)
+	})
+	suite.Run("should update existing modelDirty range start when removing a swapped instance with lower index", func() {
+		suite.skeletal.AddInstance()
+		suite.skeletal.AddInstance()
+		suite.skeletal.AddInstance()
+		suite.skeletal.SetInstanceTransform(1, [3]float32{0, 0, 0}, [3]float32{1, 1, 1})
+		suite.skeletal.StagedWriteData()
+		suite.skeletal.RemoveInstance(0)
+		b := suite.skeletal.(*animator).backend.(*skeletalAnimatorBackendImpl)
+		suite.Equal(uint32(0), b.modelDirtyStart)
+	})
+	suite.Run("should update existing modelDirty range end when removing a swapped instance with higher index", func() {
+		suite.skeletal.AddInstance()
+		suite.skeletal.AddInstance()
+		suite.skeletal.AddInstance()
+		suite.skeletal.AddInstance()
+		b := suite.skeletal.(*animator).backend.(*skeletalAnimatorBackendImpl)
+		b.modelDirty = true
+		b.modelDirtyStart = 0
+		b.modelDirtyEnd = 2
+		b.modelFlushRemaining = 2
+		suite.skeletal.RemoveInstance(2)
+		suite.Equal(uint32(3), b.modelDirtyEnd)
+	})
+}
+
+func (suite *animatorImplTest) TestSkeletalFlushCountdownClear() {
+	suite.Run("should clear boneDirty after two flushes", func() {
+		suite.skeletal.SetBoneCount(2)
+		suite.skeletal.SetBone(0, [16]float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}, [3]float32{}, [4]float32{0, 0, 0, 1}, [3]float32{1, 1, 1}, -1, 1)
+		suite.skeletal.StagedWriteData()
+		suite.skeletal.Flush(0, 1, 2)
+		suite.skeletal.StagedWriteData()
+		suite.skeletal.Flush(0, 1, 2)
+		b := suite.skeletal.(*animator).backend.(*skeletalAnimatorBackendImpl)
+		suite.False(b.boneDirty)
+		suite.Equal(0, b.boneFlushRemaining)
+	})
+	suite.Run("should clear modelDirty after two flushes", func() {
+		suite.skeletal.AddInstance()
+		suite.skeletal.SetInstanceTransform(0, [3]float32{1, 2, 3}, [3]float32{1, 1, 1})
+		suite.skeletal.StagedWriteData()
+		suite.skeletal.Flush(0, 1, 2)
+		suite.skeletal.StagedWriteData()
+		suite.skeletal.Flush(0, 1, 2)
+		b := suite.skeletal.(*animator).backend.(*skeletalAnimatorBackendImpl)
+		suite.False(b.modelDirty)
+		suite.Equal(0, b.modelFlushRemaining)
+	})
+}
+
+func (suite *animatorImplTest) TestSkeletalGrowNoOp() {
+	suite.Run("should return early when newMax is not larger than current maxInstances", func() {
+		b := suite.skeletal.(*animator).backend.(*skeletalAnimatorBackendImpl)
+		currentMax := b.maxInstances
+		suite.skeletal.Grow(currentMax)
+		suite.Equal(currentMax, b.maxInstances)
+		suite.False(b.needsRebuild)
+	})
+}
+
+func (suite *animatorImplTest) TestSkeletalSetInstanceTransformMissingBranches() {
+	suite.Run("should return early when index is out of range", func() {
+		b := suite.skeletal.(*animator).backend.(*skeletalAnimatorBackendImpl)
+		suite.NotPanics(func() {
+			suite.skeletal.SetInstanceTransform(b.maxInstances, [3]float32{}, [3]float32{1, 1, 1})
+		})
+		suite.Equal(uint32(0), suite.skeletal.InstanceCount())
+	})
+	suite.Run("should expand modelDirty range start when new index is lower than existing start", func() {
+		suite.skeletal.AddInstance()
+		suite.skeletal.AddInstance()
+		suite.skeletal.AddInstance()
+		suite.skeletal.SetInstanceTransform(2, [3]float32{}, [3]float32{1, 1, 1})
+		suite.skeletal.SetInstanceTransform(0, [3]float32{}, [3]float32{1, 1, 1})
+		b := suite.skeletal.(*animator).backend.(*skeletalAnimatorBackendImpl)
+		suite.Equal(uint32(0), b.modelDirtyStart)
+	})
+}
+
+func (suite *animatorImplTest) TestSkeletalSetInstanceRotationMissingBranches() {
+	suite.Run("should return early when index is out of range", func() {
+		b := suite.skeletal.(*animator).backend.(*skeletalAnimatorBackendImpl)
+		suite.NotPanics(func() {
+			suite.skeletal.SetInstanceRotation(b.maxInstances, [3]float32{}, [3]float32{})
+		})
+	})
+	suite.Run("should expand modelDirty range start when new index is lower than existing start", func() {
+		suite.skeletal.AddInstance()
+		suite.skeletal.AddInstance()
+		suite.skeletal.AddInstance()
+		suite.skeletal.SetInstanceRotation(2, [3]float32{}, [3]float32{})
+		suite.skeletal.SetInstanceRotation(0, [3]float32{}, [3]float32{})
+		b := suite.skeletal.(*animator).backend.(*skeletalAnimatorBackendImpl)
+		suite.Equal(uint32(0), b.modelDirtyStart)
+	})
+}
+
+func (suite *animatorImplTest) TestSkeletalHiZBindGroupProvider() {
+	suite.Run("should return non-nil HiZ provider from skeletal animator backend", func() {
+		b := suite.skeletal.(*animator).backend.(*skeletalAnimatorBackendImpl)
+		result := b.HiZBindGroupProvider()
+		suite.NotNil(result)
+	})
+}
+
+func (suite *animatorImplTest) TestSkeletalSetBoundingBox() {
+	suite.Run("should store bounding box on skeletal animator backend", func() {
+		b := suite.skeletal.(*animator).backend.(*skeletalAnimatorBackendImpl)
+		b.SetBoundingBox([3]float32{-1, -2, -3}, [3]float32{4, 5, 6})
+		suite.Equal([3]float32{-1, -2, -3}, b.boundingMin)
+		suite.Equal([3]float32{4, 5, 6}, b.boundingMax)
+	})
+}
+
+func (suite *animatorImplTest) TestHiZBindGroupProvider() {
+	suite.Run("should delegate HiZ provider call on simple animator", func() {
+		result := suite.simple.(*animator).HiZBindGroupProvider()
+		suite.NotNil(result)
+	})
+	suite.Run("should delegate HiZ provider call on skeletal animator", func() {
+		result := suite.skeletal.(*animator).HiZBindGroupProvider()
+		suite.NotNil(result)
+	})
+}
+
+func (suite *animatorImplTest) TestSetBoundingBox() {
+	suite.Run("should delegate SetBoundingBox call on simple animator", func() {
+		suite.simple.(*animator).SetBoundingBox([3]float32{-1, -1, -1}, [3]float32{1, 1, 1})
+		b := suite.simple.(*animator).backend.(*simpleAnimatorBackendImpl)
+		suite.Equal([3]float32{-1, -1, -1}, b.boundingMin)
+		suite.Equal([3]float32{1, 1, 1}, b.boundingMax)
+	})
+	suite.Run("should delegate SetBoundingBox call on skeletal animator", func() {
+		suite.skeletal.(*animator).SetBoundingBox([3]float32{-1, -1, -1}, [3]float32{1, 1, 1})
+		b := suite.skeletal.(*animator).backend.(*skeletalAnimatorBackendImpl)
+		suite.Equal([3]float32{-1, -1, -1}, b.boundingMin)
+		suite.Equal([3]float32{1, 1, 1}, b.boundingMax)
+	})
+}
+
+func (suite *animatorImplTest) TestSkeletalPrepareFrameDirtyStartExpansion() {
+	suite.Run("should expand dirty range start when earlier instance is processed during PrepareFrame", func() {
+		suite.skeletal.AddInstance()
+		suite.skeletal.AddInstance()
+		suite.skeletal.AddInstance()
+		b := suite.skeletal.(*animator).backend.(*skeletalAnimatorBackendImpl)
+		b.dirty = true
+		b.dirtyStart = 2
+		b.dirtyEnd = 3
+		suite.skeletal.PrepareFrame(0.016, 2)
+		suite.Equal(uint32(0), b.dirtyStart)
+	})
+}
+
+func (suite *animatorImplTest) TestSkeletalSetInstanceRotationEndExpansion() {
+	suite.Run("should expand modelDirty range end when new index is higher than existing end", func() {
+		suite.skeletal.AddInstance()
+		suite.skeletal.AddInstance()
+		suite.skeletal.AddInstance()
+		suite.skeletal.SetInstanceRotation(0, [3]float32{}, [3]float32{})
+		suite.skeletal.SetInstanceRotation(2, [3]float32{}, [3]float32{})
+		b := suite.skeletal.(*animator).backend.(*skeletalAnimatorBackendImpl)
+		suite.Equal(uint32(3), b.modelDirtyEnd)
 	})
 }

@@ -73,6 +73,27 @@ func (suite *loaderImplTest) TestImportedToModel() {
 		suite.True(result.Skinned())
 	})
 
+	suite.Run("skinned model with mesh vertices appends skinned byte buffer", func() {
+		imported := &model.ImportedModel{
+			Name: "skinned-mesh",
+			Skeleton: &model.Skeleton{
+				Bones: []model.Bone{{Name: "root"}},
+			},
+			Meshes: []model.ImportedMesh{
+				{
+					Vertices: []model.GPUSkinnedVertex{
+						{GPUVertex: model.GPUVertex{Position: [3]float32{1, 2, 3}}},
+					},
+				},
+			},
+			Materials: nil,
+		}
+		result, err := suite.l.importedToModel(imported)
+		suite.NoError(err)
+		suite.True(result.Skinned())
+		suite.Greater(len(result.VertexData()), 0)
+	})
+
 	suite.Run("combines multiple mesh vertices", func() {
 		imported := &model.ImportedModel{
 			Name: "multi",
@@ -119,6 +140,25 @@ func (suite *loaderImplTest) TestImportedToModel() {
 		result, err := suite.l.importedToModel(imported)
 		suite.NoError(err)
 		suite.Len(result.RenderMaterials(), 1)
+	})
+
+	suite.Run("computes AABB from vertex positions", func() {
+		imported := &model.ImportedModel{
+			Name: "aabb",
+			Meshes: []model.ImportedMesh{
+				{
+					Vertices: []model.GPUSkinnedVertex{
+						{GPUVertex: model.GPUVertex{Position: [3]float32{-1, -2, -3}}},
+						{GPUVertex: model.GPUVertex{Position: [3]float32{4, 5, 6}}},
+					},
+					Indices: []uint32{0, 1},
+				},
+			},
+		}
+		result, err := suite.l.importedToModel(imported)
+		suite.NoError(err)
+		suite.Equal([3]float32{-1, -2, -3}, result.BoundingMin())
+		suite.Equal([3]float32{4, 5, 6}, result.BoundingMax())
 	})
 }
 
@@ -248,6 +288,55 @@ func (suite *loaderImplTest) TestImportedToModels() {
 			suite.NoError(err)
 			suite.Len(result, 1)
 		})
+	})
+
+	suite.Run("unions BoundingMin and BoundingMax from per-mesh fields", func() {
+		imported := &model.ImportedModel{
+			Name: "union",
+			Meshes: []model.ImportedMesh{
+				{
+					Vertices:      []model.GPUSkinnedVertex{{GPUVertex: model.GPUVertex{Position: [3]float32{0, 0, 0}}}},
+					Indices:       []uint32{0},
+					MaterialIndex: 0,
+					BoundingMin:   [3]float32{-1, -2, -3},
+					BoundingMax:   [3]float32{2, 3, 4},
+				},
+				{
+					Vertices:      []model.GPUSkinnedVertex{{GPUVertex: model.GPUVertex{Position: [3]float32{0, 0, 0}}}},
+					Indices:       []uint32{0},
+					MaterialIndex: 0,
+					BoundingMin:   [3]float32{-5, 0, -1},
+					BoundingMax:   [3]float32{1, 6, 2},
+				},
+			},
+			Materials: []common.ImportedMaterial{{Name: "mat0"}},
+		}
+		result, err := suite.l.importedToModels(imported)
+		suite.NoError(err)
+		suite.Len(result, 1)
+		suite.Equal([3]float32{-5, -2, -3}, result[0].BoundingMin())
+		suite.Equal([3]float32{2, 6, 4}, result[0].BoundingMax())
+	})
+
+	suite.Run("BoundingMin and BoundingMax are zero when mesh AABB fields are zero", func() {
+		imported := &model.ImportedModel{
+			Name: "zero-aabb",
+			Meshes: []model.ImportedMesh{
+				{
+					Vertices:      []model.GPUSkinnedVertex{{GPUVertex: model.GPUVertex{Position: [3]float32{1, 2, 3}}}},
+					Indices:       []uint32{0},
+					MaterialIndex: 0,
+					BoundingMin:   [3]float32{},
+					BoundingMax:   [3]float32{},
+				},
+			},
+			Materials: []common.ImportedMaterial{{Name: "mat0"}},
+		}
+		result, err := suite.l.importedToModels(imported)
+		suite.NoError(err)
+		suite.Len(result, 1)
+		suite.Equal([3]float32{}, result[0].BoundingMin())
+		suite.Equal([3]float32{}, result[0].BoundingMax())
 	})
 }
 

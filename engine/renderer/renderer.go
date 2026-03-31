@@ -14,11 +14,18 @@ import (
 	"github.com/cogentcore/webgpu/wgpu"
 )
 
-// ComputeDispatch groups a compute pipeline key, its bind group provider, and
-// the workgroup dispatch dimensions for use with DispatchComputeBatch.
+// ComputeGroupProvider pairs a WGSL group index with the BindGroupProvider that
+// supplies the bind group for that group slot in a compute dispatch.
+type ComputeGroupProvider struct {
+	Group    uint32
+	Provider bind_group_provider.BindGroupProvider
+}
+
+// ComputeDispatch groups a compute pipeline key, an ordered list of group providers,
+// and the workgroup dispatch dimensions for use with DispatchComputeBatch.
 type ComputeDispatch struct {
 	PipelineKey    string
-	Provider       bind_group_provider.BindGroupProvider
+	Providers      []ComputeGroupProvider
 	WorkGroupCount [3]uint32
 }
 
@@ -26,7 +33,7 @@ type ComputeDispatch struct {
 // the renderer impl and the backend — the pipeline key has been resolved to a Pipeline object.
 type ComputeDispatchEntry struct {
 	Pipeline       pipeline.Pipeline
-	Provider       bind_group_provider.BindGroupProvider
+	Providers      []ComputeGroupProvider
 	WorkGroupCount [3]uint32
 }
 
@@ -760,7 +767,7 @@ func (r *renderer) DispatchComputeBatch(dispatches []ComputeDispatch) {
 		}
 		entries = append(entries, ComputeDispatchEntry{
 			Pipeline:       p,
-			Provider:       d.Provider,
+			Providers:      d.Providers,
 			WorkGroupCount: d.WorkGroupCount,
 		})
 	}

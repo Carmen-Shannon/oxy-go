@@ -246,6 +246,14 @@ type ShadowHandler interface {
 	// Parameters:
 	//   - l: the light that was removed from the scene
 	OnLightRemoved(l Light)
+
+	// ForceMarkDirty unconditionally marks the light as requiring a depth re-render
+	// this frame. Called by the scene when a light's atlas slot index migrates between
+	// frames due to a neighbour light entering or leaving the shadow slot list.
+	//
+	// Parameters:
+	//   - l: the light to force-dirty
+	ForceMarkDirty(l Light)
 }
 
 var _ ShadowHandler = &shadowHandlerImpl{}

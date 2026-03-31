@@ -16,6 +16,7 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/animator"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
+	"github.com/cogentcore/webgpu/wgpu"
 )
 
 // SceneBuilderOption is a functional option for configuring a Scene.
@@ -192,6 +193,7 @@ func NewScene(name string, cam camera.Camera, r renderer.Renderer, options ...Sc
 		animatorPool:           make(map[model.Model][]animator.Animator),
 		registry:               make(map[uint64]game_object.GameObject),
 		instanceLookup:         make(map[animator.Animator]map[uint32]uint64),
+		shadowIndirectBuffers:  make(map[animator.Animator]*wgpu.Buffer),
 		nextID:                 1,
 		computeWorkers:         max(runtime.NumCPU()-1, 1),
 		maxBonesGPU:            64,

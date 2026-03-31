@@ -117,9 +117,9 @@ func (suite *animatorTest) TestGPUFrustumPlane() {
 // --- GPUGlobalData ---
 
 func (suite *animatorTest) TestGPUGlobalData() {
-	suite.Run("Size should return 112", func() {
+	suite.Run("Size should return 224", func() {
 		g := &animator.GPUGlobalData{}
-		suite.Equal(112, g.Size())
+		suite.Equal(224, g.Size())
 	})
 	suite.Run("Marshal length should equal Size", func() {
 		g := &animator.GPUGlobalData{}
@@ -140,21 +140,61 @@ func (suite *animatorTest) TestGPUGlobalData() {
 		buf := g.Marshal()
 		suite.Equal(math.Float32bits(5.5), binary.LittleEndian.Uint32(buf[8:12]))
 	})
-	suite.Run("Marshal should encode first plane Normal[0] at offset 16", func() {
+	suite.Run("Marshal should encode first plane Normal[0] at offset 32", func() {
 		g := &animator.GPUGlobalData{}
 		g.Planes[0] = animator.GPUFrustumPlane{Normal: [3]float32{1, 0, 0}, Distance: 10}
 		buf := g.Marshal()
-		suite.Equal(math.Float32bits(1), binary.LittleEndian.Uint32(buf[16:20]))
-		suite.Equal(math.Float32bits(10), binary.LittleEndian.Uint32(buf[28:32]))
+		suite.Equal(math.Float32bits(1), binary.LittleEndian.Uint32(buf[32:36]))
+		suite.Equal(math.Float32bits(10), binary.LittleEndian.Uint32(buf[44:48]))
+	})
+	suite.Run("Marshal should encode ScreenWidth at offset 12", func() {
+		g := &animator.GPUGlobalData{ScreenWidth: 1920}
+		buf := g.Marshal()
+		suite.Equal(uint32(1920), binary.LittleEndian.Uint32(buf[12:16]))
+	})
+	suite.Run("Marshal should encode ScreenHeight at offset 16", func() {
+		g := &animator.GPUGlobalData{ScreenHeight: 1080}
+		buf := g.Marshal()
+		suite.Equal(uint32(1080), binary.LittleEndian.Uint32(buf[16:20]))
+	})
+	suite.Run("Marshal should encode HiZMipCount at offset 20", func() {
+		g := &animator.GPUGlobalData{HiZMipCount: 7}
+		buf := g.Marshal()
+		suite.Equal(uint32(7), binary.LittleEndian.Uint32(buf[20:24]))
+	})
+	suite.Run("Marshal should encode ProjX at offset 24", func() {
+		g := &animator.GPUGlobalData{ProjX: 1.5}
+		buf := g.Marshal()
+		suite.Equal(math.Float32bits(1.5), binary.LittleEndian.Uint32(buf[24:28]))
+	})
+	suite.Run("Marshal should encode ViewProj[0] at offset 128", func() {
+		g := &animator.GPUGlobalData{}
+		g.ViewProj[0] = 2.5
+		buf := g.Marshal()
+		suite.Equal(math.Float32bits(2.5), binary.LittleEndian.Uint32(buf[128:132]))
+	})
+	suite.Run("Marshal should encode BoundingMin at offset 192", func() {
+		g := &animator.GPUGlobalData{BoundingMin: [3]float32{-1, -2, -3}}
+		buf := g.Marshal()
+		suite.Equal(math.Float32bits(-1), binary.LittleEndian.Uint32(buf[192:196]))
+		suite.Equal(math.Float32bits(-2), binary.LittleEndian.Uint32(buf[196:200]))
+		suite.Equal(math.Float32bits(-3), binary.LittleEndian.Uint32(buf[200:204]))
+	})
+	suite.Run("Marshal should encode BoundingMax at offset 208", func() {
+		g := &animator.GPUGlobalData{BoundingMax: [3]float32{4, 5, 6}}
+		buf := g.Marshal()
+		suite.Equal(math.Float32bits(4), binary.LittleEndian.Uint32(buf[208:212]))
+		suite.Equal(math.Float32bits(5), binary.LittleEndian.Uint32(buf[212:216]))
+		suite.Equal(math.Float32bits(6), binary.LittleEndian.Uint32(buf[216:220]))
 	})
 }
 
 // --- GPUAnimationGlobals ---
 
 func (suite *animatorTest) TestGPUAnimationGlobals() {
-	suite.Run("Size should return 128", func() {
+	suite.Run("Size should return 240", func() {
 		g := &animator.GPUAnimationGlobals{}
-		suite.Equal(128, g.Size())
+		suite.Equal(240, g.Size())
 	})
 	suite.Run("Marshal length should equal Size", func() {
 		g := &animator.GPUAnimationGlobals{}
@@ -181,6 +221,51 @@ func (suite *animatorTest) TestGPUAnimationGlobals() {
 		buf := g.Marshal()
 		suite.Equal(math.Float32bits(0), binary.LittleEndian.Uint32(buf[32:36]))
 		suite.Equal(math.Float32bits(1), binary.LittleEndian.Uint32(buf[36:40]))
+	})
+	suite.Run("Marshal should encode KeyframeDataOffset at offset 16", func() {
+		g := &animator.GPUAnimationGlobals{KeyframeDataOffset: 77}
+		buf := g.Marshal()
+		suite.Equal(uint32(77), binary.LittleEndian.Uint32(buf[16:20]))
+	})
+	suite.Run("Marshal should encode ScreenWidth at offset 20", func() {
+		g := &animator.GPUAnimationGlobals{ScreenWidth: 2560}
+		buf := g.Marshal()
+		suite.Equal(uint32(2560), binary.LittleEndian.Uint32(buf[20:24]))
+	})
+	suite.Run("Marshal should encode ScreenHeight at offset 24", func() {
+		g := &animator.GPUAnimationGlobals{ScreenHeight: 1440}
+		buf := g.Marshal()
+		suite.Equal(uint32(1440), binary.LittleEndian.Uint32(buf[24:28]))
+	})
+	suite.Run("Marshal should encode HiZMipCount at offset 28", func() {
+		g := &animator.GPUAnimationGlobals{HiZMipCount: 8}
+		buf := g.Marshal()
+		suite.Equal(uint32(8), binary.LittleEndian.Uint32(buf[28:32]))
+	})
+	suite.Run("Marshal should encode ProjX at offset 128", func() {
+		g := &animator.GPUAnimationGlobals{ProjX: 3.14}
+		buf := g.Marshal()
+		suite.Equal(math.Float32bits(3.14), binary.LittleEndian.Uint32(buf[128:132]))
+	})
+	suite.Run("Marshal should encode ViewProj[0] at offset 144", func() {
+		g := &animator.GPUAnimationGlobals{}
+		g.ViewProj[0] = 7.0
+		buf := g.Marshal()
+		suite.Equal(math.Float32bits(7.0), binary.LittleEndian.Uint32(buf[144:148]))
+	})
+	suite.Run("Marshal should encode BoundingMin at offset 208", func() {
+		g := &animator.GPUAnimationGlobals{BoundingMin: [3]float32{-5, -6, -7}}
+		buf := g.Marshal()
+		suite.Equal(math.Float32bits(-5), binary.LittleEndian.Uint32(buf[208:212]))
+		suite.Equal(math.Float32bits(-6), binary.LittleEndian.Uint32(buf[212:216]))
+		suite.Equal(math.Float32bits(-7), binary.LittleEndian.Uint32(buf[216:220]))
+	})
+	suite.Run("Marshal should encode BoundingMax at offset 224", func() {
+		g := &animator.GPUAnimationGlobals{BoundingMax: [3]float32{8, 9, 10}}
+		buf := g.Marshal()
+		suite.Equal(math.Float32bits(8), binary.LittleEndian.Uint32(buf[224:228]))
+		suite.Equal(math.Float32bits(9), binary.LittleEndian.Uint32(buf[228:232]))
+		suite.Equal(math.Float32bits(10), binary.LittleEndian.Uint32(buf[232:236]))
 	})
 }
 

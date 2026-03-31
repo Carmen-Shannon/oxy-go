@@ -313,8 +313,18 @@ const (
 	// AnnotationArgHiZDown identifies the Hi-Z downsample provider (mip N-1 → mip N min-downsample).
 	AnnotationArgHiZDown AnnotationArg = "hiz_down"
 
+	// AnnotationArgHiZDownMax identifies the hiz_down_max compute provider (MAX pyramid downsample).
+	AnnotationArgHiZDownMax AnnotationArg = "hiz_down_max"
+
 	// AnnotationArgContactShadows identifies the contact shadows provider (contact shadow texture + sampler for the lit shader).
 	AnnotationArgContactShadows AnnotationArg = "contact_shadows"
+
+	// AnnotationArgAnimatorHiZ identifies the animator Hi-Z occlusion culling provider
+	// (Hi-Z full mip chain texture for the animator compute shaders).
+	AnnotationArgAnimatorHiZ AnnotationArg = "animator_hiz"
+
+	// AnnotationArgAnimatorMaxHiZ identifies the animator MAX Hi-Z occlusion culling provider.
+	AnnotationArgAnimatorMaxHiZ AnnotationArg = "animator_max_hiz"
 )
 
 // ── Injection key arguments ────────────────────────────────────────────────────
@@ -454,6 +464,9 @@ const (
 	// AnnotationArgHiZTexture identifies the full Hi-Z depth pyramid texture binding role.
 	AnnotationArgHiZTexture AnnotationArg = "hiz_texture"
 
+	// AnnotationArgMaxHiZTexture identifies the MAX Hi-Z depth pyramid texture binding role (occlusion culling).
+	AnnotationArgMaxHiZTexture AnnotationArg = "hiz_max_texture"
+
 	// AnnotationArgSpotShadowTexture identifies the spot/point shadow atlas depth texture binding role.
 	AnnotationArgSpotShadowTexture AnnotationArg = "spot_shadow_texture"
 
@@ -555,7 +568,10 @@ var validProviderIdentities = []AnnotationArg{
 	AnnotationArgSSR,
 	AnnotationArgHiZInit,
 	AnnotationArgHiZDown,
+	AnnotationArgHiZDownMax,
 	AnnotationArgContactShadows,
+	AnnotationArgAnimatorHiZ,
+	AnnotationArgAnimatorMaxHiZ,
 }
 
 // validBindingRoles lists all AnnotationArg values that are accepted as binding
@@ -579,6 +595,7 @@ var validBindingRoles = []AnnotationArg{
 	AnnotationArgHiZOut,
 	AnnotationArgHiZIn,
 	AnnotationArgHiZTexture,
+	AnnotationArgMaxHiZTexture,
 	AnnotationArgSpotShadowTexture,
 	AnnotationArgContactShadowTexture,
 	AnnotationArgContactShadowSampler,

@@ -137,6 +137,36 @@ func ComputeBoundingRadius(vertices []GPUSkinnedVertex) float32 {
 	return float32(math.Sqrt(float64(maxDistSq)))
 }
 
+// ComputeBoundingAABB calculates the axis-aligned bounding box from a slice of
+// GPUSkinnedVertex positions. Returns the component-wise minimum and maximum
+// across all vertices.
+//
+// Parameters:
+//   - vertices: the vertex data to compute the AABB from
+//
+// Returns:
+//   - [3]float32: minimum corner (min X, min Y, min Z)
+//   - [3]float32: maximum corner (max X, max Y, max Z)
+func ComputeBoundingAABB(vertices []GPUSkinnedVertex) ([3]float32, [3]float32) {
+	if len(vertices) == 0 {
+		return [3]float32{}, [3]float32{}
+	}
+	min := vertices[0].Position
+	max := vertices[0].Position
+	for _, v := range vertices[1:] {
+		p := v.Position
+		for i := range 3 {
+			if p[i] < min[i] {
+				min[i] = p[i]
+			}
+			if p[i] > max[i] {
+				max[i] = p[i]
+			}
+		}
+	}
+	return min, max
+}
+
 // GPUModelDataSource is the canonical WGSL definition of the ModelData struct for per-instance model matrices.
 // Matches GPUModelData layout exactly (64 bytes, std430 aligned).
 //

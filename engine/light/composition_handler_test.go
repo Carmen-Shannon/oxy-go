@@ -5,6 +5,7 @@ import (
 
 	"github.com/Carmen-Shannon/oxy-go/engine/light"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
+	"github.com/cogentcore/webgpu/wgpu"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -500,5 +501,25 @@ func (suite *compositionHandlerTest) TestNewCompositionHandlerBloomDefaults() {
 		suite.Equal(float32(1.0), h.BloomThreshold())
 		suite.Equal(float32(0.5), h.BloomIntensity())
 		suite.Equal(0, h.BloomMipCount())
+	})
+}
+
+func (suite *compositionHandlerTest) TestSetSlot() {
+	suite.Run("should set the active slot", func() {
+		suite.handler.SetSlot(0)
+		suite.handler.SetBloomDownReadViews([]*wgpu.TextureView{nil, nil})
+		suite.handler.SetSlot(1)
+		suite.Nil(suite.handler.BloomDownReadViews())
+	})
+
+	suite.Run("should isolate data between slots", func() {
+		suite.handler.SetSlot(0)
+		suite.handler.SetBloomDownReadViews([]*wgpu.TextureView{nil, nil})
+		suite.handler.SetSlot(1)
+		suite.handler.SetBloomDownReadViews([]*wgpu.TextureView{nil, nil, nil})
+		suite.handler.SetSlot(0)
+		suite.Equal(2, len(suite.handler.BloomDownReadViews()))
+		suite.handler.SetSlot(1)
+		suite.Equal(3, len(suite.handler.BloomDownReadViews()))
 	})
 }

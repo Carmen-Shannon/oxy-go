@@ -124,6 +124,20 @@ type Model interface {
 	//   - float32: the bounding radius
 	BoundingRadius() float32
 
+	// BoundingMin returns the minimum corner of the model's axis-aligned bounding box
+	// in model space. Computed from all mesh vertices at load time.
+	//
+	// Returns:
+	//   - [3]float32: the minimum corner (min X, min Y, min Z)
+	BoundingMin() [3]float32
+
+	// BoundingMax returns the maximum corner of the model's axis-aligned bounding box
+	// in model space. Computed from all mesh vertices at load time.
+	//
+	// Returns:
+	//   - [3]float32: the maximum corner (max X, max Y, max Z)
+	BoundingMax() [3]float32
+
 	// SetComputePipelineKey sets the compute pipeline key for this model's animator.
 	//
 	// Parameters:
@@ -212,6 +226,8 @@ func (m *model) SetIndexCount(count int)                               { m.index
 func (m *model) RenderMaterials() []material.Material                  { return m.renderMaterials }
 func (m *model) SetRenderMaterials(mats []material.Material)           { m.renderMaterials = mats }
 func (m *model) BoundingRadius() float32                               { return m.boundingRadius }
+func (m *model) BoundingMin() [3]float32                               { return m.boundingMin }
+func (m *model) BoundingMax() [3]float32                               { return m.boundingMax }
 func (m *model) EffectProvider() bind_group_provider.BindGroupProvider { return m.effectProvider }
 func (m *model) CastsShadows() bool                                    { return m.castsShadows }
 func (m *model) SetCastsShadows(casts bool)                            { m.castsShadows = casts }

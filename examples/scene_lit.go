@@ -41,7 +41,7 @@ func main() {
 		renderer.BackendTypeWGPU,
 		eng.Window(),
 		renderer.WithPresentMode(renderer.PresentModeUncapped),
-		renderer.WithGPUSerializedProfiling(true),
+		renderer.WithGPUSerializedProfiling(false),
 	)
 
 	// ── Camera ──────────────────────────────────────────────────────────
@@ -167,7 +167,7 @@ func main() {
 		game_object.WithScale(1, 1, 1),
 	)
 
-	_ = sc.AddGameObject(fox)
+	foxID := sc.AddGameObject(fox)
 
 	// Start initial animation (first clip, looped)
 	if foxModel.AnimationCount() > 0 {
@@ -251,7 +251,7 @@ func main() {
 	eng.AddScene(0, sc)
 
 	// ── Input Handling ──────────────────────────────────────────────────
-	setupLitInput(eng, cam, fox, sun, bluePoint, orangePoint, spot, quadObj, sunIndicator)
+	setupLitInput(eng, cam, sc, foxModel, foxID, fox, sun, bluePoint, orangePoint, spot, quadObj, sunIndicator)
 
 	fmt.Println("╔══════════════════════════════════════════════════════╗")
 	fmt.Println("║  Oxy Engine - Lit Scene (Forward+ / CSM+PCF)         ║")
@@ -264,6 +264,10 @@ func main() {
 	fmt.Println("║  T:      Toggle sun orbit (day/night cycle)          ║")
 	fmt.Println("║  V:      Cycle quad transparency                     ║")
 	fmt.Println("║  1-3:    Switch fox animation                       ║")
+	fmt.Println("║  Z:      Add skeletal object (fox)                  ║")
+	fmt.Println("║  C:      Remove skeletal object (fox)               ║")
+	fmt.Println("║  X:      Add simple object (sphere)                 ║")
+	fmt.Println("║  B:      Remove simple object (sphere)              ║")
 	fmt.Println("║  Shadow: CSM + PCF (dual-cascade sphere shadows)      ║")
 	fmt.Println("╚══════════════════════════════════════════════════════╝")
 
@@ -273,28 +277,35 @@ func main() {
 
 // setupLitInput wires camera controls (WASD/QE planar movement, middle-mouse orbit,
 // scroll zoom), number-key animation switching, light toggling (L=sun, F=point lights,
-// G=spot), sun orbit (T), and quad transparency cycling (V).
+// G=spot), sun orbit (T), quad transparency cycling (V), and dynamic add/remove
+// demonstration (Z=add fox, C=remove fox, X=add sphere, B=remove sphere).
 //
 // Parameters:
-//   - eng: the engine instance providing window callbacks and tick
-//   - cam: the camera to control
-//   - fox: the fox game object for animation control
-//   - sun: the directional light to toggle
-//   - bluePoint: the blue point light to toggle
-//   - orangePoint: the orange point light to toggle
-//   - spot: the spot light to toggle
-//   - quad: the transparent quad game object for alpha cycling
+//   - eng:          the engine instance providing window callbacks and tick
+//   - cam:          the camera to control
+//   - sc:           the scene, used to add/remove game objects at runtime
+//   - foxModel:     the loaded fox model, used to reconstruct the fox on re-add
+//   - initialFoxID: the scene ID assigned to the fox when it was first added
+//   - fox:          the initial fox game object (used for animation control)
+//   - sun:          the directional light to toggle
+//   - bluePoint:    the blue point light to toggle
+//   - orangePoint:  the orange point light to toggle
+//   - spot:         the spot light to toggle
+//   - quad:         the transparent quad game object for alpha cycling
 //   - sunIndicator: the sun indicator sphere whose position tracks the shadow eye
 func setupLitInput(
 	eng engine.Engine,
 	cam camera.Camera,
+	sc scene.Scene,
+	foxModel model.Model,
+	initialFoxID uint64,
 	fox game_object.GameObject,
 	sun, bluePoint, orangePoint, spot light.Light,
 	quad game_object.GameObject,
 	sunIndicator game_object.GameObject,
 ) {
 	var keyState sync.Map
-	animCount := fox.Model().AnimationCount()
+	animCount := foxModel.AnimationCount()
 	pointsOn := true
 	sunOrbit := false
 	var sunAngle float64 // current orbit angle in radians
@@ -303,14 +314,50 @@ func setupLitInput(
 	alphaLevels := []float32{1.0, 0.75, 0.5, 0.25, 0.0}
 	alphaIdx := 0
 
+	// Dynamic add/remove state for the skeletal fox object.
+	currentFox := fox
+	currentFoxID := initialFoxID
+	foxInScene := true
+
+	// Dynamic add/remove state for the simple sphere object.
+	var simpleID uint64
+	simpleInScene := false
+
+	sphereVerts, sphereIdx := buildSphere(15, 12, 16, [4]float32{0.2, 0.9, 0.2, 1.0})
+	simpleSphereModel := model.NewModel(
+		model.WithName("simple_sphere"),
+		model.WithBoundingRadius(15.0),
+		model.WithVertexData(common.SliceToBytes(sphereVerts)),
+		model.WithIndexData(common.SliceToBytes(sphereIdx)),
+		model.WithIndexCount(len(sphereIdx)),
+		model.WithMeshProvider(bind_group_provider.NewBindGroupProvider("simple_sphere_mesh")),
+		model.WithRenderMaterials(material.NewMaterial(
+			material.WithName("simple_sphere_material"),
+			material.WithBaseColor([4]float32{0.2, 0.9, 0.2, 1.0}),
+			material.WithPipelineKey("simple_sphere"),
+		)),
+		model.WithCastsShadows(true),
+		model.WithShadowCullMode(model.ShadowCullModeBack),
+	)
+	buildSimpleObj := func() game_object.GameObject {
+		return game_object.NewGameObject(
+			game_object.WithModel(simpleSphereModel),
+			game_object.WithPosition(60, 20, 0),
+			game_object.WithScale(1, 1, 1),
+		)
+	}
+
 	eng.Window().SetKeyDownCallback(func(keyCode uint32) {
 		keyState.Store(keyCode, true)
 
-		// Number keys 1-9 switch animations with a smooth blend transition
+		// Number keys 1-9 switch animations with a smooth blend transition.
+		// Guard: only valid when the fox is currently in the scene.
 		if keyCode >= common.Key1 && keyCode <= common.Key9 {
-			clipIdx := int(keyCode - common.Key1)
-			if clipIdx < animCount {
-				fox.Animator().BlendToAnimation(0, uint32(clipIdx), 0.3)
+			if foxInScene {
+				clipIdx := int(keyCode - common.Key1)
+				if clipIdx < animCount {
+					currentFox.Animator().BlendToAnimation(0, uint32(clipIdx), 0.3)
+				}
 			}
 		}
 
@@ -372,6 +419,60 @@ func setupLitInput(
 			fmt.Printf("[Camera] radius=%.2f target=(%.2f, %.2f, %.2f) azimuth=%.4f elevation=%.4f\n",
 				cam.Controller().Radius(), tx, ty, tz,
 				cam.Controller().Azimuth(), cam.Controller().Elevation())
+		}
+
+		// Z adds the skeletal fox object if it is not currently in the scene.
+		if keyCode == common.KeyZ {
+			if !foxInScene {
+				newFox := game_object.NewGameObject(
+					game_object.WithModel(foxModel),
+					game_object.WithPosition(0, 0, 0),
+					game_object.WithScale(1, 1, 1),
+				)
+				currentFoxID = sc.AddGameObject(newFox)
+				currentFox = newFox
+				if foxModel.AnimationCount() > 0 {
+					newFox.Animator().PlayAnimation(0, 0, true)
+				}
+				foxInScene = true
+				fmt.Printf("[Demo] Fox added (id=%d)\n", currentFoxID)
+			} else {
+				fmt.Println("[Demo] Fox is already in the scene (press C to remove)")
+			}
+		}
+
+		// C removes the skeletal fox object if it is currently in the scene.
+		if keyCode == common.KeyC {
+			if foxInScene {
+				sc.RemoveGameObject(currentFoxID)
+				foxInScene = false
+				fmt.Printf("[Demo] Fox removed (id=%d)\n", currentFoxID)
+			} else {
+				fmt.Println("[Demo] Fox is not in the scene (press Z to add)")
+			}
+		}
+
+		// X adds the simple sphere object if it is not currently in the scene.
+		if keyCode == common.KeyX {
+			if !simpleInScene {
+				obj := buildSimpleObj()
+				simpleID = sc.AddGameObject(obj)
+				simpleInScene = true
+				fmt.Printf("[Demo] Simple sphere added (id=%d)\n", simpleID)
+			} else {
+				fmt.Println("[Demo] Simple sphere is already in the scene (press B to remove)")
+			}
+		}
+
+		// B removes the simple sphere object if it is currently in the scene.
+		if keyCode == common.KeyB {
+			if simpleInScene {
+				sc.RemoveGameObject(simpleID)
+				simpleInScene = false
+				fmt.Printf("[Demo] Simple sphere removed (id=%d)\n", simpleID)
+			} else {
+				fmt.Println("[Demo] Simple sphere is not in the scene (press X to add)")
+			}
 		}
 	})
 
@@ -592,10 +693,10 @@ func buildSphere(radius float32, rings, segments int, color [4]float32) ([]model
 			c := uint32((r+1)*stride + s)
 			d := uint32((r+1)*stride + s + 1)
 
-			// Upper triangle
-			indices = append(indices, a, c, b)
+			// Upper triangle (CCW from outside — front-facing in WebGPU)
+			indices = append(indices, a, b, c)
 			// Lower triangle
-			indices = append(indices, b, c, d)
+			indices = append(indices, b, d, c)
 		}
 	}
 

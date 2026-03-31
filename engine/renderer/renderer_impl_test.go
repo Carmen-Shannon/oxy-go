@@ -229,7 +229,7 @@ func (suite *rendererImplTest) TestDispatchComputeBatch() {
 			return len(e) == 0
 		})).Return().Once()
 		suite.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-			{PipelineKey: "missing", Provider: nil, WorkGroupCount: [3]uint32{1, 1, 1}},
+			{PipelineKey: "missing", Providers: nil, WorkGroupCount: [3]uint32{1, 1, 1}},
 		})
 	})
 	suite.Run("should dispatch compute when the pipeline key exists", func() {
@@ -239,7 +239,7 @@ func (suite *rendererImplTest) TestDispatchComputeBatch() {
 			return len(e) == 1 && e[0].Pipeline == mockPipeline
 		})).Return().Once()
 		suite.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-			{PipelineKey: "key", Provider: nil, WorkGroupCount: [3]uint32{1, 1, 1}},
+			{PipelineKey: "key", Providers: nil, WorkGroupCount: [3]uint32{1, 1, 1}},
 		})
 	})
 }
@@ -524,6 +524,14 @@ func (suite *rendererImplTest) TestFlushFrame() {
 	suite.Run("should call FlushFrame on the backend", func() {
 		suite.backendMock.EXPECT().FlushFrame().Return(wgpu.SubmissionIndex(0)).Once()
 		suite.r.FlushFrame()
+	})
+}
+
+func (suite *rendererImplTest) TestCurrentFrameSlot() {
+	suite.Run("should call CurrentFrameSlot on the backend and return the result", func() {
+		suite.backendMock.EXPECT().CurrentFrameSlot().Return(1).Once()
+		result := suite.r.CurrentFrameSlot()
+		suite.Equal(1, result)
 	})
 }
 

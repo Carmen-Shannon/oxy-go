@@ -72,6 +72,16 @@ type skeletalAnimatorBackendImpl struct {
 	// Frustum culling state
 	frustumPlanes  [6]GPUFrustumPlane
 	boundingRadius float32
+	boundingMin    [3]float32
+	boundingMax    [3]float32
+
+	// Hi-Z occlusion culling state
+	screenWidth  int
+	screenHeight int
+	hiZMipCount  int
+	projX        float32
+	viewProj     [16]float32
+	hiZProvider  bind_group_provider.BindGroupProvider
 }
 
 // skeletalAnimatorBackend defines the interface for the skeletal animation backend.
@@ -207,6 +217,7 @@ func newSkeletalAnimatorBackend() AnimatorBackend {
 
 	s.computeProvider = bind_group_provider.NewBindGroupProvider("skeletal_animator_compute")
 	s.outputProvider = bind_group_provider.NewBindGroupProvider("skeletal_animator_output")
+	s.hiZProvider = bind_group_provider.NewBindGroupProvider("animator_hiz")
 	s.stagedWriteData = make([]bind_group_provider.BufferWrite, 0, 8)
 	s.initStagingPool()
 
@@ -551,7 +562,14 @@ func (s *skeletalAnimatorBackendImpl) PrepareFrame(deltaTime float32, binding in
 		BoundingRadius:     s.boundingRadius,
 		ChannelDataOffset:  s.channelDataOffset,
 		KeyframeDataOffset: s.keyframeDataOffset,
+		ScreenWidth:        uint32(s.screenWidth),
+		ScreenHeight:       uint32(s.screenHeight),
+		HiZMipCount:        uint32(s.hiZMipCount),
+		ProjX:              s.projX,
+		ViewProj:           s.viewProj,
 		Planes:             s.frustumPlanes,
+		BoundingMin:        s.boundingMin,
+		BoundingMax:        s.boundingMax,
 	}
 
 	raw := common.SliceToBytes(s.perFrameSlice)
@@ -816,6 +834,9 @@ func (s *skeletalAnimatorBackendImpl) Release() {
 	if s.outputProvider != nil {
 		s.outputProvider.Release()
 	}
+	if s.hiZProvider != nil {
+		s.hiZProvider.Release()
+	}
 	s.instanceData = nil
 	s.instanceStateData = nil
 	s.perFrameSlice = nil
@@ -1047,6 +1068,13 @@ func (s *skeletalAnimatorBackendImpl) SetBoundingRadius(radius float32) {
 	s.boundingRadius = radius
 }
 
+func (s *skeletalAnimatorBackendImpl) SetBoundingBox(min, max [3]float32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.boundingMin = min
+	s.boundingMax = max
+}
+
 func (s *skeletalAnimatorBackendImpl) BoundingRadius() float32 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1095,4 +1123,35 @@ func (s *skeletalAnimatorBackendImpl) InstanceRotation(index uint32) (rotSpeed, 
 		return
 	}
 	return s.instanceRotSpeedData[index], s.instanceRotEulerData[index]
+}
+
+func (s *skeletalAnimatorBackendImpl) SetScreenSize(width, height int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.screenWidth = width
+	s.screenHeight = height
+}
+
+func (s *skeletalAnimatorBackendImpl) SetProjectionX(projX float32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.projX = projX
+}
+
+func (s *skeletalAnimatorBackendImpl) SetHiZMipCount(count int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.hiZMipCount = count
+}
+
+func (s *skeletalAnimatorBackendImpl) SetViewProj(vp [16]float32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.viewProj = vp
+}
+
+func (s *skeletalAnimatorBackendImpl) HiZBindGroupProvider() bind_group_provider.BindGroupProvider {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.hiZProvider
 }

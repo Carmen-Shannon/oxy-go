@@ -233,6 +233,54 @@ type SSRHandler interface {
 	// Parameters:
 	//   - views: per-mip storage write views
 	SetHiZStorageViews(views []*wgpu.TextureView)
+
+	// HiZMaxTexture returns the R32Float MAX Hi-Z depth pyramid texture used for occlusion culling.
+	//
+	// Returns:
+	//   - *wgpu.Texture: the MAX Hi-Z texture, or nil if not initialized
+	HiZMaxTexture() *wgpu.Texture
+
+	// SetHiZMaxTexture sets the MAX Hi-Z depth pyramid texture.
+	//
+	// Parameters:
+	//   - t: the MAX Hi-Z texture
+	SetHiZMaxTexture(t *wgpu.Texture)
+
+	// HiZMaxTextureView returns the full mip chain texture view for the MAX Hi-Z pyramid.
+	//
+	// Returns:
+	//   - *wgpu.TextureView: the full mip chain view, or nil if not initialized
+	HiZMaxTextureView() *wgpu.TextureView
+
+	// SetHiZMaxTextureView sets the full mip chain texture view for the MAX Hi-Z pyramid.
+	//
+	// Parameters:
+	//   - tv: the full mip chain texture view
+	SetHiZMaxTextureView(tv *wgpu.TextureView)
+
+	// HiZMaxMipReadViews returns the per-mip-level texture read views for MAX Hi-Z downsample passes.
+	//
+	// Returns:
+	//   - []*wgpu.TextureView: per-mip read views
+	HiZMaxMipReadViews() []*wgpu.TextureView
+
+	// SetHiZMaxMipReadViews sets the per-mip-level texture read views for the MAX Hi-Z pyramid.
+	//
+	// Parameters:
+	//   - views: per-mip read views
+	SetHiZMaxMipReadViews(views []*wgpu.TextureView)
+
+	// HiZMaxStorageViews returns the per-mip-level storage texture views for MAX Hi-Z downsample passes.
+	//
+	// Returns:
+	//   - []*wgpu.TextureView: per-mip storage write views
+	HiZMaxStorageViews() []*wgpu.TextureView
+
+	// SetHiZMaxStorageViews sets the per-mip-level storage texture views for the MAX Hi-Z pyramid.
+	//
+	// Parameters:
+	//   - views: per-mip storage write views
+	SetHiZMaxStorageViews(views []*wgpu.TextureView)
 }
 
 var _ SSRHandler = &ssrHandlerImpl{}
@@ -277,6 +325,26 @@ func (h *ssrHandlerImpl) HiZStorageViews() []*wgpu.TextureView {
 }
 func (h *ssrHandlerImpl) SetHiZStorageViews(views []*wgpu.TextureView) {
 	h.hizStorageViewsArr[h.activeSlot] = views
+}
+func (h *ssrHandlerImpl) HiZMaxTexture() *wgpu.Texture     { return h.maxHizTextures[h.activeSlot] }
+func (h *ssrHandlerImpl) SetHiZMaxTexture(t *wgpu.Texture) { h.maxHizTextures[h.activeSlot] = t }
+func (h *ssrHandlerImpl) HiZMaxTextureView() *wgpu.TextureView {
+	return h.maxHizTextureViews[h.activeSlot]
+}
+func (h *ssrHandlerImpl) SetHiZMaxTextureView(tv *wgpu.TextureView) {
+	h.maxHizTextureViews[h.activeSlot] = tv
+}
+func (h *ssrHandlerImpl) HiZMaxMipReadViews() []*wgpu.TextureView {
+	return h.maxHizMipReadViewsArr[h.activeSlot]
+}
+func (h *ssrHandlerImpl) SetHiZMaxMipReadViews(views []*wgpu.TextureView) {
+	h.maxHizMipReadViewsArr[h.activeSlot] = views
+}
+func (h *ssrHandlerImpl) HiZMaxStorageViews() []*wgpu.TextureView {
+	return h.maxHizStorageViewsArr[h.activeSlot]
+}
+func (h *ssrHandlerImpl) SetHiZMaxStorageViews(views []*wgpu.TextureView) {
+	h.maxHizStorageViewsArr[h.activeSlot] = views
 }
 
 func (h *ssrHandlerImpl) Bgp(key string) bind_group_provider.BindGroupProvider {

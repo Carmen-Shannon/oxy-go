@@ -111,6 +111,8 @@ func main() {
 	// Very dark ambient so indoor shadowed corridors read dramatically
 	sc.SetAmbientColor([3]float32{0.04, 0.04, 0.06})
 
+	var pointLights []light.Light
+
 	// Upper corridor fire lights (ceiling-mounted, warm amber/orange)
 	for _, cfg := range [][6]float32{
 		{-5, 7, -0.5, 1.0, 0.6, 0.2},
@@ -128,10 +130,10 @@ func main() {
 			light.WithIntensity(0.5),
 			light.WithRange(10.0),
 			light.WithCastsShadows(true),
-			light.WithShadowBias(0.005),
 			light.WithEnabled(true),
 		)
 		sc.AddLight(l)
+		pointLights = append(pointLights, l)
 	}
 
 	// Corner floor lights (atrium corners, deeper orange/red)
@@ -147,10 +149,10 @@ func main() {
 			light.WithIntensity(0.3),
 			light.WithRange(10.0),
 			light.WithCastsShadows(true),
-			light.WithShadowBias(0.005),
 			light.WithEnabled(true),
 		)
 		sc.AddLight(l)
+		pointLights = append(pointLights, l)
 	}
 
 	// Inner floor accent lights (warmest fire red-orange)
@@ -166,10 +168,10 @@ func main() {
 			light.WithIntensity(0.1),
 			light.WithRange(5.0),
 			light.WithCastsShadows(true),
-			light.WithShadowBias(0.005),
 			light.WithEnabled(true),
 		)
 		sc.AddLight(l)
+		pointLights = append(pointLights, l)
 	}
 
 	// ── Load Sponza Model ───────────────────────────────────────────────
@@ -191,7 +193,7 @@ func main() {
 	eng.AddScene(0, sc)
 
 	// ── Input Handling ──────────────────────────────────────────────────
-	setupSponzaInput(eng, cam, sun)
+	setupSponzaInput(eng, cam, sun, pointLights)
 
 	fmt.Println("╔══════════════════════════════════════════════════════╗")
 	fmt.Println("║  Oxy Engine - Sponza (Auto-Exposure / CSM+PCF / SSAO)║")
@@ -199,6 +201,7 @@ func main() {
 	fmt.Println("║  Camera: WASD=Pan  Q/E=Up/Down  Scroll=Zoom          ║")
 	fmt.Println("║          Middle-mouse drag=Orbit                      ║")
 	fmt.Println("║  L:      Toggle sun (directional light)               ║")
+	fmt.Println("║  F:      Toggle point lights                          ║")
 	fmt.Println("║  Shadow: CSM + PCF (dual-cascade sphere shadows)      ║")
 	fmt.Println("║  SSAO:   Half-resolution AO, 16 samples               ║")
 	fmt.Println("║  Expo:   Auto-exposure (bright atrium ↔ dark interior)║")
@@ -209,14 +212,16 @@ func main() {
 }
 
 // setupSponzaInput wires camera controls (WASD/QE planar movement, middle-mouse orbit,
-// scroll zoom) and sun toggling (L key) for the Sponza scene.
+// scroll zoom) and sun toggling (L key) and point light toggling (F key) for the Sponza scene.
 //
 // Parameters:
 //   - eng: the engine instance providing window callbacks and tick
 //   - cam: the camera to control
 //   - sun: the directional light to toggle with the L key
-func setupSponzaInput(eng engine.Engine, cam camera.Camera, sun light.Light) {
+//   - pointLights: the slice of all point lights to toggle with the F key
+func setupSponzaInput(eng engine.Engine, cam camera.Camera, sun light.Light, pointLights []light.Light) {
 	keyState := make(map[uint32]bool)
+	pointsOn := true
 
 	eng.Window().SetKeyDownCallback(func(keyCode uint32) {
 		keyState[keyCode] = true
@@ -228,6 +233,19 @@ func setupSponzaInput(eng engine.Engine, cam camera.Camera, sun light.Light) {
 				fmt.Println("[Light] Sun ON")
 			} else {
 				fmt.Println("[Light] Sun OFF")
+			}
+		}
+
+		// F toggles all point lights
+		if keyCode == common.KeyF {
+			pointsOn = !pointsOn
+			for _, pl := range pointLights {
+				pl.SetEnabled(pointsOn)
+			}
+			if pointsOn {
+				fmt.Println("[Light] Point lights ON")
+			} else {
+				fmt.Println("[Light] Point lights OFF")
 			}
 		}
 

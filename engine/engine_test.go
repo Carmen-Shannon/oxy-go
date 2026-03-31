@@ -591,6 +591,216 @@ func (suite *engineTest) TestHandleRender() {
 			suite.Fail("handleRender did not exit within timeout")
 		}
 	})
+
+	suite.Run("should invoke profiler sections through the full HDR render path", func() {
+		eImpl := suite.engine.(*engine)
+		rendererMock := renderer_mocks.NewMockRenderer(suite.T())
+
+		eImpl.profilingEnabled = true
+		eImpl.profiler = profiler.NewProfiler()
+
+		rendered := make(chan struct{}, 1)
+		var once sync.Once
+		rendererMock.EXPECT().Present().RunAndReturn(func() {
+			once.Do(func() { rendered <- struct{}{} })
+		}).Maybe()
+
+		suite.sceneMock.EXPECT().Active().Return(true).Maybe()
+		suite.sceneMock.EXPECT().Renderer().Return(rendererMock).Maybe()
+		rendererMock.EXPECT().SyncGPUTimestamps().Return().Maybe()
+		rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
+		suite.sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
+		rendererMock.EXPECT().BeginComputeFrame().Return(nil).Maybe()
+		suite.sceneMock.EXPECT().PrepareCompute(mock.AnythingOfType("float32")).Return().Maybe()
+		rendererMock.EXPECT().EndComputeFrame().Return().Maybe()
+		rendererMock.EXPECT().BeginGeometryFrame().Return(nil).Maybe()
+		suite.sceneMock.EXPECT().PrepareShadows().Return().Maybe()
+		suite.sceneMock.EXPECT().PrepareLights().Return().Maybe()
+		suite.sceneMock.EXPECT().PrepareGBuffer().Return().Maybe()
+		rendererMock.EXPECT().EndGeometryFrame().Return().Maybe()
+		suite.sceneMock.EXPECT().PrepareLightCulling().Return().Maybe()
+		suite.sceneMock.EXPECT().PrepareSSAO().Return().Maybe()
+		suite.sceneMock.EXPECT().PrepareContactShadows().Return().Maybe()
+		suite.sceneMock.EXPECT().BeginHDRFrame().Return(nil).Maybe()
+		suite.sceneMock.EXPECT().DrawCalls().Return(nil).Maybe()
+		rendererMock.EXPECT().EndFrame().Return().Maybe()
+		suite.sceneMock.EXPECT().PrepareSSR().Return().Maybe()
+		suite.sceneMock.EXPECT().PrepareLuminance(mock.AnythingOfType("float32")).Return().Maybe()
+		suite.sceneMock.EXPECT().PrepareBloom().Return().Maybe()
+		suite.sceneMock.EXPECT().AcquireCompositionFrame().Return(nil).Maybe()
+		suite.sceneMock.EXPECT().PrepareComposition().Return().Maybe()
+		rendererMock.EXPECT().FlushFrame().Return(wgpu.SubmissionIndex(0)).Maybe()
+
+		eImpl.wg.Add(1)
+		go eImpl.handleRender()
+
+		select {
+		case <-rendered:
+		case <-time.After(2 * time.Second):
+			suite.Fail("HDR render path with profiling was not executed within timeout")
+		}
+
+		eImpl.signalQuit()
+
+		done := make(chan struct{})
+		go func() { eImpl.wg.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			suite.Fail("handleRender did not exit within timeout")
+		}
+	})
+
+	suite.Run("should deliver resize event to all scenes within the render loop", func() {
+		eImpl := suite.engine.(*engine)
+		suite.sceneMock.EXPECT().Active().Return(true).Maybe()
+		suite.sceneMock.EXPECT().Renderer().Return(nil).Maybe()
+		suite.sceneMock.EXPECT().Resize(800, 600).Return().Once()
+
+		eImpl.resizeEvents <- [2]int{800, 600}
+
+		called := make(chan struct{}, 1)
+		var once sync.Once
+		eImpl.renderCallback = func(dt float32) {
+			once.Do(func() { called <- struct{}{} })
+		}
+
+		eImpl.wg.Add(1)
+		go eImpl.handleRender()
+
+		select {
+		case <-called:
+		case <-time.After(2 * time.Second):
+			suite.Fail("render callback was not called within timeout")
+		}
+
+		eImpl.signalQuit()
+
+		done := make(chan struct{})
+		go func() { eImpl.wg.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			suite.Fail("handleRender did not exit within timeout")
+		}
+	})
+
+	suite.Run("should skip PrepareComposition when AcquireCompositionFrame fails but still flush and present", func() {
+		eImpl := suite.engine.(*engine)
+		rendererMock := renderer_mocks.NewMockRenderer(suite.T())
+
+		rendered := make(chan struct{}, 1)
+		var once sync.Once
+		rendererMock.EXPECT().Present().RunAndReturn(func() {
+			once.Do(func() { rendered <- struct{}{} })
+		}).Maybe()
+
+		suite.sceneMock.EXPECT().Active().Return(true).Maybe()
+		suite.sceneMock.EXPECT().Renderer().Return(rendererMock).Maybe()
+		rendererMock.EXPECT().SyncGPUTimestamps().Return().Maybe()
+		rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
+		suite.sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
+		rendererMock.EXPECT().BeginComputeFrame().Return(nil).Maybe()
+		suite.sceneMock.EXPECT().PrepareCompute(mock.AnythingOfType("float32")).Return().Maybe()
+		rendererMock.EXPECT().EndComputeFrame().Return().Maybe()
+		rendererMock.EXPECT().BeginGeometryFrame().Return(nil).Maybe()
+		suite.sceneMock.EXPECT().PrepareShadows().Return().Maybe()
+		suite.sceneMock.EXPECT().PrepareLights().Return().Maybe()
+		suite.sceneMock.EXPECT().PrepareGBuffer().Return().Maybe()
+		rendererMock.EXPECT().EndGeometryFrame().Return().Maybe()
+		suite.sceneMock.EXPECT().PrepareLightCulling().Return().Maybe()
+		suite.sceneMock.EXPECT().PrepareSSAO().Return().Maybe()
+		suite.sceneMock.EXPECT().PrepareContactShadows().Return().Maybe()
+		suite.sceneMock.EXPECT().BeginHDRFrame().Return(nil).Maybe()
+		suite.sceneMock.EXPECT().DrawCalls().Return(nil).Maybe()
+		rendererMock.EXPECT().EndFrame().Return().Maybe()
+		suite.sceneMock.EXPECT().PrepareSSR().Return().Maybe()
+		suite.sceneMock.EXPECT().PrepareLuminance(mock.AnythingOfType("float32")).Return().Maybe()
+		suite.sceneMock.EXPECT().PrepareBloom().Return().Maybe()
+		suite.sceneMock.EXPECT().AcquireCompositionFrame().Return(fmt.Errorf("surface lost")).Maybe()
+		rendererMock.EXPECT().FlushFrame().Return(wgpu.SubmissionIndex(0)).Maybe()
+
+		eImpl.wg.Add(1)
+		go eImpl.handleRender()
+
+		select {
+		case <-rendered:
+		case <-time.After(2 * time.Second):
+			suite.Fail("HDR render path was not executed within timeout")
+		}
+
+		eImpl.signalQuit()
+
+		done := make(chan struct{})
+		go func() { eImpl.wg.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			suite.Fail("handleRender did not exit within timeout")
+		}
+	})
+
+	suite.Run("should skip the rate-limit sleep when frame already exceeded the limit", func() {
+		eImpl := suite.engine.(*engine)
+		suite.sceneMock.EXPECT().Active().Return(false).Maybe()
+		eImpl.renderFrameLimit = 1 * time.Nanosecond
+
+		called := make(chan struct{}, 1)
+		var once sync.Once
+		eImpl.renderCallback = func(dt float32) {
+			once.Do(func() { called <- struct{}{} })
+		}
+
+		eImpl.wg.Add(1)
+		go eImpl.handleRender()
+
+		select {
+		case <-called:
+		case <-time.After(2 * time.Second):
+			suite.Fail("render callback was not called within timeout")
+		}
+
+		eImpl.signalQuit()
+
+		done := make(chan struct{})
+		go func() { eImpl.wg.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			suite.Fail("handleRender did not exit within timeout")
+		}
+	})
+
+	suite.Run("should exit from the rate-limit timer select when quit is signaled", func() {
+		eImpl := suite.engine.(*engine)
+		suite.sceneMock.EXPECT().Active().Return(false).Maybe()
+		eImpl.renderFrameLimit = 1 * time.Second
+
+		firstFrame := make(chan struct{}, 1)
+		var once sync.Once
+		eImpl.renderCallback = func(dt float32) {
+			once.Do(func() { firstFrame <- struct{}{} })
+		}
+
+		eImpl.wg.Add(1)
+		go eImpl.handleRender()
+
+		select {
+		case <-firstFrame:
+		case <-time.After(2 * time.Second):
+			suite.Fail("first frame callback not received within timeout")
+		}
+
+		eImpl.signalQuit()
+
+		done := make(chan struct{})
+		go func() { eImpl.wg.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			suite.Fail("handleRender did not exit from rate-limit sleep within timeout")
+		}
+	})
 }
 
 func (suite *engineTest) TestResizeCallback() {

@@ -125,7 +125,7 @@ func NewShadowHandler(opts ...ShadowHandlerOption) ShadowHandler {
 		pcfRadius:             1.0,
 		pcfSamples:            16,
 		shadowInnerRadius:     100.0,
-		lightShadowTileSize:   1024,
+		lightShadowTileSize:   512,
 		pipelineKeys:          make(map[string]string),
 		bgps:                  make(map[string]bind_group_provider.BindGroupProvider),
 		snapshots:             make(map[Light]lightSnapshot),

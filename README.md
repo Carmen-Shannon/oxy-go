@@ -151,7 +151,15 @@ WGSL shaders use `@oxy:` annotations to declare their resource requirements dire
 Run the full test suite with coverage across the `common` and `engine` packages:
 
 ```bash
-go test ./... -coverpkg="github.com/Carmen-Shannon/oxy-go/common/...,github.com/Carmen-Shannon/oxy-go/engine/..." -coverprofile="coverage.out"
+# Linux / macOS / CI
+PKGS=$(go list ./common/... ./engine/... | grep -v '/mocks$' | tr '\n' ',' | sed 's/,$//'); \
+go test ./common/... ./engine/... -coverpkg="${PKGS}" -coverprofile="coverage.out"
+```
+
+```powershell
+# Windows (PowerShell)
+$pkgs = (go list ./common/... ./engine/... | Where-Object { $_ -notmatch '/mocks$' }) -join ','; `
+go test ./common/... ./engine/... -coverpkg="$pkgs" -coverprofile="coverage.out"
 ```
 
 Then view the per-function coverage report:

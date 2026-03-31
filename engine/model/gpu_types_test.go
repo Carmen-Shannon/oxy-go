@@ -99,6 +99,60 @@ func (suite *gpuTypesTest) TestComputeBoundingRadius() {
 	})
 }
 
+func (suite *gpuTypesTest) TestComputeBoundingAABB() {
+	suite.Run("returns zero values for nil slice", func() {
+		min, max := model.ComputeBoundingAABB(nil)
+		suite.Equal([3]float32{}, min)
+		suite.Equal([3]float32{}, max)
+	})
+
+	suite.Run("returns zero values for empty slice", func() {
+		min, max := model.ComputeBoundingAABB([]model.GPUSkinnedVertex{})
+		suite.Equal([3]float32{}, min)
+		suite.Equal([3]float32{}, max)
+	})
+
+	suite.Run("returns same min and max for a single vertex", func() {
+		vertices := []model.GPUSkinnedVertex{
+			{GPUVertex: model.GPUVertex{Position: [3]float32{1, 2, 3}}},
+		}
+		min, max := model.ComputeBoundingAABB(vertices)
+		suite.Equal([3]float32{1, 2, 3}, min)
+		suite.Equal([3]float32{1, 2, 3}, max)
+	})
+
+	suite.Run("returns component-wise min and max for multiple positive vertices", func() {
+		vertices := []model.GPUSkinnedVertex{
+			{GPUVertex: model.GPUVertex{Position: [3]float32{0, 0, 0}}},
+			{GPUVertex: model.GPUVertex{Position: [3]float32{1, 2, 3}}},
+			{GPUVertex: model.GPUVertex{Position: [3]float32{3, 1, 2}}},
+		}
+		min, max := model.ComputeBoundingAABB(vertices)
+		suite.Equal([3]float32{0, 0, 0}, min)
+		suite.Equal([3]float32{3, 2, 3}, max)
+	})
+
+	suite.Run("returns correct min and max for mixed positive and negative vertices", func() {
+		vertices := []model.GPUSkinnedVertex{
+			{GPUVertex: model.GPUVertex{Position: [3]float32{-1, -2, -3}}},
+			{GPUVertex: model.GPUVertex{Position: [3]float32{4, 5, 6}}},
+		}
+		min, max := model.ComputeBoundingAABB(vertices)
+		suite.Equal([3]float32{-1, -2, -3}, min)
+		suite.Equal([3]float32{4, 5, 6}, max)
+	})
+
+	suite.Run("updates min when later vertex has smaller components", func() {
+		vertices := []model.GPUSkinnedVertex{
+			{GPUVertex: model.GPUVertex{Position: [3]float32{5, 5, 5}}},
+			{GPUVertex: model.GPUVertex{Position: [3]float32{1, 2, 3}}},
+		}
+		minOut, maxOut := model.ComputeBoundingAABB(vertices)
+		suite.Equal([3]float32{1, 2, 3}, minOut)
+		suite.Equal([3]float32{5, 5, 5}, maxOut)
+	})
+}
+
 func (suite *gpuTypesTest) TestGPUModelData() {
 	suite.Run("Size should return 64 bytes", func() {
 		g := &model.GPUModelData{}

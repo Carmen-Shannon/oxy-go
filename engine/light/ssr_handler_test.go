@@ -5,6 +5,7 @@ import (
 
 	"github.com/Carmen-Shannon/oxy-go/engine/light"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
+	"github.com/cogentcore/webgpu/wgpu"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -237,5 +238,86 @@ func (suite *ssrHandlerTest) TestSetHiZStorageViews() {
 	suite.Run("should update the mip storage views", func() {
 		suite.handler.SetHiZStorageViews(nil)
 		suite.Nil(suite.handler.HiZStorageViews())
+	})
+}
+
+func (suite *ssrHandlerTest) TestSetSlot() {
+	suite.Run("should set the active slot", func() {
+		suite.handler.SetSlot(1)
+		suite.Nil(suite.handler.HiZMaxTexture())
+	})
+
+	suite.Run("should not affect other slot data when switching slots", func() {
+		suite.handler.SetSlot(0)
+		suite.Nil(suite.handler.HiZMaxTexture())
+		suite.handler.SetSlot(1)
+		suite.Nil(suite.handler.HiZMaxTexture())
+	})
+}
+
+func (suite *ssrHandlerTest) TestHiZMaxTexture() {
+	suite.Run("should return nil by default", func() {
+		suite.Nil(suite.handler.HiZMaxTexture())
+	})
+
+	suite.Run("should update after SetHiZMaxTexture", func() {
+		suite.handler.SetHiZMaxTexture(nil)
+		suite.Nil(suite.handler.HiZMaxTexture())
+	})
+}
+
+func (suite *ssrHandlerTest) TestSetHiZMaxTexture() {
+	suite.Run("should update the max HiZ texture", func() {
+		suite.handler.SetHiZMaxTexture(nil)
+		suite.Nil(suite.handler.HiZMaxTexture())
+	})
+}
+
+func (suite *ssrHandlerTest) TestSetHiZMaxTextureView() {
+	suite.Run("should update the max HiZ texture view", func() {
+		suite.handler.SetHiZMaxTextureView(nil)
+		suite.Nil(suite.handler.HiZMaxTextureView())
+	})
+}
+
+func (suite *ssrHandlerTest) TestHiZMaxMipReadViews() {
+	suite.Run("should return nil by default", func() {
+		suite.Nil(suite.handler.HiZMaxMipReadViews())
+	})
+
+	suite.Run("should isolate data between slots", func() {
+		suite.handler.SetSlot(0)
+		suite.handler.SetHiZMaxMipReadViews([]*wgpu.TextureView{})
+		suite.handler.SetSlot(1)
+		suite.Nil(suite.handler.HiZMaxMipReadViews())
+	})
+}
+
+func (suite *ssrHandlerTest) TestSetHiZMaxMipReadViews() {
+	suite.Run("should update the max HiZ mip read views", func() {
+		suite.handler.SetHiZMaxMipReadViews([]*wgpu.TextureView{})
+		suite.NotNil(suite.handler.HiZMaxMipReadViews())
+		suite.Len(suite.handler.HiZMaxMipReadViews(), 0)
+	})
+}
+
+func (suite *ssrHandlerTest) TestHiZMaxStorageViews() {
+	suite.Run("should return nil by default", func() {
+		suite.Nil(suite.handler.HiZMaxStorageViews())
+	})
+
+	suite.Run("should isolate data between slots", func() {
+		suite.handler.SetSlot(0)
+		suite.handler.SetHiZMaxStorageViews([]*wgpu.TextureView{})
+		suite.handler.SetSlot(1)
+		suite.Nil(suite.handler.HiZMaxStorageViews())
+	})
+}
+
+func (suite *ssrHandlerTest) TestSetHiZMaxStorageViews() {
+	suite.Run("should update the max HiZ storage views", func() {
+		suite.handler.SetHiZMaxStorageViews([]*wgpu.TextureView{})
+		suite.NotNil(suite.handler.HiZMaxStorageViews())
+		suite.Len(suite.handler.HiZMaxStorageViews(), 0)
 	})
 }

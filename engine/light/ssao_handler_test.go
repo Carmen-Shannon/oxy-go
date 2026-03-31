@@ -243,3 +243,17 @@ func (suite *ssaoHandlerTest) TestLinearSampler() {
 		suite.Nil(suite.handler.LinearSampler())
 	})
 }
+
+func (suite *ssaoHandlerTest) TestSetSlot() {
+	suite.Run("should set the active slot", func() {
+		suite.handler.SetSlot(1)
+		suite.Nil(suite.handler.RawTexture())
+	})
+
+	suite.Run("should not affect other slot data when switching slots", func() {
+		suite.handler.SetSlot(0)
+		suite.Nil(suite.handler.RawTexture())
+		suite.handler.SetSlot(1)
+		suite.Nil(suite.handler.RawTexture())
+	})
+}

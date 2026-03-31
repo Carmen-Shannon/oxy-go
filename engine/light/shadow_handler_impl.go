@@ -97,3 +97,7 @@ func (h *shadowHandlerImpl) OnLightRemoved(l Light) {
 	delete(h.snapshots, l)
 	delete(h.dirtyFlags, l)
 }
+
+func (h *shadowHandlerImpl) ForceMarkDirty(l Light) {
+	h.dirtyFlags[l] = true
+}

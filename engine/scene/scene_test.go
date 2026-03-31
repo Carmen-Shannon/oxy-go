@@ -262,6 +262,7 @@ func (suite *sceneTest) TestPrepareCompute() {
 	suite.Run("completes without panic for empty scene with nil bgp", func() {
 		suite.cameraMock.EXPECT().Update().Return().Once()
 		suite.cameraMock.EXPECT().ViewProjectionMatrix().Return([16]float32{}).Once()
+		suite.cameraMock.EXPECT().ProjectionMatrix().Return([16]float32{}).Once()
 		suite.NotPanics(func() {
 			suite.scene.PrepareCompute(0.016)
 		})

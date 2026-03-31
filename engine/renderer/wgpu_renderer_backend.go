@@ -1074,7 +1074,7 @@ func (b *wgpuRendererBackendImpl) DispatchComputeBatch(dispatches []ComputeDispa
 	pass := b.computeFrameEncoder.BeginComputePass(nil)
 	var lastKey string
 	for _, d := range dispatches {
-		if d.Pipeline == nil || d.Provider == nil {
+		if d.Pipeline == nil || len(d.Providers) == 0 {
 			continue
 		}
 		if d.Pipeline.PipelineKey() != lastKey {
@@ -1082,7 +1082,12 @@ func (b *wgpuRendererBackendImpl) DispatchComputeBatch(dispatches []ComputeDispa
 			pass.SetPipeline(computePipeline)
 			lastKey = d.Pipeline.PipelineKey()
 		}
-		pass.SetBindGroup(0, d.Provider.BindGroup(), nil)
+		for _, gp := range d.Providers {
+			if gp.Provider == nil || gp.Provider.BindGroup() == nil {
+				continue
+			}
+			pass.SetBindGroup(gp.Group, gp.Provider.BindGroup(), nil)
+		}
 		pass.DispatchWorkgroups(d.WorkGroupCount[0], d.WorkGroupCount[1], d.WorkGroupCount[2])
 	}
 	pass.End()

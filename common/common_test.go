@@ -48,6 +48,50 @@ func (suite *commonTest) TestFrustum() {
 		frustum := ExtractFrustumFromMatrix(viewProj)
 		suite.NotEmpty(frustum)
 	})
+
+	suite.Run("IntersectSphere returns true for a sphere inside the frustum", func() {
+		view := make([]float32, 16)
+		proj := make([]float32, 16)
+		vp := make([]float32, 16)
+		LookAt(view, 0, 0, 5, 0, 0, 0, 0, 1, 0)
+		Perspective(proj, float32(math.Pi/2), 1.0, 0.1, 100.0)
+		Mul4(vp, proj, view)
+		f := ExtractFrustumFromMatrix(vp)
+		suite.True(f.IntersectSphere([3]float32{0, 0, 0}, 1.0))
+	})
+
+	suite.Run("IntersectSphere returns false for a sphere behind the camera", func() {
+		view := make([]float32, 16)
+		proj := make([]float32, 16)
+		vp := make([]float32, 16)
+		LookAt(view, 0, 0, 5, 0, 0, 0, 0, 1, 0)
+		Perspective(proj, float32(math.Pi/2), 1.0, 0.1, 100.0)
+		Mul4(vp, proj, view)
+		f := ExtractFrustumFromMatrix(vp)
+		suite.False(f.IntersectSphere([3]float32{0, 0, 1000}, 0.1))
+	})
+
+	suite.Run("IntersectAABB returns true for an AABB inside the frustum", func() {
+		view := make([]float32, 16)
+		proj := make([]float32, 16)
+		vp := make([]float32, 16)
+		LookAt(view, 0, 0, 5, 0, 0, 0, 0, 1, 0)
+		Perspective(proj, float32(math.Pi/2), 1.0, 0.1, 100.0)
+		Mul4(vp, proj, view)
+		f := ExtractFrustumFromMatrix(vp)
+		suite.True(f.IntersectAABB([3]float32{-1, -1, -1}, [3]float32{1, 1, 1}))
+	})
+
+	suite.Run("IntersectAABB returns false for an AABB entirely behind the camera", func() {
+		view := make([]float32, 16)
+		proj := make([]float32, 16)
+		vp := make([]float32, 16)
+		LookAt(view, 0, 0, 5, 0, 0, 0, 0, 1, 0)
+		Perspective(proj, float32(math.Pi/2), 1.0, 0.1, 100.0)
+		Mul4(vp, proj, view)
+		f := ExtractFrustumFromMatrix(vp)
+		suite.False(f.IntersectAABB([3]float32{0, 0, 1000}, [3]float32{1, 1, 1001}))
+	})
 }
 
 func (suite *commonTest) TestMath() {

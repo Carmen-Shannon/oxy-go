@@ -82,7 +82,8 @@ type scene struct {
 
 	// Per-frame spot/point shadow state, populated by PrepareShadows.
 	lightShadowEntries []light.GPULightShadowEntry // rebuilt each frame
-	lightShadowMap     map[light.Light]uint32      // light → entry index
+	lightShadowMap     map[light.Light]uint32      // light → entry index (current frame)
+	lightPrevSlotMap   map[light.Light]uint32      // light → entry index (previous frame, for migration detection)
 
 	tileBufferCapacity int // number of tiles the tile GPU buffers were sized for
 
@@ -103,7 +104,17 @@ type scene struct {
 	// Maintained by Add/Remove so the swap-remove fixup in Remove avoids an O(N) registry scan.
 	instanceLookup map[animator.Animator]map[uint32]uint64
 
+	// shadowIndirectBuffers holds a dedicated DrawIndexedIndirect argument buffer for each
+	// animator. Written by the CPU pre-pass in PrepareShadows and consumed by every shadow
+	// depth pass for that animator without going through the compute culling path.
+	shadowIndirectBuffers map[animator.Animator]*wgpu.Buffer
+
 	injections map[string]string
+
+	// hizFallbackView is a 1×1 R32Float placeholder bound to the animator_hiz slot
+	// before the real SSR Hi-Z pyramid is available (e.g. during createAnimator).
+	hizFallbackTexture *wgpu.Texture
+	hizFallbackView    *wgpu.TextureView
 
 	postProcessingInitialized bool
 }
@@ -1296,7 +1307,7 @@ func (s *scene) prepareLuminance(dt float32) {
 		{Provider: lumBGP, Binding: 1, Offset: 0, Data: params.Marshal()},
 	})
 	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-		{PipelineKey: "luminance_compute", Provider: lumBGP, WorkGroupCount: [3]uint32{1, 1, 1}},
+		{PipelineKey: "luminance_compute", Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: lumBGP}}, WorkGroupCount: [3]uint32{1, 1, 1}},
 	})
 }
 
@@ -1362,6 +1373,16 @@ func (s *scene) initSSR() {
 	ssrHandler.SetHiZMipReadViews(mipReadViews)
 	ssrHandler.SetHiZStorageViews(mipStorageViews)
 
+	// MAX Hi-Z pyramid for slot 0 (same dimensions/mip count as MIN).
+	maxHizView, maxHizTex, maxMipReadViews, maxMipStorageViews, _, err := s.r.CreateHiZTextures(w, h)
+	if err != nil {
+		panic(fmt.Sprintf("scene: failed to create MAX Hi-Z textures: %v", err))
+	}
+	ssrHandler.SetHiZMaxTexture(maxHizTex)
+	ssrHandler.SetHiZMaxTextureView(maxHizView)
+	ssrHandler.SetHiZMaxMipReadViews(maxMipReadViews)
+	ssrHandler.SetHiZMaxStorageViews(maxMipStorageViews)
+
 	// Initialize slot 1 SSR textures
 	ssrHandler.SetSlot(1)
 	ssrView1, ssrTex1, err := s.r.CreateSSRTextures(halfW, halfH)
@@ -1379,6 +1400,16 @@ func (s *scene) initSSR() {
 	ssrHandler.SetHiZMipCount(mipCount1)
 	ssrHandler.SetHiZMipReadViews(mipReadViews1)
 	ssrHandler.SetHiZStorageViews(mipStorageViews1)
+
+	// MAX Hi-Z pyramid for slot 1.
+	maxHizView1, maxHizTex1, maxMipReadViews1, maxMipStorageViews1, _, err := s.r.CreateHiZTextures(w, h)
+	if err != nil {
+		panic(fmt.Sprintf("scene: failed to create MAX Hi-Z textures slot 1: %v", err))
+	}
+	ssrHandler.SetHiZMaxTexture(maxHizTex1)
+	ssrHandler.SetHiZMaxTextureView(maxHizView1)
+	ssrHandler.SetHiZMaxMipReadViews(maxMipReadViews1)
+	ssrHandler.SetHiZMaxStorageViews(maxMipStorageViews1)
 	ssrHandler.SetSlot(0)
 
 	// 4. Register Hi-Z init compute pipeline (copies depth → Hi-Z mip 0).
@@ -1402,6 +1433,15 @@ func (s *scene) initSSR() {
 	}
 	ssrHandler.SetBgp("hiz_init", hizInitBGP)
 
+	// BGP: hiz_init_max (SLOT 0) — writes GBuffer depth to MAX mip 0.
+	hizInitMaxBGP := bind_group_provider.NewBindGroupProvider("hiz_init_max")
+	hizInitMaxBGP.SetTextureView(0, gbHandler.DepthTextureView())
+	hizInitMaxBGP.SetTextureView(1, maxMipStorageViews[0])
+	if err := s.r.InitBindGroup(hizInitMaxBGP, hizInitDesc, nil, nil); err != nil {
+		panic(fmt.Sprintf("scene: failed to init Hi-Z init_max bind group: %v", err))
+	}
+	ssrHandler.SetBgp("hiz_init_max", hizInitMaxBGP)
+
 	// 6. Register Hi-Z downsample compute pipeline (min of 2×2 from prev mip).
 	hizDownShader := shader.NewShader("_hiz_downsample", shader.ShaderTypeCompute, "engine/light/assets/hiz-downsample-compute.wgsl", shader.WithInjections(s.injections))
 	hizDownKey := "hiz_downsample"
@@ -1412,6 +1452,17 @@ func (s *scene) initSSR() {
 		panic(fmt.Sprintf("scene: failed to register Hi-Z downsample pipeline: %v", err))
 	}
 	ssrHandler.SetPipelineKey("hiz_downsample", hizDownKey)
+
+	// Register MAX downsample pipeline (max of 2×2 from prev mip).
+	hizDownMaxShader := shader.NewShader("_hiz_downsample_max", shader.ShaderTypeCompute, "engine/light/assets/hiz-downsample-max-compute.wgsl", shader.WithInjections(s.injections))
+	hizDownMaxKey := "hiz_downsample_max"
+	hizDownMaxPipe := pipeline.NewPipeline(hizDownMaxKey, pipeline.PipelineTypeCompute,
+		pipeline.WithComputeShader(hizDownMaxShader),
+	)
+	if err := s.r.RegisterPipelines(hizDownMaxPipe); err != nil {
+		panic(fmt.Sprintf("scene: failed to register Hi-Z max downsample pipeline: %v", err))
+	}
+	ssrHandler.SetPipelineKey("hiz_downsample_max", hizDownMaxKey)
 
 	// 7. Create per-mip downsample bind groups: for each mip level 1..N-1,
 	//    binding 0 = read view of mip N-1, binding 1 = storage view of mip N.
@@ -1425,6 +1476,63 @@ func (s *scene) initSSR() {
 			panic(fmt.Sprintf("scene: failed to init Hi-Z downsample bind group mip %d: %v", i, err))
 		}
 		ssrHandler.SetBgp(bgpName, bgp)
+	}
+
+	// BGPs: hiz_down_max_N (SLOT 0) — MAX downsample for mips 1..mipCount-1.
+	for i := 1; i < mipCount; i++ {
+		maxBGPName := fmt.Sprintf("hiz_down_max_%d", i)
+		maxBGP := bind_group_provider.NewBindGroupProvider(maxBGPName)
+		maxBGP.SetTextureView(0, maxMipReadViews[i-1])
+		maxBGP.SetTextureView(1, maxMipStorageViews[i])
+		if err := s.r.InitBindGroup(maxBGP, hizDownDesc, nil, nil); err != nil {
+			panic(fmt.Sprintf("scene: failed to init Hi-Z max downsample bind group mip %d: %v", i, err))
+		}
+		ssrHandler.SetBgp(maxBGPName, maxBGP)
+	}
+
+	// 7b. Slot 1 Hi-Z init BGP: same layout as slot 0 but bound to slot 1 GBuffer depth and slot 1 mip 0 storage.
+	gbHandler.SetSlot(1)
+	hizInitBGP1 := bind_group_provider.NewBindGroupProvider("hiz_init_1")
+	hizInitBGP1.SetTextureView(0, gbHandler.DepthTextureView())
+	hizInitBGP1.SetTextureView(1, mipStorageViews1[0])
+	hizInitDesc1 := hizInitShader.BindGroupLayoutDescriptor(0)
+	if err := s.r.InitBindGroup(hizInitBGP1, hizInitDesc1, nil, nil); err != nil {
+		panic(fmt.Sprintf("scene: failed to init Hi-Z init_1 bind group: %v", err))
+	}
+	ssrHandler.SetBgp("hiz_init_1", hizInitBGP1)
+
+	// BGP: hiz_init_max_1 (SLOT 1).
+	hizInitMaxBGP1 := bind_group_provider.NewBindGroupProvider("hiz_init_max_1")
+	hizInitMaxBGP1.SetTextureView(0, gbHandler.DepthTextureView())
+	hizInitMaxBGP1.SetTextureView(1, maxMipStorageViews1[0])
+	if err := s.r.InitBindGroup(hizInitMaxBGP1, hizInitDesc, nil, nil); err != nil {
+		panic(fmt.Sprintf("scene: failed to init Hi-Z init_max_1 bind group: %v", err))
+	}
+	ssrHandler.SetBgp("hiz_init_max_1", hizInitMaxBGP1)
+	gbHandler.SetSlot(0)
+
+	// 7c. Slot 1 Hi-Z downsample BGPs: same layout as slot 0 but bound to slot 1 mip views.
+	for i := 1; i < mipCount1; i++ {
+		bgpName1 := fmt.Sprintf("hiz_down_%d_1", i)
+		bgp1 := bind_group_provider.NewBindGroupProvider(bgpName1)
+		bgp1.SetTextureView(0, mipReadViews1[i-1])
+		bgp1.SetTextureView(1, mipStorageViews1[i])
+		if err := s.r.InitBindGroup(bgp1, hizDownDesc, nil, nil); err != nil {
+			panic(fmt.Sprintf("scene: failed to init Hi-Z downsample_1 bind group mip %d: %v", i, err))
+		}
+		ssrHandler.SetBgp(bgpName1, bgp1)
+	}
+
+	// BGPs: hiz_down_max_N_1 (SLOT 1).
+	for i := 1; i < mipCount1; i++ {
+		maxBGPName1 := fmt.Sprintf("hiz_down_max_%d_1", i)
+		maxBGP1 := bind_group_provider.NewBindGroupProvider(maxBGPName1)
+		maxBGP1.SetTextureView(0, maxMipReadViews1[i-1])
+		maxBGP1.SetTextureView(1, maxMipStorageViews1[i])
+		if err := s.r.InitBindGroup(maxBGP1, hizDownDesc, nil, nil); err != nil {
+			panic(fmt.Sprintf("scene: failed to init Hi-Z max downsample_1 bind group mip %d: %v", i, err))
+		}
+		ssrHandler.SetBgp(maxBGPName1, maxBGP1)
 	}
 
 	// 8. Load SSR compute shader and register compute pipeline.
@@ -1463,6 +1571,7 @@ func (s *scene) initSSR() {
 
 	ssrHandler.Resize(w, h)
 	ssrHandler.SetEnabled(true)
+	s.refreshAnimatorHiZBindGroups()
 }
 
 // initLighting initializes the entire lighting pipeline in the correct order:
@@ -1515,6 +1624,15 @@ func (s *scene) initLighting(screenWidth, screenHeight int) {
 	s.initComposition()
 
 	// 10. SSR — screen-space reflections compute pass (requires G-Buffer + composition HDR texture).
+	// Create a 1×1 fallback Hi-Z texture for animators that are registered before the real
+	// SSR pyramid is built. The shader guards access with hiz_mip_count == 0.
+	if s.hizFallbackView == nil {
+		hizFallbackView, hizFallbackTex, _, _, _, err := s.r.CreateHiZTextures(1, 1)
+		if err == nil {
+			s.hizFallbackTexture = hizFallbackTex
+			s.hizFallbackView = hizFallbackView
+		}
+	}
 	s.initSSR()
 
 	// Re-bind the SSR texture on the composition BGP now that it exists.
@@ -2231,6 +2349,7 @@ func (s *scene) createAnimator(mdl model.Model, computeShader, vertexShader, fra
 
 	anim := animator.NewAnimator(backendType, animator.WithModel(mdl, boneBinding, packedBinding))
 	anim.SetBoundingRadius(mdl.BoundingRadius())
+	anim.SetBoundingBox(mdl.BoundingMin(), mdl.BoundingMax())
 
 	// Init mesh provider GPU resources if not already done (e.g. hand-built models
 	// skip this, while loader-produced models will already have VertexBuffer set).
@@ -2488,6 +2607,47 @@ func (s *scene) createAnimator(mdl model.Model, computeShader, vertexShader, fra
 		}
 		outputProvider.SetSlot(0)
 	}
+
+	// Init Hi-Z bind group for the animator (both slots).
+	// If the real SSR Hi-Z pyramid isn't ready yet, use the 1×1 fallback texture.
+	// The shader guards access via hiz_mip_count == 0.
+	hiZBGP := anim.HiZBindGroupProvider()
+	if hiZBGP != nil {
+		var hizView, maxHizView *wgpu.TextureView
+		if s.lightHandler != nil {
+			if ssrH := s.lightHandler.SSRHandler(); ssrH != nil {
+				hizView = ssrH.HiZTextureView()
+				maxHizView = ssrH.HiZMaxTextureView()
+			}
+		}
+		if hizView == nil {
+			hizView = s.hizFallbackView
+		}
+		if maxHizView == nil {
+			maxHizView = s.hizFallbackView
+		}
+		if hizView != nil && maxHizView != nil {
+			hiZDesc := computeShader.BindGroupLayoutDescriptor(1)
+			hiZBGP.SetTextureView(0, hizView)
+			hiZBGP.SetTextureView(1, maxHizView)
+			if err := s.r.InitBindGroup(hiZBGP, hiZDesc, nil, nil); err != nil {
+				panic(fmt.Sprintf("scene: failed to init Hi-Z BGP for model %q: %v", mdl.Name(), err))
+			}
+			hiZBGP.SetSlot(1)
+			hiZBGP.SetTextureView(0, hizView)
+			hiZBGP.SetTextureView(1, maxHizView)
+			if err := s.r.InitBindGroup(hiZBGP, hiZDesc, nil, nil); err != nil {
+				panic(fmt.Sprintf("scene: failed to init Hi-Z BGP slot 1 for model %q: %v", mdl.Name(), err))
+			}
+			hiZBGP.SetSlot(0)
+		}
+	}
+
+	shadowBuf, err := s.r.CreateBuffer("shadow_indirect", 20, wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst)
+	if err != nil {
+		panic(fmt.Sprintf("scene: failed to create shadow indirect buffer for model %q: %v", mdl.Name(), err))
+	}
+	s.shadowIndirectBuffers[anim] = shadowBuf
 
 	// Register compute pipeline
 	cp := pipeline.NewPipeline(computeShader.Key(), pipeline.PipelineTypeCompute, pipeline.WithComputeShader(computeShader))
@@ -2838,11 +2998,17 @@ func (s *scene) releaseResolutionDependentResources() {
 				bgp.Release()
 			}
 		}
+		if bgp := ssrH.Bgp("hiz_init_max"); bgp != nil {
+			bgp.Release()
+		}
+		for i := 1; i < hizMipCount; i++ {
+			if bgp := ssrH.Bgp(fmt.Sprintf("hiz_down_max_%d", i)); bgp != nil {
+				bgp.Release()
+			}
+		}
 	}
 }
 
-// resizePostProcessing re-creates resolution-dependent GPU resources (textures
-// and bind groups) after a window resize. Pipeline registrations auto-skip
 // (RegisterPipelines checks pipelineCache for existing keys). InitBindGroup
 // reuses existing layouts and buffers.
 //
@@ -2967,6 +3133,118 @@ func (s *scene) SyncFrameSlot(slot int) {
 			if output := a.OutputBindGroupProvider(); output != nil {
 				output.SetSlot(slot)
 			}
+			if hiZ := a.HiZBindGroupProvider(); hiZ != nil {
+				hiZ.SetSlot(slot)
+			}
+		}
+	}
+}
+
+// pruneAnimator removes an empty animator from the pool and releases all GPU
+// resources it owns. Must be called with s.mu held (write lock).
+// Mesh provider GPU resources are not released — they are model-owned and may
+// be shared across animators.
+func (s *scene) pruneAnimator(a animator.Animator) {
+	// Remove from animatorPool.
+	mdl := a.Model()
+	if mdl != nil {
+		pool := s.animatorPool[mdl]
+		for i, p := range pool {
+			if p == a {
+				pool = append(pool[:i], pool[i+1:]...)
+				break
+			}
+		}
+		if len(pool) == 0 {
+			delete(s.animatorPool, mdl)
+		} else {
+			s.animatorPool[mdl] = pool
+		}
+	}
+
+	// Release shadow indirect buffer.
+	if buf, ok := s.shadowIndirectBuffers[a]; ok && buf != nil {
+		buf.Release()
+	}
+	delete(s.shadowIndirectBuffers, a)
+
+	// Release animator GPU resources (compute + output BGPs, both slots).
+	a.Release()
+
+	// Remove reverse-index entry.
+	delete(s.instanceLookup, a)
+
+	// Notify the shadow system to re-render next frame, clearing any stale atlas entries.
+	if sh := s.lightHandler.ShadowHandler(); sh != nil {
+		sh.MarkAllDirty()
+	}
+}
+
+// refreshAnimatorHiZBindGroups rebuilds the Hi-Z bind groups for all registered animators
+// using the current SSR Hi-Z texture views. Must be called when the Hi-Z texture changes
+// (e.g. after initSSR or a resize). Lock-free — caller must hold s.mu or guarantee
+// exclusive access (initSSR already holds s.mu.Lock()).
+func (s *scene) refreshAnimatorHiZBindGroups() {
+	if s.lightHandler == nil {
+		return
+	}
+	ssrH := s.lightHandler.SSRHandler()
+	if ssrH == nil {
+		return
+	}
+
+	hizViews := [2]*wgpu.TextureView{}
+	maxHizViews := [2]*wgpu.TextureView{}
+	for slot := 0; slot < 2; slot++ {
+		ssrH.SetSlot(slot)
+		hizViews[slot] = ssrH.HiZTextureView()
+		maxHizViews[slot] = ssrH.HiZMaxTextureView()
+	}
+	ssrH.SetSlot(0)
+
+	for _, animGroup := range s.animatorPool {
+		for _, a := range animGroup {
+			hiZBGP := a.HiZBindGroupProvider()
+			if hiZBGP == nil {
+				continue
+			}
+			mdl := a.Model()
+			if mdl == nil {
+				continue
+			}
+			computeKey := mdl.ComputePipelineKey()
+			pipe := s.r.Pipeline(computeKey)
+			if pipe == nil {
+				continue
+			}
+			computeShdr := pipe.Shader(shader.ShaderTypeCompute)
+			if computeShdr == nil {
+				continue
+			}
+			hiZDesc := computeShdr.BindGroupLayoutDescriptor(1)
+			for slot := 0; slot < 2; slot++ {
+				view := hizViews[slot]
+				if view == nil {
+					view = s.hizFallbackView
+				}
+				if view == nil {
+					continue
+				}
+				maxView := maxHizViews[slot]
+				if maxView == nil {
+					maxView = s.hizFallbackView
+				}
+				if maxView == nil {
+					continue
+				}
+				hiZBGP.SetSlot(slot)
+				hiZBGP.SetTextureView(0, view)
+				hiZBGP.SetTextureView(1, maxView)
+				if err := s.r.InitBindGroup(hiZBGP, hiZDesc, nil, nil); err != nil {
+					continue
+				}
+			}
+			hiZBGP.SetSlot(0)
 		}
 	}
 }

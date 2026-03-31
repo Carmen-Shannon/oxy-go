@@ -951,6 +951,18 @@ func (suite *gltfMeshExtractorImplTest) TestGltfNodeLocalMatrix() {
 		suite.InDelta(float32(2), m[5], 1e-6)
 		suite.InDelta(float32(2), m[10], 1e-6)
 	})
+
+	suite.Run("node with rotation applies quaternion", func() {
+		r := [4]float32{0, 0.7071068, 0, 0.7071068}
+		node := &gltfNode{Rotation: &r}
+		m := gltfNodeLocalMatrix(node)
+		suite.InDelta(float32(0), m[0], 1e-5)
+		suite.InDelta(float32(-1), m[2], 1e-5)
+		suite.InDelta(float32(1), m[5], 1e-5)
+		suite.InDelta(float32(0), m[12], 1e-6)
+		suite.InDelta(float32(0), m[13], 1e-6)
+		suite.InDelta(float32(0), m[14], 1e-6)
+	})
 }
 
 func (suite *gltfMeshExtractorImplTest) TestGltfTransformPoint() {

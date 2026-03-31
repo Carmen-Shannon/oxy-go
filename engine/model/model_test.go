@@ -269,6 +269,32 @@ func (suite *modelTest) TestBoundingRadius() {
 	})
 }
 
+func (suite *modelTest) TestWithBoundingMin() {
+	suite.Run("should set and return the bounding min", func() {
+		m := model.NewModel(model.WithBoundingMin([3]float32{1, 2, 3}))
+		suite.Equal([3]float32{1, 2, 3}, m.BoundingMin())
+	})
+}
+
+func (suite *modelTest) TestBoundingMin() {
+	suite.Run("should return zero value by default", func() {
+		suite.Equal([3]float32{}, suite.model.BoundingMin())
+	})
+}
+
+func (suite *modelTest) TestWithBoundingMax() {
+	suite.Run("should set and return the bounding max", func() {
+		m := model.NewModel(model.WithBoundingMax([3]float32{4, 5, 6}))
+		suite.Equal([3]float32{4, 5, 6}, m.BoundingMax())
+	})
+}
+
+func (suite *modelTest) TestBoundingMax() {
+	suite.Run("should return zero value by default", func() {
+		suite.Equal([3]float32{}, suite.model.BoundingMax())
+	})
+}
+
 func (suite *modelTest) TestEffectProvider() {
 	suite.Run("should return nil by default", func() {
 		suite.Nil(suite.model.EffectProvider())

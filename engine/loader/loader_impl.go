@@ -79,6 +79,7 @@ func (l *loader) importedToModel(imported *model.ImportedModel) (model.Model, er
 	}
 
 	boundingRadius := model.ComputeBoundingRadius(allVertices)
+	boundingMin, boundingMax := model.ComputeBoundingAABB(allVertices)
 
 	// Create BindGroupProvider for mesh data (GPU buffers created later by Scene)
 	provider := bind_group_provider.NewBindGroupProvider(
@@ -96,6 +97,8 @@ func (l *loader) importedToModel(imported *model.ImportedModel) (model.Model, er
 		model.WithImportedMaterials(imported.Materials),
 		model.WithMeshProvider(provider),
 		model.WithBoundingRadius(boundingRadius),
+		model.WithBoundingMin(boundingMin),
+		model.WithBoundingMax(boundingMax),
 	)
 
 	// Convert imported materials into Material objects (CPU-only; GPU init deferred to Scene).
@@ -195,6 +198,21 @@ func (l *loader) importedToModels(imported *model.ImportedModel) ([]model.Model,
 		}
 
 		boundingRadius := model.ComputeBoundingRadius(allVertices)
+		var boundingMin, boundingMax [3]float32
+		if len(grp.meshes) > 0 {
+			boundingMin = grp.meshes[0].BoundingMin
+			boundingMax = grp.meshes[0].BoundingMax
+			for _, mesh := range grp.meshes[1:] {
+				for i := range 3 {
+					if mesh.BoundingMin[i] < boundingMin[i] {
+						boundingMin[i] = mesh.BoundingMin[i]
+					}
+					if mesh.BoundingMax[i] > boundingMax[i] {
+						boundingMax[i] = mesh.BoundingMax[i]
+					}
+				}
+			}
+		}
 		provider := bind_group_provider.NewBindGroupProvider(
 			fmt.Sprintf("%s_mat_%d_mesh", imported.Name, mi),
 		)
@@ -226,6 +244,8 @@ func (l *loader) importedToModels(imported *model.ImportedModel) ([]model.Model,
 			model.WithImportedMaterials([]common.ImportedMaterial{imp}),
 			model.WithMeshProvider(provider),
 			model.WithBoundingRadius(boundingRadius),
+			model.WithBoundingMin(boundingMin),
+			model.WithBoundingMax(boundingMax),
 		)
 		mdl.SetRenderMaterials([]material.Material{mat})
 
