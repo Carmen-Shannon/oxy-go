@@ -4,7 +4,7 @@ A 3D game engine written in pure Go, powered by WebGPU via [cogentcore/webgpu](h
 
 <p align="center">
   <a href="https://pkg.go.dev/github.com/Carmen-Shannon/oxy-go"><img src="https://pkg.go.dev/badge/github.com/Carmen-Shannon/oxy-go.svg" alt="Go Reference"></a>
-  <a href="https://github.com/Carmen-Shannon/oxy-go/actions/workflows/coverage.yml"><img src="https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Carmen-Shannon/ee61b5b222c6fcd2db9a71c9e75374c9/raw/oxy-go-coverage.json&cacheSeconds=300" alt="Coverage"></a>
+  <a href="https://codecov.io/gh/Carmen-Shannon/oxy-go"><img src="https://codecov.io/gh/Carmen-Shannon/oxy-go/graph/badge.svg?token=FR6XS6ZMOD"/></a>
   <a href="https://goreportcard.com/report/github.com/Carmen-Shannon/oxy-go"><img src="https://goreportcard.com/badge/github.com/Carmen-Shannon/oxy-go" alt="Go Report Card"></a>
 </p>
 
