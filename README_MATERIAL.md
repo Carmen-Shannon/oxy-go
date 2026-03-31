@@ -10,12 +10,10 @@ The `engine/renderer/material` package defines the render material abstraction f
 
 ```
 Material (public interface)
- ├─ common.Delegate[Material]   ← mock / test delegation
- └─ material (unexported struct)
-      └─ common.DelegateImpl[Material]
+ └─ material (unexported struct in material_impl.go)
 ```
 
-The package follows the standard oxy-go interface-first pattern: a single public `Material` interface backed by an unexported `material` struct with a compile-time implementation check. The interface embeds `common.Delegate[Material]` for mock/test delegation support.
+The package follows the standard oxy-go 3-file layout: a single public `Material` interface in `material.go`, an unexported `material` struct in `material_impl.go`, and all builder functions in `material_builder.go`.
 
 ---
 
@@ -34,7 +32,7 @@ Set at creation time via builder options and read-only through the interface.
 | `DiffuseTexture() *common.ImportedTexture`           | Diffuse/albedo texture reference, or nil                       |
 | `NormalTexture() *common.ImportedTexture`            | Normal map texture reference, or nil                           |
 | `MetallicRoughnessTexture() *common.ImportedTexture` | Metallic-roughness map reference, or nil                       |
-| `FragmentShaderPath() string`                        | Path to the fragment shader source this material uses          |
+| `AlphaCutoff() float32`                              | Alpha discard threshold (`0.0`–`1.0`), used in MASK alpha mode |
 
 ### Mutable GPU Bindings
 
@@ -46,9 +44,9 @@ Set during the scene's GPU-init phase after construction.
 | `BindGroupProvider() bind_group_provider.BindGroupProvider`              | Bind group provider holding GPU resources               |
 | `SetPipelineKey(key string)`                                             | Updates the pipeline key                                |
 | `SetBindGroupProvider(provider bind_group_provider.BindGroupProvider)`   | Updates the bind group provider                         |
-| `SetFragmentShaderPath(path string)`                                     | Updates the fragment shader source path                 |
 | `Provider(group int) bind_group_provider.BindGroupProvider`              | Per-group bind group provider lookup                    |
 | `SetProvider(group int, provider bind_group_provider.BindGroupProvider)` | Sets the bind group provider for a specific group index |
+| `PipelineOptions() []any`                                                | Additional pipeline options passed during pipeline init |
 
 ---
 
@@ -56,18 +54,19 @@ Set during the scene's GPU-init phase after construction.
 
 The `NewMaterial` constructor accepts variadic `MaterialBuilderOption` functions:
 
-| Option                              | Description                                   |
-| ----------------------------------- | --------------------------------------------- |
-| `WithName(name)`                    | Sets the material identifier                  |
-| `WithBaseColor(color)`              | Sets the albedo/diffuse RGBA color            |
-| `WithMetallic(metallic)`            | Sets the metallic factor                      |
-| `WithRoughness(roughness)`          | Sets the roughness factor                     |
-| `WithDiffuseTexture(tex)`           | Sets the diffuse/albedo texture reference     |
-| `WithNormalTexture(tex)`            | Sets the normal map texture reference         |
-| `WithMetallicRoughnessTexture(tex)` | Sets the metallic-roughness texture reference |
-| `WithPipelineKey(key)`              | Sets the render pipeline key                  |
-| `WithBindGroupProvider(provider)`   | Sets the bind group provider                  |
-| `WithFragmentShaderPath(path)`      | Sets the fragment shader source path          |
+| Option                              | Description                                     |
+| ----------------------------------- | ----------------------------------------------- |
+| `WithName(name)`                    | Sets the material identifier                    |
+| `WithBaseColor(color)`              | Sets the albedo/diffuse RGBA color              |
+| `WithMetallic(metallic)`            | Sets the metallic factor                        |
+| `WithRoughness(roughness)`          | Sets the roughness factor                       |
+| `WithDiffuseTexture(tex)`           | Sets the diffuse/albedo texture reference       |
+| `WithNormalTexture(tex)`            | Sets the normal map texture reference           |
+| `WithMetallicRoughnessTexture(tex)` | Sets the metallic-roughness texture reference   |
+| `WithPipelineKey(key)`              | Sets the render pipeline key                    |
+| `WithBindGroupProvider(provider)`   | Sets the bind group provider                    |
+| `WithAlphaCutoff(cutoff)`           | Sets the alpha discard threshold                |
+| `WithPipelineOptions(opts ...any)`  | Sets additional pipeline initialization options |
 
 ---
 
@@ -77,18 +76,19 @@ The `NewMaterial` constructor accepts variadic `MaterialBuilderOption` functions
 func NewMaterial(options ...MaterialBuilderOption) Material
 ```
 
-Creates a new `Material` with sensible defaults: white base color `{1,1,1,1}`, metallic `0.0`, roughness `1.0`, and an empty `providers` map. Sets `m.Delegate = m` so delegation routes to itself by default. Builder options are applied after defaults.
+Creates a new `Material` with sensible defaults: white base color `{1,1,1,1}`, metallic `0.0`, roughness `1.0`, alpha cutoff `0.01`, and an empty `providers` map. Builder options are applied after defaults.
 
 ---
 
 ## GPU Types
 
-The package defines two GPU-aligned uniform structs for fragment shader parameters, each with an embedded WGSL source file:
+The package defines three GPU-aligned uniform structs for fragment shader parameters:
 
-| Type               | Size | WGSL Asset            | Description                                         |
-| ------------------ | ---- | --------------------- | --------------------------------------------------- |
-| `GPUOverlayParams` | 16 B | `overlay-params.wgsl` | RGBA overlay color written to all fragments         |
-| `GPUEffectParams`  | 16 B | `effect-params.wgsl`  | RGB tint color + alpha blend intensity for textures |
+| Type                | Size | WGSL Asset            | Description                                                              |
+| ------------------- | ---- | --------------------- | ------------------------------------------------------------------------ |
+| `GPUMaterialParams` | 4 B  | —                     | Per-material scalar parameters (alpha cutoff) for the GPU uniform buffer |
+| `GPUOverlayParams`  | 16 B | `overlay-params.wgsl` | RGBA overlay color written to all fragments                              |
+| `GPUEffectParams`   | 16 B | `effect-params.wgsl`  | RGB tint color + alpha blend intensity for textures                      |
 
 Both types implement `Size() int` and `Marshal() []byte` for GPU buffer upload.
 
@@ -103,11 +103,12 @@ The package also exports the embedded WGSL source strings for each type:
 
 ## Files
 
-| File                  | Purpose                                                        |
-| --------------------- | -------------------------------------------------------------- |
-| `material.go`         | `Material` interface, `material` struct, constructor, impls    |
-| `material_builder.go` | `MaterialBuilderOption` type and 10 builder functions          |
-| `gpu_types.go`        | `GPUOverlayParams`, `GPUEffectParams` with Size/Marshal + WGSL |
+| File                  | Purpose                                                             |
+| --------------------- | ------------------------------------------------------------------- |
+| `material.go`         | `Material` interface and exported forwarding method implementations |
+| `material_impl.go`    | Unexported `material` struct and internal field definitions         |
+| `material_builder.go` | `MaterialBuilderOption` type and 11 builder functions               |
+| `gpu_types.go`        | `GPUOverlayParams`, `GPUEffectParams` with Size/Marshal + WGSL      |
 
 ### Assets
 

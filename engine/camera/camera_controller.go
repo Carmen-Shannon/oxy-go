@@ -41,6 +41,8 @@ type CameraController interface {
 	Zoom(delta float32)
 }
 
+var _ CameraController = &cameraControllerImpl{}
+
 // orbitCameraController defines orbit-specific control methods.
 // Provides third-person orbit controls using spherical coordinates (radius, azimuth, elevation)
 // relative to the target/pivot point.

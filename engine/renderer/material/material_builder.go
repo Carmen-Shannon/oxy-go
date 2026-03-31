@@ -60,6 +60,19 @@ func WithRoughness(roughness float32) MaterialBuilderOption {
 	}
 }
 
+// WithAlphaCutoff is an option builder that sets the alpha discard threshold for the material.
+//
+// Parameters:
+//   - cutoff: the alpha cutoff threshold
+//
+// Returns:
+//   - MaterialBuilderOption: a function that applies the alpha cutoff option to a material
+func WithAlphaCutoff(cutoff float32) MaterialBuilderOption {
+	return func(m *material) {
+		m.alphaCutoff = cutoff
+	}
+}
+
 // WithDiffuseTexture is an option builder that sets the diffuse/albedo texture reference.
 //
 // Parameters:
@@ -125,16 +138,41 @@ func WithBindGroupProvider(provider bind_group_provider.BindGroupProvider) Mater
 	}
 }
 
-// WithFragmentShaderPath is an option builder that sets the fragment shader asset path for the material.
-// An empty path (the default) tells the engine to use its standard textured fragment shader.
+// WithPipelineOptions is an option builder that sets the pipeline builder options for the material.
+// These options are applied by the scene when registering the material's render pipeline at Add time,
+// and may include render state overrides (blend, cull mode, depth), custom vertex or fragment shaders,
+// and any other [pipeline.PipelineBuilderOption] values. Each option is stored as any to avoid
+// import cycles between the material and pipeline packages.
 //
 // Parameters:
-//   - path: the fragment shader asset path relative to the project root
+//   - opts: variadic pipeline builder options to associate with the material
 //
 // Returns:
-//   - MaterialBuilderOption: a function that applies the fragment shader path option to a material
-func WithFragmentShaderPath(path string) MaterialBuilderOption {
+//   - MaterialBuilderOption: a function that applies the pipeline options to a material
+func WithPipelineOptions(opts ...any) MaterialBuilderOption {
 	return func(m *material) {
-		m.fragmentShaderPath = path
+		m.pipelineOpts = opts
 	}
+}
+
+// NewMaterial creates a new Material instance configured with the provided options.
+//
+// Parameters:
+//   - options: variadic list of MaterialBuilderOption functions to configure the material
+//
+// Returns:
+//   - Material: a new Material instance
+func NewMaterial(options ...MaterialBuilderOption) Material {
+	m := &material{
+		baseColor:   [4]float32{1, 1, 1, 1},
+		metallic:    0.0,
+		roughness:   1.0,
+		alphaCutoff: 0.01,
+		providers:   make(map[int]bind_group_provider.BindGroupProvider),
+	}
+	for _, opt := range options {
+		opt(m)
+	}
+	m.Delegate = m
+	return m
 }

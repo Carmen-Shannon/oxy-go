@@ -31,6 +31,8 @@ The camera system is split into two concerns:
 
 This separation allows the same controller to be reused or swapped without recreating the camera, and keeps input handling decoupled from matrix computation.
 
+**Package path:** `github.com/Carmen-Shannon/oxy-go/engine/camera`
+
 ---
 
 ## Camera
@@ -241,16 +243,18 @@ The package provides a GPU-aligned uniform struct for uploading camera data to s
 | Field            | Type          | Offset | Description                                     |
 | ---------------- | ------------- | ------ | ----------------------------------------------- |
 | `ViewProj`       | `[16]float32` | 0      | Combined view-projection matrix (`mat4x4<f32>`) |
-| `CameraPosition` | `[3]float32`  | 64     | World-space camera position (`vec3<f32>`)       |
-| `_pad`           | `float32`     | 76     | Padding to 80 bytes                             |
+| `View`           | `[16]float32` | 64     | View matrix (`mat4x4<f32>`)                     |
+| `CameraPosition` | `[3]float32`  | 128    | World-space camera position (`vec3<f32>`)       |
+| `_pad`           | `float32`     | 140    | Padding to 144 bytes                            |
 
-**Total size:** 80 bytes (std430 / WGSL aligned)
+**Total size:** 144 bytes (std430 / WGSL aligned)
 
 The corresponding WGSL struct definition is embedded via `GPUCameraUniformSource` and can be injected into shaders using the `@oxy:include camera` annotation (see [Shader Annotation System](README_ANNOTATIONS.md)).
 
 ```go
 uniform := &camera.GPUCameraUniform{
     ViewProj:       cam.ViewProjectionMatrix(),
+    View:           cam.ViewMatrix(),
     CameraPosition: [3]float32{px, py, pz},
 }
 buf := uniform.Marshal() // []byte ready for GPU upload

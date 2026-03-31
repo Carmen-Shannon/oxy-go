@@ -1,5 +1,10 @@
 package camera
 
+import (
+	"math"
+	"sync"
+)
+
 // CameraControllerOption is a functional option for configuring a CameraController.
 type CameraControllerOption func(*cameraControllerImpl)
 
@@ -139,4 +144,53 @@ func WithPanSpeed(speed float32) CameraControllerOption {
 	return func(cc *cameraControllerImpl) {
 		cc.panSpeed = speed
 	}
+}
+
+// NewCameraController creates a new camera controller with sensible defaults.
+// The returned controller supports both orbit and planar controls simultaneously.
+//
+// Parameters:
+//   - options: functional options to configure the controller
+//
+// Returns:
+//   - CameraController: the newly created controller
+func NewCameraController(options ...CameraControllerOption) CameraController {
+	cc := &cameraControllerImpl{
+		mu:     &sync.Mutex{},
+		target: [3]float32{0, 0, 0},
+
+		radius:    250.0,
+		azimuth:   0.0,
+		elevation: float32(math.Pi / 6),
+
+		minRadius:    20.0,
+		maxRadius:    2000.0,
+		minElevation: 0.05,
+		maxElevation: float32(math.Pi/2 - 0.1),
+
+		orbitSpeed:       0.03,
+		mouseSensitivity: 0.005,
+		zoomSpeed:        15.0,
+
+		panSpeed: 1.0,
+	}
+
+	for _, option := range options {
+		option(cc)
+	}
+
+	cc.updatePosition()
+	return cc
+}
+
+// NewOrbitController creates a new camera controller configured for orbit-style control.
+// This is a convenience wrapper around NewCameraController for backward compatibility.
+//
+// Parameters:
+//   - options: functional options to configure the controller
+//
+// Returns:
+//   - CameraController: the newly created controller
+func NewOrbitController(options ...CameraControllerOption) CameraController {
+	return NewCameraController(options...)
 }

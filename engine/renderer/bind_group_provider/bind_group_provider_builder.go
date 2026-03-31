@@ -14,7 +14,7 @@ type BindGroupProviderOption func(*bindGroupProvider)
 //   - BindGroupProviderOption: a function that sets the bind group for this provider
 func WithBindGroup(bg *wgpu.BindGroup) BindGroupProviderOption {
 	return func(p *bindGroupProvider) {
-		p.bindGroup = bg
+		p.bindGroups[p.activeSlot] = bg
 	}
 }
 
@@ -41,7 +41,7 @@ func WithBindGroupLayout(bgl *wgpu.BindGroupLayout) BindGroupProviderOption {
 //   - BindGroupProviderOption: a function that sets the buffer for the specified binding
 func WithBuffer(binding int, buf *wgpu.Buffer) BindGroupProviderOption {
 	return func(p *bindGroupProvider) {
-		p.buffers[binding] = buf
+		p.buffers[p.activeSlot][binding] = buf
 	}
 }
 
@@ -54,7 +54,7 @@ func WithBuffer(binding int, buf *wgpu.Buffer) BindGroupProviderOption {
 //   - BindGroupProviderOption: a function that sets multiple buffers for this provider
 func WithBuffers(buffers map[int]*wgpu.Buffer) BindGroupProviderOption {
 	return func(p *bindGroupProvider) {
-		p.buffers = buffers
+		p.buffers[p.activeSlot] = buffers
 	}
 }
 
@@ -149,4 +149,28 @@ func WithIndexCount(count int) BindGroupProviderOption {
 	return func(p *bindGroupProvider) {
 		p.indexCount = count
 	}
+}
+
+// NewBindGroupProvider creates a new BindGroupProvider with the provided options.
+//
+// Parameters:
+//   - options: a variadic list of options to configure the provider
+//
+// Returns:
+//   - BindGroupProvider: a new instance of BindGroupProvider configured with the provided options
+func NewBindGroupProvider(label string, options ...BindGroupProviderOption) BindGroupProvider {
+	p := &bindGroupProvider{
+		label: label,
+		buffers: [2]map[int]*wgpu.Buffer{
+			make(map[int]*wgpu.Buffer),
+			make(map[int]*wgpu.Buffer),
+		},
+		textureViews: make(map[int]*wgpu.TextureView),
+		samplers:     make(map[int]*wgpu.Sampler),
+	}
+	for _, opt := range options {
+		opt(p)
+	}
+	p.Delegate = p
+	return p
 }

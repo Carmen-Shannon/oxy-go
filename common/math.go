@@ -59,10 +59,10 @@ func StructToBytes[T any](v *T) []byte {
 //   - b: right-hand matrix (16 elements)
 func Mul4(out, a, b []float32) {
 	var buf [16]float32
-	for i := 0; i < 4; i++ { // column of B
-		for j := 0; j < 4; j++ { // row of A
+	for i := range 4 { // column of B
+		for j := range 4 { // row of A
 			sum := float32(0)
-			for k := 0; k < 4; k++ {
+			for k := range 4 {
 				sum += a[k*4+j] * b[i*4+k]
 			}
 			buf[i*4+j] = sum

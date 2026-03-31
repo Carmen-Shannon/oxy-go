@@ -26,8 +26,8 @@
 //@oxy:group 0 2 storage_read grid_params physics_grid_params
 //@oxy:group 0 3 storage_uniform globals physics_globals
 
-const EMPTY: u32 = 0xFFFFFFFFu;
-const SLOTS_PER_CELL: u32 = 16u;
+//@oxy:inject EMPTY u32 empty_sentinel
+//@oxy:inject SLOTS_PER_CELL u32 slots_per_cell
 
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {

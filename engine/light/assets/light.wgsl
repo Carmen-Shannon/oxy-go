@@ -8,5 +8,5 @@ struct Light {
     inner_cone:    f32,
     outer_cone:    f32,
     casts_shadows: u32,
-    _pad:          u32,
+    shadow_index:  u32,
 };

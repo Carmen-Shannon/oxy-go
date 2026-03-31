@@ -2,9 +2,9 @@
 
 The `light` package provides the lighting, shadow mapping, Forward+ tile culling, and full global illumination (GI) pipeline for the Oxy engine. It supports directional, point, and spot light types, all sharing a single `Light` interface. Lights are marshaled into GPU storage buffers each frame and evaluated in a tiled Forward+ rendering pipeline.
 
-Shadow mapping uses Variance Shadow Maps (VSM) with an optional Percentage-Closer Soft Shadows (PCSS) mode backed by a Summed-Area Table. A separable Gaussian blur produces constant-width soft shadows in default VSM mode, while PCSS uses per-pixel variable-width filtering for contact-hardening soft shadows.
+Shadow mapping uses a dual-cascade sphere-based CSM approach with a `Depth32Float` atlas, hardware `sampler_comparison`, and 16-tap Poisson PCF. Contact shadows are computed via a screen-space ray march that detects fine-detail occlusion at surface contacts.
 
-The GI pipeline includes a G-Buffer MRT pre-pass, Screen-Space Ambient Occlusion (SSAO) with bilateral blur, irradiance probe grids storing L2 spherical harmonics for diffuse indirect lighting, Screen-Space Reflections (SSR) via Hi-Z ray marching, and a final composition pass with ACES tone mapping and HDR rendering.
+The GI pipeline includes a G-Buffer MRT pre-pass, Screen-Space Ambient Occlusion (SSAO) with bilateral blur, Screen-Space Reflections (SSR) via Hi-Z ray marching, and a final composition pass with ACES tone mapping and HDR rendering.
 
 ---
 
@@ -24,35 +24,29 @@ The GI pipeline includes a G-Buffer MRT pre-pass, Screen-Space Ambient Occlusion
 - [Forward+ Light Culling](#forward-light-culling)
   - [Constants](#constants)
   - [TileCounts](#tilecounts)
-- [Shadow Mapping (VSM)](#shadow-mapping-vsm)
+- [Shadow Mapping (PCF)](#shadow-mapping-pcf)
   - [Shadow Constants](#shadow-constants)
-  - [VSM Constants](#vsm-constants)
-- [PCSS (Percentage-Closer Soft Shadows)](#pcss-percentage-closer-soft-shadows)
 - [GI Sub-Handlers](#gi-sub-handlers)
   - [GBufferHandler](#gbufferhandler)
   - [SSAOHandler](#ssaohandler)
-  - [CompositionHandler](#compositionhandler)
   - [SSRHandler](#ssrhandler)
-  - [IrradianceProbeGrid](#irradianceprobegrid)
+  - [CompositionHandler](#compositionhandler)
+  - [ShadowHandler](#shadowhandler)
+  - [ContactShadowHandler](#contactshadowhandler)
 - [GPU Types](#gpu-types)
   - [GPULight](#gpulight)
-  - [GPULightHeader](#gpulightheader)
-  - [GPUShadowData](#gpushadowdata)
+  - [GPUCSMData](#gpucsmdata)
+  - [GPUCSMCascade](#gpucsmcascade)
   - [GPUShadowUniform](#gpushadowuniform)
-  - [GPUBlurParams](#gpublurparams)
-  - [GPUSATParams](#gpusatparams)
-  - [GPUGBufferOutput](#gpugbufferoutput)
+  - [GPULightShadowEntry](#gpulightshadowentry)
   - [GPUSSAOParams](#gpussaoparams)
-  - [GPUIrradianceProbe](#gpuirradianceprobe)
-  - [GPUProbeGridParams](#gpuprobegridparams)
-  - [GPUProbeBakeCamera](#gpuprobebakecamera)
-  - [GPUSHProjectParams](#gpushprojectparams)
-  - [GPUCompositionParams](#gpucompositionparams)
-  - [GPUSSRParams](#gpussrparams)
-  - [GPULightCullUniforms](#gpulightculluniforms)
+  - [GPUBlurParams](#gpublurparams)
   - [GPUTileUniforms](#gputileuniforms)
+  - [GPULuminanceParams](#gpuluminanceparams)
+  - [GPUContactShadowParams](#gpucontactshadowparams)
 - [Helper Functions](#helper-functions)
 - [Usage Example](#usage-example)
+- [Files](#files)
 
 ---
 
@@ -60,11 +54,11 @@ The GI pipeline includes a G-Buffer MRT pre-pass, Screen-Space Ambient Occlusion
 
 The light system is designed around five pillars:
 
-1. **Light** — A scene-level entity with type, position, direction, color, intensity, range, and cone angles. All three light types share the same interface; type-specific properties return zero values when not applicable.
+1. **Light** — A scene-level entity with type, position, direction, color, intensity, range, cone angles, and per-light shadow bias. All three light types share the same interface; type-specific properties return zero values when not applicable.
 2. **Forward+ Tile Culling** — The screen is divided into tiles (`TileSize × TileSize` pixels). A compute shader assigns lights to tiles so the fragment shader only evaluates lights relevant to each tile.
-3. **Variance Shadow Mapping (VSM)** — Shadow-casting lights render a depth-moments pass (storing `depth` and `depth²`) into an RG32Float texture each frame. A separable blur smooths the moments for constant-width soft shadows. Chebyshev's inequality is used in the lit fragment shader instead of PCF for smoother, filter-friendly shadow boundaries. An optional PCSS mode replaces the blur with a Summed-Area Table for per-pixel variable-width penumbrae.
-4. **Global Illumination Pipeline** — A G-Buffer MRT pre-pass captures per-pixel normals, albedo, and linear depth. SSAO uses hemisphere sampling on the G-Buffer to compute ambient occlusion. An irradiance probe grid stores L2 spherical harmonics for diffuse indirect lighting. SSR via Hi-Z ray marching adds specular reflections. A final composition pass applies ACES tone mapping to the HDR result.
-5. **Sub-Handler Architecture** — The `LightingHandler` owns five lazily-initialized sub-handlers (`GBufferHandler`, `SSAOHandler`, `CompositionHandler`, `SSRHandler`, `IrradianceProbeGrid`) that manage their own textures, pipelines, and bind groups.
+3. **Dual-Cascade PCF Shadow Mapping** — Shadow-casting directional lights render into a `Depth32Float` atlas (two cascades). Cascade 0 is a camera-centered sphere with configurable inner radius; cascade 1 is frustum-fit for the full depth range. 16-tap Poisson PCF provides soft shadow edges. Spot and point lights use a separate `Depth32Float` atlas described by `GPULightShadowEntry` records.
+4. **Global Illumination Pipeline** — A G-Buffer MRT pre-pass captures per-pixel normals, albedo, and linear depth. SSAO uses hemisphere sampling on the G-Buffer to compute ambient occlusion. A screen-space contact-shadow pass detects fine-detail occlusion at surface contacts. SSR via Hi-Z ray marching adds specular reflections. A final composition pass applies ACES tone mapping to the HDR result.
+5. **Sub-Handler Architecture** — The `LightingHandler` owns lazily-initialized sub-handlers (`GBufferHandler`, `SSAOHandler`, `CompositionHandler`, `SSRHandler`, `ShadowHandler`, `ContactShadowHandler`) that manage their own textures, pipelines, and bind groups.
 
 ---
 
@@ -132,8 +126,7 @@ Defaults applied before options:
 | Enabled      | `true`                |
 | Ephemeral    | `false`               |
 | CastsShadows | `false`               |
-
-The `Light` interface embeds `common.Delegate[Light]`, exposing `SetDelegate(delegate Light)`. In production code the delegate is set to the instance itself during construction. In test code the delegate can be replaced with a mock.
+| ShadowBias   | `0.005`               |
 
 ---
 
@@ -152,6 +145,7 @@ All options follow the `LightBuilderOption` functional option pattern.
 | `WithEnabled`      | `enabled bool`               | Whether the light is active for rendering                   |
 | `WithEphemeral`    | `ephemeral bool`             | Marks as ephemeral (not persisted in scene registry)        |
 | `WithCastsShadows` | `castsShadows bool`          | Enables shadow map generation for this light                |
+| `WithShadowBias`   | `bias float32`               | Depth comparison bias for this light's shadow map           |
 
 ---
 
@@ -172,6 +166,7 @@ All options follow the `LightBuilderOption` functional option pattern.
 | `Enabled() bool`         | Whether the light is active; disabled lights are skipped during GPU marshaling |
 | `Ephemeral() bool`       | Whether the light is short-lived (particle-emitted)                            |
 | `CastsShadows() bool`    | Whether the light is eligible for shadow map generation                        |
+| `ShadowBias() float32`   | Per-light depth comparison bias for shadow map generation                      |
 
 ### Setters
 
@@ -186,12 +181,13 @@ All options follow the `LightBuilderOption` functional option pattern.
 | `SetEnabled(enabled bool)`                | Enables or disables the light                        |
 | `SetEphemeral(ephemeral bool)`            | Marks as ephemeral                                   |
 | `SetCastsShadows(castsShadows bool)`      | Enables or disables shadow casting                   |
+| `SetShadowBias(bias float32)`             | Sets the per-light shadow bias                       |
 
 ---
 
 ## LightingHandler
 
-The `LightingHandler` manages the light list, ambient color, VSM shadow mapping configuration, PCSS/SAT state, Forward+ tile culling, GI sub-handlers, and all associated GPU resources (bind group providers, pipeline keys, shadow textures). It is created via `NewLightingHandler` with builder options and attached to a scene. GPU resources are initialized lazily by the scene when the first light is added.
+The `LightingHandler` manages the light list, ambient color, Forward+ tile culling, GI sub-handlers, and all associated GPU resources (bind group providers, pipeline keys). It is created via `NewLightingHandler` with builder options and attached to a scene. GPU resources are initialized lazily by the scene when the first light is added. Shadow resources are owned by the `ShadowHandler` sub-handler.
 
 Thread safety is provided by the owning scene's mutex — the handler itself does not perform internal locking.
 
@@ -199,65 +195,48 @@ Thread safety is provided by the owning scene's mutex — the handler itself doe
 
 ```go
 handler := light.NewLightingHandler(
-    light.WithShadowHalfExtent(50.0),
-    light.WithShadowNearFar(0.1, 300.0),
-    light.WithShadowBias(0.002),
-    light.WithShadowNormalBiasScale(3.0),
-    light.WithShadowMapResolution(4096),
     light.WithAmbientColor([3]float32{0.05, 0.05, 0.08}),
-    light.WithVSMBlurRadius(6),
-    light.WithVSMMinVariance(0.0001),
-    light.WithVSMLightBleedReduction(0.4),
-    light.WithPCSSEnabled(true),
-    light.WithVSMLightSize(2.0),
+    light.WithShadowHandler(light.NewShadowHandler(
+        light.WithShadowNearFar(0.1, 300.0),
+        light.WithShadowNormalBiasScale(3.0),
+        light.WithShadowMapResolution(4096),
+        light.WithPCFRadius(1.5),
+        light.WithShadowInnerRadius(50.0),
+    )),
 )
 ```
 
 Defaults applied before options:
 
-| Parameter                 | Default                                 |
-| ------------------------- | --------------------------------------- |
-| Enabled                   | `false`                                 |
-| Lights                    | empty                                   |
-| Ambient color             | `(0, 0, 0)` (black)                     |
-| Shadow half-extent        | `DefaultShadowHalfExtent` (`40.0`)      |
-| Shadow near               | `DefaultShadowNear` (`0.1`)             |
-| Shadow far                | `DefaultShadowFar` (`200.0`)            |
-| Shadow bias               | `DefaultShadowBias` (`0.001`)           |
-| Shadow normal bias        | `DefaultShadowNormalBiasScale` (`3.0`)  |
-| Shadow map resolution     | `ShadowMapResolution` (`2048`)          |
-| VSM blur radius           | `DefaultVSMBlurRadius` (`4`)            |
-| VSM min variance          | `DefaultVSMMinVariance` (`0.00001`)     |
-| VSM light bleed reduction | `DefaultVSMLightBleedReduction` (`0.3`) |
-| VSM light size            | `DefaultVSMLightSize` (`1.0`)           |
-| PCSS enabled              | `false`                                 |
+| Parameter        | Default             |
+| ---------------- | ------------------- |
+| Enabled          | `false`             |
+| Lights           | empty               |
+| Ambient color    | `(0, 0, 0)` (black) |
+| TileSize         | `16`                |
+| MaxLightsPerTile | `256`               |
+| MaxGPULights     | `1024`              |
 
-The constructor pre-creates the following named `BindGroupProvider` entries: `"lights"`, `"shadow_data"`, `"shadow_lit"`, `"light_cull"`, `"tile_lit"`, `"vsm_blur_h"`, `"vsm_blur_v"`, `"sat_prepare"`, `"ssao_lit"`, `"probe_lit"`, `"composition_lit"`, `"ssr_lit"`. When PCSS is enabled, additional per-pass `"sat_pass_N"` BGPs are created for each recursive-doubling prefix-sum dispatch.
+The constructor pre-creates the following named `BindGroupProvider` entries: `"lights"`, `"light_cull"`, `"tile_lit"`, `"ssao_lit"`, `"probe_lit"`, `"composition_lit"`, `"ssr_lit"`. Shadow-related BGPs live on `ShadowHandler`; SSAO blur BGPs live on `SSAOHandler`.
 
-The constructor also auto-creates default GI sub-handlers (`GBufferHandler`, `SSAOHandler`, `CompositionHandler`, `SSRHandler`) if not explicitly provided via builder options. The `IrradianceProbeGrid` must be provided explicitly if probe-based GI is desired.
+The constructor auto-creates default sub-handlers (`GBufferHandler`, `SSAOHandler`, `CompositionHandler`, `SSRHandler`, `ShadowHandler`, `ContactShadowHandler`) if not explicitly provided via builder options.
 
 ### LightingHandler Builder Options
 
 All options follow the `LightingHandlerOption` functional option pattern.
 
-| Option                       | Parameters                    | Description                                                    |
-| ---------------------------- | ----------------------------- | -------------------------------------------------------------- |
-| `WithShadowHalfExtent`       | `halfExtent float32`          | Orthographic frustum half-extent in world units                |
-| `WithShadowNearFar`          | `near, far float32`           | Near/far planes for shadow projection                          |
-| `WithShadowBias`             | `bias float32`                | Depth comparison bias to reduce shadow acne                    |
-| `WithShadowNormalBiasScale`  | `scale float32`               | Normal-offset bias multiplier on per-texel world-size          |
-| `WithShadowMapResolution`    | `resolution int`              | Shadow depth texture resolution in texels                      |
-| `WithAmbientColor`           | `color [3]float32`            | Initial ambient light color                                    |
-| `WithVSMBlurRadius`          | `radius int`                  | Half-width (in texels) of the separable VSM blur kernel        |
-| `WithVSMMinVariance`         | `minVariance float32`         | Minimum variance clamp for Chebyshev's inequality              |
-| `WithVSMLightBleedReduction` | `reduction float32`           | Exponent to reduce light-bleeding artifacts (typical: 0.1–0.6) |
-| `WithVSMLightSize`           | `size float32`                | World-space light size for PCSS penumbra estimation            |
-| `WithPCSSEnabled`            | `enabled bool`                | Enables PCSS variable-width soft shadows via SAT               |
-| `WithGBufferHandler`         | `handler GBufferHandler`      | Overrides the default G-Buffer handler                         |
-| `WithSSAOHandler`            | `handler SSAOHandler`         | Overrides the default SSAO handler                             |
-| `WithProbeGrid`              | `handler IrradianceProbeGrid` | Attaches a pre-configured irradiance probe grid                |
-| `WithCompositionHandler`     | `handler CompositionHandler`  | Overrides the default composition/tone mapping handler         |
-| `WithSSRHandler`             | `handler SSRHandler`          | Overrides the default SSR handler                              |
+| Option                     | Parameters                     | Description                                            |
+| -------------------------- | ------------------------------ | ------------------------------------------------------ |
+| `WithAmbientColor`         | `color [3]float32`             | Initial ambient light color                            |
+| `WithGBufferHandler`       | `handler GBufferHandler`       | Overrides the default G-Buffer handler                 |
+| `WithSSAOHandler`          | `handler SSAOHandler`          | Overrides the default SSAO handler                     |
+| `WithCompositionHandler`   | `handler CompositionHandler`   | Overrides the default composition/tone mapping handler |
+| `WithSSRHandler`           | `handler SSRHandler`           | Overrides the default SSR handler                      |
+| `WithShadowHandler`        | `h ShadowHandler`              | Overrides the default shadow handler                   |
+| `WithContactShadowHandler` | `handler ContactShadowHandler` | Overrides the default contact shadow handler           |
+| `WithTileSize`             | `size int`                     | Forward+ tile size in pixels (default 16)              |
+| `WithMaxLightsPerTile`     | `max int`                      | Max light indices per tile (default 256)               |
+| `WithMaxGPULights`         | `max int`                      | Max lights marshaled to GPU per frame (default 1024)   |
 
 ### LightingHandler Interface
 
@@ -283,79 +262,31 @@ All options follow the `LightingHandlerOption` functional option pattern.
 | `PipelineKeys() map[string]string` | Returns the full map of pipeline name-to-key mappings             |
 | `SetPipelineKey(name, key string)` | Stores a pipeline key under the given name                        |
 
-#### VSM Shadow Resources
-
-| Method                                            | Description                                                  |
-| ------------------------------------------------- | ------------------------------------------------------------ |
-| `VSMTexture() *wgpu.Texture`                      | Returns the RG32Float variance shadow map texture            |
-| `SetVSMTexture(t *wgpu.Texture)`                  | Sets the VSM texture                                         |
-| `VSMTextureView() *wgpu.TextureView`              | Returns the VSM texture view                                 |
-| `SetVSMTextureView(tv *wgpu.TextureView)`         | Sets the VSM texture view                                    |
-| `VSMScratchTexture() *wgpu.Texture`               | Returns the scratch texture for the separable blur pass      |
-| `SetVSMScratchTexture(t *wgpu.Texture)`           | Sets the scratch texture                                     |
-| `VSMScratchTextureView() *wgpu.TextureView`       | Returns the scratch texture view                             |
-| `SetVSMScratchTextureView(tv *wgpu.TextureView)`  | Sets the scratch texture view                                |
-| `VSMAuxDepthTexture() *wgpu.Texture`              | Returns the auxiliary Depth32Float texture for VSM z-testing |
-| `SetVSMAuxDepthTexture(t *wgpu.Texture)`          | Sets the auxiliary depth texture                             |
-| `VSMAuxDepthTextureView() *wgpu.TextureView`      | Returns the auxiliary depth texture view                     |
-| `SetVSMAuxDepthTextureView(tv *wgpu.TextureView)` | Sets the auxiliary depth texture view                        |
-| `VSMLinearSampler() *wgpu.Sampler`                | Returns the linear sampler for VSM texture lookups           |
-| `SetVSMLinearSampler(s *wgpu.Sampler)`            | Sets the linear sampler                                      |
-
-#### VSM Configuration (Read-Only)
-
-| Method                             | Description                                              |
-| ---------------------------------- | -------------------------------------------------------- |
-| `VSMBlurRadius() int`              | Half-width (in texels) of the separable blur kernel      |
-| `VSMMinVariance() float32`         | Minimum variance clamp for Chebyshev's inequality        |
-| `VSMLightBleedReduction() float32` | Exponent applied to reduce light-bleeding artifacts      |
-| `VSMLightSize() float32`           | World-space area light size for PCSS penumbra estimation |
-
-#### PCSS / SAT Resources
-
-| Method                                     | Description                                             |
-| ------------------------------------------ | ------------------------------------------------------- |
-| `PCSSEnabled() bool`                       | Whether PCSS contact-hardening soft shadows are enabled |
-| `SetPCSSEnabled(enabled bool)`             | Enables or disables PCSS                                |
-| `SATTextureA() *wgpu.Texture`              | Returns the first RGBA32Float SAT ping-pong texture     |
-| `SetSATTextureA(t *wgpu.Texture)`          | Sets SAT texture A                                      |
-| `SATTextureAView() *wgpu.TextureView`      | Returns the view for SAT texture A                      |
-| `SetSATTextureAView(tv *wgpu.TextureView)` | Sets the view for SAT texture A                         |
-| `SATTextureB() *wgpu.Texture`              | Returns the second RGBA32Float SAT ping-pong texture    |
-| `SetSATTextureB(t *wgpu.Texture)`          | Sets SAT texture B                                      |
-| `SATTextureBView() *wgpu.TextureView`      | Returns the view for SAT texture B                      |
-| `SetSATTextureBView(tv *wgpu.TextureView)` | Sets the view for SAT texture B                         |
-
 #### GI Sub-Handler Accessors
 
-| Method                                    | Description                                                 |
-| ----------------------------------------- | ----------------------------------------------------------- |
-| `GBufferHandler() GBufferHandler`         | Returns the G-Buffer handler, or nil if not configured      |
-| `SSAOHandler() SSAOHandler`               | Returns the SSAO handler, or nil if not configured          |
-| `ProbeGrid() IrradianceProbeGrid`         | Returns the irradiance probe grid, or nil if not configured |
-| `CompositionHandler() CompositionHandler` | Returns the composition/tone mapping handler, or nil        |
-| `SSRHandler() SSRHandler`                 | Returns the SSR handler, or nil if not configured           |
-
-#### Shadow Configuration (Read-Only)
-
-| Method                            | Description                                     |
-| --------------------------------- | ----------------------------------------------- |
-| `ShadowHalfExtent() float32`      | Orthographic frustum half-extent in world units |
-| `ShadowNear() float32`            | Near plane for shadow projection                |
-| `ShadowFar() float32`             | Far plane for shadow projection                 |
-| `ShadowBias() float32`            | Depth comparison bias                           |
-| `ShadowNormalBiasScale() float32` | Normal-offset bias multiplier                   |
-| `ShadowMapResolution() int`       | Shadow depth texture resolution in texels       |
+| Method                                        | Description                                            |
+| --------------------------------------------- | ------------------------------------------------------ |
+| `GBufferHandler() GBufferHandler`             | Returns the G-Buffer handler, or nil if not configured |
+| `SSAOHandler() SSAOHandler`                   | Returns the SSAO handler, or nil if not configured     |
+| `CompositionHandler() CompositionHandler`     | Returns the composition/tone mapping handler, or nil   |
+| `SSRHandler() SSRHandler`                     | Returns the SSR handler, or nil if not configured      |
+| `ShadowHandler() ShadowHandler`               | Returns the shadow handler                             |
+| `ContactShadowHandler() ContactShadowHandler` | Returns the contact shadow handler                     |
 
 #### Screen & Tile State
 
-| Method                      | Description                                            |
-| --------------------------- | ------------------------------------------------------ |
-| `ScreenWidth() int`         | Current screen width in pixels for tile calculations   |
-| `ScreenHeight() int`        | Current screen height in pixels for tile calculations  |
-| `TileCountX() uint32`       | Number of Forward+ tile columns                        |
-| `TileCountY() uint32`       | Number of Forward+ tile rows                           |
-| `Resize(width, height int)` | Updates screen dimensions and recalculates tile counts |
+| Method                                                                      | Description                                                  |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `ScreenWidth() int`                                                         | Current screen width in pixels for tile calculations         |
+| `ScreenHeight() int`                                                        | Current screen height in pixels for tile calculations        |
+| `TileCountX() int`                                                          | Number of Forward+ tile columns                              |
+| `TileCountY() int`                                                          | Number of Forward+ tile rows                                 |
+| `Resize(width, height int)`                                                 | Updates screen dimensions and recalculates tile counts       |
+| `TileSize() int`                                                            | Configured tile size in pixels                               |
+| `MaxLightsPerTile() int`                                                    | Maximum light indices stored per tile                        |
+| `MaxGPULights() int`                                                        | Maximum lights marshaled to GPU per frame                    |
+| `SetMaxGPULights(max int)`                                                  | Sets the maximum GPU light count                             |
+| `MarshalLightBuffer(lights []Light, shadowIndices map[Light]uint32) []byte` | Marshals enabled lights into a GPU storage buffer byte slice |
 
 ---
 
@@ -365,11 +296,12 @@ The engine uses a Forward+ (tiled forward) rendering pipeline. The screen is div
 
 ### Constants
 
-| Constant           | Value  | Description                                                               |
-| ------------------ | ------ | ------------------------------------------------------------------------- |
-| `TileSize`         | `16`   | Width and height of each screen-space tile in pixels                      |
-| `MaxLightsPerTile` | `256`  | Maximum light indices stored per tile; excess lights are silently dropped |
-| `MaxGPULights`     | `1024` | Maximum lights marshaled into the GPU storage buffer per frame            |
+| Constant           | Value | Description                                                               |
+| ------------------ | ----- | ------------------------------------------------------------------------- |
+| `TileSize`         | `16`  | Width and height of each screen-space tile in pixels                      |
+| `MaxLightsPerTile` | `256` | Maximum light indices stored per tile; excess lights are silently dropped |
+
+`MaxGPULights` is configurable per handler via `WithMaxGPULights` (default `1024`) and accessed via `LightingHandler.MaxGPULights()`.
 
 ### TileCounts
 
@@ -381,43 +313,28 @@ Computes the number of tiles in each dimension for a given screen resolution. Us
 
 ---
 
-## Shadow Mapping (VSM)
+## Shadow Mapping (PCF)
 
-Shadow-casting lights render a depth-moments pass into an RG32Float variance shadow map texture each frame. The VSM fragment shader outputs `(depth, depth²)` where depth is linearly normalized between the shadow near and far planes. A separable Gaussian blur smooths the moments to produce soft shadow edges. In the lit fragment shader, Chebyshev's inequality replaces PCF for smoother, filter-friendly shadow boundaries.
+Shadow-casting directional lights render a depth-only pass into a `Depth32Float` atlas each frame via a dual-cascade sphere-based CSM. The lit fragment shader applies 16-tap Poisson PCF using a `sampler_comparison`. Spot and point lights share a separate `Depth32Float` atlas; their shadow data is described per-light by `GPULightShadowEntry` records in a GPU storage buffer.
 
-When PCSS is enabled, the blur pass is replaced by a Summed-Area Table (SAT) generation pipeline. The lit shader uses the SAT to perform per-pixel variable-width box filtering of the moments, producing contact-hardening soft shadows where the penumbra width is proportional to the blocker-to-receiver distance.
+- **Cascade 0** — Camera-centered sphere of radius `ShadowInnerRadius` (default `100.0`). Provides constant texel density around the camera for near-field detail.
+- **Cascade 1** — Frustum-fit over the full camera depth range for wide-area coverage.
+- **PCF kernel** — 16-tap Poisson disk, radius configurable via `WithPCFRadius` (default `1.0` texels).
+- **Spot lights** — Perspective VP from light position/direction/outer cone, stored as `GPULightShadowEntry`.
+- **Point lights** — 6 consecutive atlas slots (one per cube face), each with a 90° FOV perspective VP.
 
 ### Shadow Constants
 
-| Constant                       | Value   | Description                                                              |
-| ------------------------------ | ------- | ------------------------------------------------------------------------ |
-| `ShadowMapResolution`          | `2048`  | Default shadow depth texture size (width and height in texels)           |
-| `DefaultShadowHalfExtent`      | `40.0`  | Orthographic frustum half-extent in world units                          |
-| `DefaultShadowNear`            | `0.1`   | Near plane for shadow projection                                         |
-| `DefaultShadowFar`             | `200.0` | Far plane for shadow projection                                          |
-| `DefaultShadowBias`            | `0.001` | Constant depth bias to reduce shadow acne                                |
-| `DefaultShadowNormalBiasScale` | `3.0`   | Multiplier on texel world-size for normal-offset bias (typical: 2.0–4.0) |
-
-### VSM Constants
-
-| Constant                        | Value     | Description                                                                          |
-| ------------------------------- | --------- | ------------------------------------------------------------------------------------ |
-| `DefaultVSMBlurRadius`          | `4`       | Half-width (texels) of the separable blur kernel; full width is `2*radius+1`         |
-| `DefaultVSMMinVariance`         | `0.00001` | Minimum variance clamp for Chebyshev's inequality (prevents hard edges on flat geom) |
-| `DefaultVSMLightBleedReduction` | `0.3`     | Exponent to reduce light-bleeding artifacts (typical: 0.1–0.6)                       |
-| `DefaultVSMLightSize`           | `1.0`     | World-space area light size for PCSS penumbra estimation                             |
-
----
-
-## PCSS (Percentage-Closer Soft Shadows)
-
-PCSS provides contact-hardening soft shadows by varying the filter width per pixel based on the blocker distance estimated from the VSM moments. When enabled via `WithPCSSEnabled(true)`, the shadow pipeline replaces the constant-width blur with a Summed-Area Table:
-
-1. **Prepare** — The RG32Float moments are distributed into RGBA32Float with precision splitting.
-2. **Recursive doubling** — `2×log₂(resolution)` prefix-sum passes (horizontal then vertical) build the complete SAT, ping-ponging between two RGBA32Float textures.
-3. **Lit shader** — The fragment shader uses the SAT to compute a variable-width box filter over the moments, then applies Chebyshev's inequality with the filtered mean and variance.
-
-All SAT passes are pre-created with dedicated bind group providers and uniform buffers so that every dispatch is batched into a single GPU command encoder submission.
+| Constant                       | Source          | Description                                          |
+| ------------------------------ | --------------- | ---------------------------------------------------- |
+| `DefaultShadowNear`            | `ShadowHandler` | Near plane for shadow projection (`0.1`)             |
+| `DefaultShadowFar`             | `ShadowHandler` | Far plane for shadow projection (`200.0`)            |
+| `DefaultShadowNormalBiasScale` | `ShadowHandler` | Normal-offset bias multiplier (`3.0`)                |
+| `DefaultShadowMapResolution`   | `ShadowHandler` | CSM atlas resolution in texels (`2048`)              |
+| `DefaultPCFRadius`             | `ShadowHandler` | Poisson disk radius in texels (`1.0`)                |
+| `DefaultPCFSamples`            | `ShadowHandler` | Poisson disk tap count (`16`)                        |
+| `DefaultShadowInnerRadius`     | `ShadowHandler` | Inner cascade sphere radius in world units (`100.0`) |
+| `DefaultLightShadowTileSize`   | `ShadowHandler` | Spot/point atlas tile size in texels (`1024`)        |
 
 ---
 
@@ -441,24 +358,25 @@ gbuf := light.NewGBufferHandler(
 
 **MRT Textures:**
 
-| Texture  | Format      | Contents                                         |
-| -------- | ----------- | ------------------------------------------------ |
-| Position | RGBA16Float | World XYZ + linear depth in W                    |
-| Normal   | RGBA16Float | World normal XYZ (packed [0,1]) + roughness in W |
-| Albedo   | RGBA8Unorm  | Albedo RGB + metallic in A                       |
-| Depth    | Depth24Plus | Shared depth for the pre-pass                    |
+| Texture | Format      | Contents                                         |
+| ------- | ----------- | ------------------------------------------------ |
+| Normal  | RGBA16Float | World normal XYZ (packed [0,1]) + roughness in W |
+| Albedo  | RGBA8Unorm  | Albedo RGB + metallic in A                       |
+| Depth   | Depth24Plus | Shared depth for the pre-pass                    |
 
 **Key Interface Methods:**
 
-| Method                                   | Description                                            |
-| ---------------------------------------- | ------------------------------------------------------ |
-| `Enabled() bool`                         | Whether GPU resources are initialized                  |
-| `PositionTexture() / SetPositionTexture` | World-space position MRT texture                       |
-| `NormalTexture() / SetNormalTexture`     | Normals + roughness MRT texture                        |
-| `AlbedoTexture() / SetAlbedoTexture`     | Albedo + metallic MRT texture                          |
-| `DepthTexture() / SetDepthTexture`       | Shared depth texture for the G-Buffer pass             |
-| `PipelineKey(name) / SetPipelineKey`     | Pipeline key storage for the G-Buffer render pipeline  |
-| `Resize(width, height)`                  | Updates screen dimensions (does not recreate textures) |
+| Method                                          | Description                                            |
+| ----------------------------------------------- | ------------------------------------------------------ |
+| `Enabled() bool`                                | Whether GPU resources are initialized                  |
+| `PositionTexture() / SetPositionTexture`        | World-space position MRT texture                       |
+| `NormalTexture() / SetNormalTexture`            | Normals + roughness MRT texture                        |
+| `AlbedoTexture() / SetAlbedoTexture`            | Albedo + metallic MRT texture                          |
+| `DepthTexture() / SetDepthTexture`              | Shared depth texture for the G-Buffer pass             |
+| `ScreenWidth() int` / `SetScreenWidth(w int)`   | Screen width in pixels                                 |
+| `ScreenHeight() int` / `SetScreenHeight(h int)` | Screen height in pixels                                |
+| `PipelineKey(name) / SetPipelineKey`            | Pipeline key storage for the G-Buffer render pipeline  |
+| `Resize(width, height)`                         | Updates screen dimensions (does not recreate textures) |
 
 ### SSAOHandler
 
@@ -467,7 +385,7 @@ The `SSAOHandler` manages the hemisphere sampling kernel, noise texture, raw and
 ```go
 ssao := light.NewSSAOHandler(
     light.WithSSAOSampleCount(16),
-    light.WithSSAORadius(0.5),
+    light.WithSSAOScreenRadius(24.0),
     light.WithSSAOBias(0.025),
     light.WithSSAOPower(2.0),
     light.WithSSAOBlurRadius(4),
@@ -475,15 +393,16 @@ ssao := light.NewSSAOHandler(
 )
 ```
 
-| Builder Option           | Parameters       | Default | Description                                          |
-| ------------------------ | ---------------- | ------- | ---------------------------------------------------- |
-| `WithSSAOScreenSize`     | `width, height`  | 0, 0    | Initial screen dimensions                            |
-| `WithSSAOSampleCount`    | `count int`      | 16      | Hemisphere samples per pixel (1–32)                  |
-| `WithSSAORadius`         | `radius float32` | 0.5     | Sampling radius in world units                       |
-| `WithSSAOBias`           | `bias float32`   | 0.025   | Depth bias to prevent self-occlusion                 |
-| `WithSSAOPower`          | `power float32`  | 2.0     | Exponent for AO contrast                             |
-| `WithSSAOBlurRadius`     | `radius int`     | 4       | Bilateral blur half-width in texels                  |
-| `WithSSAOHalfResolution` | `enabled bool`   | false   | Allocate textures at half resolution (¼ pixel count) |
+| Builder Option           | Parameters       | Default | Description                                                                                                                                                 |
+| ------------------------ | ---------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WithSSAOScreenSize`     | `width, height`  | 0, 0    | Initial screen dimensions                                                                                                                                   |
+| `WithSSAOSampleCount`    | `count int`      | 16      | Hemisphere samples per pixel (1–32)                                                                                                                         |
+| `WithSSAOScreenRadius`   | `pixels float32` | 24.0    | Screen-space sampling radius in pixels — the engine auto-computes the world-space hemisphere radius each frame from camera distance, FOV, and screen height |
+| `WithSSAOBias`           | `bias float32`   | 0.025   | Depth bias to prevent self-occlusion                                                                                                                        |
+| `WithSSAOPower`          | `power float32`  | 2.0     | Exponent for AO contrast                                                                                                                                    |
+| `WithSSAOBlurRadius`     | `radius int`     | 4       | Bilateral blur half-width in texels                                                                                                                         |
+| `WithSSAOHalfResolution` | `enabled bool`   | false   | Allocate textures at half resolution (¼ pixel count)                                                                                                        |
+| `WithSSAOMaxSamples`     | `max int`        | 32      | GPU compile-time upper bound for sample array size                                                                                                          |
 
 **Key Textures:**
 
@@ -496,7 +415,13 @@ ssao := light.NewSSAOHandler(
 
 **Default BGPs:** `"ssao_compute"`, `"ssao_blur_h"`, `"ssao_blur_v"`
 
-### CompositionHandler
+**Key Interface Methods:**
+
+| Method                                                                | Description                                |
+| --------------------------------------------------------------------- | ------------------------------------------ |
+| `MaxSamples() int`                                                    | Returns the compile-time max samples value |
+| `HalfResolution() bool` / `SetHalfResolution(enabled bool)`           | Whether SSAO runs at half resolution       |
+| `LinearSampler() *wgpu.Sampler` / `SetLinearSampler(s *wgpu.Sampler)` | Linear sampler for SSAO texture lookups    |
 
 The `CompositionHandler` manages the offscreen HDR render target, MSAA resolve, depth texture, and the full-screen composition pipeline that applies ACES tone mapping and gamma correction. When composition is active, the lit pass renders to an RGBA16Float texture instead of the swapchain; the composition pass then samples the HDR result (and any SSR contribution) and writes the final LDR output.
 
@@ -507,11 +432,19 @@ comp := light.NewCompositionHandler(
 )
 ```
 
-| Builder Option              | Parameters         | Default | Description                           |
-| --------------------------- | ------------------ | ------- | ------------------------------------- |
-| `WithCompositionScreenSize` | `width, height`    | 0, 0    | Initial screen dimensions             |
-| `WithToneMappingEnabled`    | `enabled bool`     | true    | Enables ACES tone mapping             |
-| `WithExposure`              | `exposure float32` | 1.0     | HDR exposure multiplier (1.0=neutral) |
+| Builder Option               | Parameters          | Default | Description                                                 |
+| ---------------------------- | ------------------- | ------- | ----------------------------------------------------------- |
+| `WithCompositionScreenSize`  | `width, height`     | 0, 0    | Initial screen dimensions                                   |
+| `WithToneMappingEnabled`     | `enabled bool`      | true    | Enables ACES tone mapping                                   |
+| `WithExposure`               | `exposure float32`  | 1.0     | HDR exposure multiplier (1.0=neutral)                       |
+| `WithAutoExposure`           | `enabled bool`      | false   | Enable GPU-driven luminance-based exposure adaptation.      |
+| `WithAdaptSpeed`             | `speed float32`     | 1.0     | Rate at which exposure converges to the target (seconds⁻¹). |
+| `WithMinExposure`            | `min float32`       | 0.1     | Minimum clamp for the adapted exposure value.               |
+| `WithMaxExposure`            | `max float32`       | 10.0    | Maximum clamp for the adapted exposure value.               |
+| `WithLuminanceWorkgroupSize` | `size int`          | 16      | Workgroup tile dimension for the luminance compute shader.  |
+| `WithBloomEnabled`           | `enabled bool`      | false   | Enables bloom post-processing.                              |
+| `WithBloomThreshold`         | `threshold float32` | 1.0     | Brightness threshold for bloom extraction (soft-knee).      |
+| `WithBloomIntensity`         | `intensity float32` | 0.5     | Multiplier for the bloom contribution in the final image.   |
 
 **Key Textures:**
 
@@ -522,6 +455,48 @@ comp := light.NewCompositionHandler(
 | Depth   | Depth24Plus | Depth buffer for the offscreen HDR render pass             |
 
 **Default BGPs:** `"composition"`
+
+**Key Interface Methods:**
+
+| Method                            | Returns        | Description                                                        |
+| --------------------------------- | -------------- | ------------------------------------------------------------------ |
+| `ToneMappingEnabled() bool`       | `bool`         | Whether ACES tone mapping is active.                               |
+| `SetToneMappingEnabled(bool)`     | —              | Toggle tone mapping at runtime.                                    |
+| `Exposure() float32`              | `float32`      | Current HDR exposure multiplier.                                   |
+| `SetExposure(float32)`            | —              | Set the HDR exposure multiplier.                                   |
+| `AutoExposureEnabled() bool`      | `bool`         | Whether GPU-driven auto-exposure is active.                        |
+| `SetAutoExposureEnabled(bool)`    | —              | Toggle auto-exposure at runtime.                                   |
+| `AdaptSpeed() float32`            | `float32`      | Exposure adaptation rate (exposure units/second).                  |
+| `SetAdaptSpeed(float32)`          | —              | Set the adaptation rate.                                           |
+| `MinExposure() float32`           | `float32`      | Minimum adapted exposure clamp value.                              |
+| `SetMinExposure(float32)`         | —              | Set the minimum exposure clamp.                                    |
+| `MaxExposure() float32`           | `float32`      | Maximum adapted exposure clamp value.                              |
+| `SetMaxExposure(float32)`         | —              | Set the maximum exposure clamp.                                    |
+| `ExposureBuffer() *wgpu.Buffer`   | `*wgpu.Buffer` | The GPU storage buffer holding the current adapted exposure value. |
+| `SetExposureBuffer(*wgpu.Buffer)` | —              | Set the exposure storage buffer (called during init).              |
+| `BloomEnabled() bool`             | `bool`         | Whether bloom post-processing is active.                           |
+| `SetBloomEnabled(bool)`           | —              | Toggle bloom at runtime.                                           |
+| `BloomThreshold() float32`        | `float32`      | Brightness threshold for bloom extraction.                         |
+| `SetBloomThreshold(float32)`      | —              | Set the bloom brightness threshold.                                |
+| `BloomIntensity() float32`        | `float32`      | Multiplier for the bloom contribution.                             |
+| `SetBloomIntensity(float32)`      | —              | Set the bloom intensity multiplier.                                |
+
+#### Bloom
+
+The bloom system extracts bright pixels from the HDR buffer using a soft-knee brightness threshold, then progressively downsamples (13-tap box-tent filter, CoD:AW style) and upsamples (9-tap tent filter with additive blending) through a mip chain to produce a smooth glow. The result is added to the final image in the composition shader, after exposure but before tone mapping.
+
+| Builder Option       | Parameters          | Default | Description                                                                                                |
+| -------------------- | ------------------- | ------- | ---------------------------------------------------------------------------------------------------------- |
+| `WithBloomEnabled`   | `enabled bool`      | `false` | Enables/disables bloom.                                                                                    |
+| `WithBloomThreshold` | `threshold float32` | `1.0`   | Brightness threshold for bloom extraction; pixels below this contribute less. Uses a soft-knee transition. |
+| `WithBloomIntensity` | `intensity float32` | `0.5`   | Multiplier for the bloom contribution added to the final image.                                            |
+
+**Implementation details:**
+
+- Two RGBA16Float mip chain textures (down chain + up chain) at half screen resolution, max 6 mip levels
+- Per-mip BGPs with separate `DispatchComputeBatch` per mip for GPU barriers
+- Threshold only applied on the first downsample pass (mip 0); subsequent mips downsample without threshold
+- When disabled, a 1×1 black fallback texture is bound to composition binding 6
 
 ### SSRHandler
 
@@ -557,44 +532,106 @@ ssr := light.NewSSRHandler(
 
 **Default BGPs:** `"ssr_compute"`
 
-### IrradianceProbeGrid
+### ShadowHandler
 
-The `IrradianceProbeGrid` stores a regular 3-D grid of irradiance probes, each containing L2 spherical harmonic (SH) coefficients that encode low-frequency indirect illumination. During baking, the scene is rendered from each probe position into a tiny cubemap (6 faces) and projected into SH coefficients via a compute shader. The SH data is uploaded to a GPU storage buffer and sampled in the lit fragment shader for diffuse indirect lighting via trilinear probe interpolation.
-
-Unlike the other sub-handlers, the probe grid must be explicitly provided via `WithProbeGrid(...)` — it is not auto-created.
+The `ShadowHandler` manages all shadow map resources — the dual-cascade directional CSM atlas, the spot/point light shadow atlas, per-slot depth-pass bind group providers, and all associated pipeline keys.
 
 ```go
-probes := light.NewIrradianceProbeGrid(
-    light.WithProbeGridCounts(8, 4, 8),
-    light.WithProbeGridBounds(
-        [3]float32{-10, -2, -10},
-        [3]float32{10, 6, 10},
-    ),
-    light.WithProbeBakeResolution(32),
+shadow := light.NewShadowHandler(
+    light.WithShadowNearFar(0.1, 300.0),
+    light.WithShadowNormalBiasScale(3.0),
+    light.WithShadowMapResolution(4096),
+    light.WithPCFRadius(1.5),
+    light.WithShadowInnerRadius(50.0),
 )
 ```
 
-| Builder Option            | Parameters            | Default                | Description                           |
-| ------------------------- | --------------------- | ---------------------- | ------------------------------------- |
-| `WithProbeGridCounts`     | `x, y, z int`         | 8, 4, 8                | Probes per axis                       |
-| `WithProbeGridBounds`     | `min, max [3]float32` | (-10,-2,-10)→(10,6,10) | World-space AABB of the grid          |
-| `WithProbeBakeResolution` | `resolution int`      | 32                     | Cubemap face resolution (px per edge) |
+**Builder Options (`ShadowHandlerOption`):**
+
+| Option                      | Parameters          | Default        | Description                                  |
+| --------------------------- | ------------------- | -------------- | -------------------------------------------- |
+| `WithShadowNearFar`         | `near, far float32` | `0.1`, `200.0` | Near/far planes for shadow projection        |
+| `WithShadowNormalBiasScale` | `scale float32`     | `3.0`          | Normal-offset bias multiplier                |
+| `WithShadowMapResolution`   | `resolution int`    | `2048`         | CSM atlas resolution in texels               |
+| `WithPCFRadius`             | `radius float32`    | `1.0`          | Poisson disk PCF kernel radius in texels     |
+| `WithPCFSamples`            | `samples uint32`    | `16`           | Poisson disk tap count                       |
+| `WithShadowInnerRadius`     | `radius float32`    | `100.0`        | Inner cascade sphere radius in world units   |
+| `WithLightShadowTileSize`   | `size int`          | `1024`         | Tile size for the spot/point atlas in texels |
 
 **Key Interface Methods:**
 
-| Method                                                | Description                                              |
-| ----------------------------------------------------- | -------------------------------------------------------- |
-| `CountX() / CountY() / CountZ()`                      | Probe counts per axis                                    |
-| `TotalProbes()`                                       | Total probes (X × Y × Z)                                 |
-| `GridMin() / GridMax() / Spacing()`                   | World-space bounds and per-axis spacing                  |
-| `ProbeIndex(x, y, z)`                                 | Flat index from grid coordinates                         |
-| `Probe(index) / SetProbe(index, p)`                   | CPU-side probe data access                               |
-| `DirtyProbes() / MarkAllDirty() / ClearDirtyProbes()` | Incremental bake management                              |
-| `ProbeBuffer() / SetProbeBuffer()`                    | GPU storage buffer for the full probe array              |
-| `GridParamsBuffer() / SetGridParamsBuffer()`          | GPU uniform buffer for `GPUProbeGridParams`              |
-| `BakeColorTexture() / BakeDepthTexture()`             | Cubemap face bake render targets (reused per-probe/face) |
+| Method                                                                                       | Description                          |
+| -------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `ShadowNear() float32`                                                                       | Near plane for shadow projection     |
+| `ShadowFar() float32`                                                                        | Far plane for shadow projection      |
+| `ShadowNormalBiasScale() float32`                                                            | Normal-offset bias multiplier        |
+| `ShadowMapResolution() int`                                                                  | CSM atlas resolution in texels       |
+| `PCFRadius() float32`                                                                        | PCF kernel radius in texels          |
+| `PCFSamples() uint32`                                                                        | PCF tap count                        |
+| `ShadowInnerRadius() float32`                                                                | Inner cascade sphere radius          |
+| `LightShadowTileSize() int`                                                                  | Spot/point atlas tile size           |
+| `CascadeCount() int`                                                                         | Always 2 (dual-cascade)              |
+| `ComparisonSampler() *wgpu.Sampler` / `SetComparisonSampler(s *wgpu.Sampler)`                | Depth comparison sampler             |
+| `CSMAtlasTexture() *wgpu.Texture` / `SetCSMAtlasTexture(t *wgpu.Texture)`                    | Directional CSM atlas texture        |
+| `CSMAtlasTextureView() *wgpu.TextureView` / `SetCSMAtlasTextureView(tv *wgpu.TextureView)`   | Directional CSM atlas texture view   |
+| `LightShadowAtlas() *wgpu.Texture` / `SetLightShadowAtlas(t *wgpu.Texture)`                  | Spot/point shadow atlas texture      |
+| `LightShadowAtlasView() *wgpu.TextureView` / `SetLightShadowAtlasView(tv *wgpu.TextureView)` | Spot/point shadow atlas texture view |
+| `LightShadowAtlasSlots() int` / `SetLightShadowAtlasSlots(n int)`                            | Number of allocated atlas slots      |
+| `LightShadowAtlasCols() int` / `SetLightShadowAtlasCols(n int)`                              | Number of atlas columns              |
+| `Bgp(key string) bind_group_provider.BindGroupProvider`                                      | Retrieves a shadow BGP by key        |
+| `Bgps() map[string]bind_group_provider.BindGroupProvider`                                    | Returns all shadow BGPs              |
+| `PipelineKey(name string) string`                                                            | Retrieves a pipeline key             |
+| `PipelineKeys() map[string]string`                                                           | Returns all pipeline keys            |
+| `SetPipelineKey(name, key string)`                                                           | Stores a pipeline key                |
 
-**Default BGPs:** `"probe_grid"`, `"probe_sh_project"`, `"probe_bake_camera"`
+**ShadowType constants:**
+
+```go
+const (
+    ShadowTypeSpot     ShadowType = 0  // Perspective spot/point-face shadow
+    ShadowTypeCubeFace ShadowType = 1  // Point light cube face
+)
+```
+
+### ContactShadowHandler
+
+The `ContactShadowHandler` manages a screen-space ray march compute pass that detects fine-detail occlusion at surface contacts (feet on ground, model creases). It runs after SSAO and its result is multiplied into the directional light contribution.
+
+```go
+contact := light.NewContactShadowHandler(
+    light.WithContactShadowsEnabled(true),
+    light.WithContactShadowStepCount(16),
+    light.WithContactShadowMaxDistance(1.0),
+    light.WithContactShadowThickness(0.05),
+)
+```
+
+**Builder Options (`ContactShadowHandlerOption`):**
+
+| Option                         | Parameters          | Default | Description                          |
+| ------------------------------ | ------------------- | ------- | ------------------------------------ |
+| `WithContactShadowsEnabled`    | `enabled bool`      | `true`  | Whether contact shadows are computed |
+| `WithContactShadowStepCount`   | `count int`         | `16`    | Ray march steps per pixel            |
+| `WithContactShadowMaxDistance` | `dist float32`      | `1.0`   | Max march distance in world units    |
+| `WithContactShadowThickness`   | `thickness float32` | `0.05`  | NDC depth thickness tolerance        |
+
+**Key Interface Methods:**
+
+| Method                                                                     | Description                        |
+| -------------------------------------------------------------------------- | ---------------------------------- |
+| `Enabled() bool` / `SetEnabled(enabled bool)`                              | Whether contact shadows are active |
+| `StepCount() int`                                                          | Ray march step count               |
+| `MaxDistance() float32`                                                    | Max march distance in world units  |
+| `Thickness() float32`                                                      | Depth thickness tolerance in NDC   |
+| `Texture() *wgpu.Texture` / `SetTexture(t *wgpu.Texture)`                  | Output contact shadow texture      |
+| `TextureView() *wgpu.TextureView` / `SetTextureView(tv *wgpu.TextureView)` | Output texture view                |
+| `LinearSampler() *wgpu.Sampler` / `SetLinearSampler(s *wgpu.Sampler)`      | Linear sampler                     |
+| `Bgp(key string) bind_group_provider.BindGroupProvider`                    | Retrieves a BGP by key             |
+| `Bgps() map[string]bind_group_provider.BindGroupProvider`                  | Returns all BGPs                   |
+| `PipelineKey(name string) string`                                          | Retrieves a pipeline key           |
+| `PipelineKeys() map[string]string`                                         | Returns all pipeline keys          |
+
+**Default BGPs:** `"contact_shadow_compute"`
 
 ---
 
@@ -611,18 +648,18 @@ Each GPU struct provides:
 
 Per-light data uploaded to the light storage buffer.
 
-| Field          | Type         | Offset | Description                    |
-| -------------- | ------------ | ------ | ------------------------------ |
-| `Position`     | `[3]float32` | 0      | World-space position           |
-| `LightType`    | `uint32`     | 12     | 0=directional, 1=point, 2=spot |
-| `Color`        | `[3]float32` | 16     | RGB color                      |
-| `Intensity`    | `float32`    | 28     | Scalar multiplier              |
-| `Direction`    | `[3]float32` | 32     | Normalized direction           |
-| `LightRange`   | `float32`    | 44     | Attenuation cutoff             |
-| `InnerCone`    | `float32`    | 48     | cos(inner half-angle)          |
-| `OuterCone`    | `float32`    | 52     | cos(outer half-angle)          |
-| `CastsShadows` | `uint32`     | 56     | 1=casts, 0=does not            |
-| `_pad`         | `uint32`     | 60     | Padding to 64 bytes            |
+| Field          | Type         | Offset | Description                                                        |
+| -------------- | ------------ | ------ | ------------------------------------------------------------------ |
+| `Position`     | `[3]float32` | 0      | World-space position                                               |
+| `LightType`    | `uint32`     | 12     | 0=directional, 1=point, 2=spot                                     |
+| `Color`        | `[3]float32` | 16     | RGB color                                                          |
+| `Intensity`    | `float32`    | 28     | Scalar multiplier                                                  |
+| `Direction`    | `[3]float32` | 32     | Normalized direction                                               |
+| `LightRange`   | `float32`    | 44     | Attenuation cutoff                                                 |
+| `InnerCone`    | `float32`    | 48     | cos(inner half-angle)                                              |
+| `OuterCone`    | `float32`    | 52     | cos(outer half-angle)                                              |
+| `CastsShadows` | `uint32`     | 56     | 1=casts, 0=does not                                                |
+| `ShadowIndex`  | `uint32`     | 60     | Index into the light shadow entry buffer; `0xFFFFFFFF` = no shadow |
 
 **Size:** 64 bytes
 
@@ -637,68 +674,88 @@ Header prepended to the light storage buffer.
 
 **Size:** 16 bytes
 
-### GPUShadowData
+### GPUCSMCascade
 
-Directional shadow data for the lit fragment shader (VSM mode).
+One cascade block in the directional shadow atlas. 80 bytes.
 
-| Field                 | Type          | Offset | Description                                                  |
-| --------------------- | ------------- | ------ | ------------------------------------------------------------ |
-| `LightVP`             | `[16]float32` | 0      | Orthographic view-projection from light's perspective        |
-| `LightView`           | `[16]float32` | 64     | View-only matrix (no projection) for VSM linear depth        |
-| `TexelSize`           | `[2]float32`  | 128    | `1.0 / resolution` for VSM texel calculations                |
-| `Bias`                | `float32`     | 136    | Depth comparison bias                                        |
-| `NormalBias`          | `float32`     | 140    | World-space normal-offset distance                           |
-| `ShadowNear`          | `float32`     | 144    | Near plane for linear depth normalization                    |
-| `ShadowFar`           | `float32`     | 148    | Far plane for linear depth normalization                     |
-| `MinVariance`         | `float32`     | 152    | Minimum variance clamp for Chebyshev's inequality            |
-| `LightBleedReduction` | `float32`     | 156    | Exponent to reduce light-bleeding artifacts                  |
-| `LightSize`           | `float32`     | 160    | World-space light size for PCSS penumbra estimation          |
-| `ShadowHalfExtent`    | `float32`     | 164    | Orthographic frustum half-size for world-to-texel conversion |
-| `_pad`                | `[2]float32`  | 168    | Padding to 176 bytes (16-byte alignment)                     |
+| Field        | Type          | Offset | Description                            |
+| ------------ | ------------- | ------ | -------------------------------------- |
+| `LightVP`    | `[16]float32` | 0      | Light view-projection matrix           |
+| `ShadowNear` | `float32`     | 64     | Shadow near plane                      |
+| `ShadowFar`  | `float32`     | 68     | Shadow far plane                       |
+| `CamFar`     | `float32`     | 72     | Camera far plane for cascade selection |
+| `NormalBias` | `float32`     | 76     | World-space normal-offset bias         |
 
-**Size:** 176 bytes
+---
 
-Additional methods:
+### GPUCSMData
 
-- `ComputeDirectionalLightVP(lightDir, centerX, centerY, centerZ, halfExtent, near, far)` — Builds the orthographic view-projection matrix centered on the camera position. Also stores the view-only matrix and near/far planes for VSM linear depth.
-- `ComputeNormalBias(halfExtent, scale, resolution)` — Derives the world-space normal-offset bias from shadow map parameters.
+Top-level CSM uniform written to the shadow bind group each frame. 192 bytes total (32-byte header + 2 × 80-byte `GPUCSMCascade` blocks).
+
+| Field               | Type               | Offset | Description                                     |
+| ------------------- | ------------------ | ------ | ----------------------------------------------- |
+| `TexelSize`         | `[2]float32`       | 0      | `1 / resolution` for each atlas axis            |
+| `Bias`              | `float32`          | 8      | Depth comparison bias                           |
+| `InnerRadius`       | `float32`          | 12     | Inner cascade sphere radius in world units      |
+| `PCFRadius`         | `float32`          | 16     | Poisson disk radius in texels                   |
+| `ShadowMaxDistance` | `float32`          | 20     | Maximum shadow distance                         |
+| `_pad0`             | `float32`          | 24     | Padding                                         |
+| `_pad1`             | `float32`          | 28     | Padding                                         |
+| `Cascades`          | `[2]GPUCSMCascade` | 32     | Two cascade blocks (inner sphere + frustum-fit) |
+
+**Method:**
+
+```go
+func (d *GPUCSMData) ComputeCascades(
+    lightDir [3]float32,
+    camNear, camFar, camFov, camAspect float32,
+    camViewMatrix [16]float32,
+    cameraPosition [3]float32,
+    innerRadius, normalBiasScale float32,
+    resolution int,
+)
+```
+
+Computes both cascade view-projection matrices, normal bias, and cascade selection parameters from the camera and light state, writing results directly into `Cascades[0]` and `Cascades[1]`.
 
 ### GPUShadowUniform
 
-Shadow vertex shader uniform for VSM depth-moments pass.
+Shadow vertex shader uniform for a single depth pass.
 
-| Field        | Type          | Offset | Description                                           |
-| ------------ | ------------- | ------ | ----------------------------------------------------- |
-| `LightVP`    | `[16]float32` | 0      | Orthographic view-projection from light's perspective |
-| `LightView`  | `[16]float32` | 64     | View-only matrix for linear depth in VSM              |
-| `ShadowNear` | `float32`     | 128    | Near plane for linear depth normalization             |
-| `ShadowFar`  | `float32`     | 132    | Far plane for linear depth normalization              |
+| Field     | Type          | Offset | Description                                           |
+| --------- | ------------- | ------ | ----------------------------------------------------- |
+| `LightVP` | `[16]float32` | 0      | Light view-projection matrix for a single shadow pass |
 
-**Size:** 136 bytes
+Total size: **64 bytes**.
+
+### GPULightShadowEntry
+
+Per-light shadow atlas entry written into a GPU storage buffer for spot and point lights. 96 bytes.
+
+| Field        | Type          | Offset | Description                                                |
+| ------------ | ------------- | ------ | ---------------------------------------------------------- |
+| `LightVP`    | `[16]float32` | 0      | Light view-projection matrix                               |
+| `AtlasRect`  | `[4]float32`  | 64     | `(u_offset, v_offset, u_scale, v_scale)` in atlas UV space |
+| `Bias`       | `float32`     | 80     | Depth comparison bias                                      |
+| `Near`       | `float32`     | 84     | Shadow near plane                                          |
+| `Far`        | `float32`     | 88     | Shadow far plane                                           |
+| `ShadowType` | `ShadowType`  | 92     | `0` = spot / `1` = cube face                               |
+
+Spot lights produce 1 entry per light. Point lights produce 6 consecutive entries (one per cube face, selected in the lit shader by the dominant axis of `light → fragment`).
 
 ### GPUBlurParams
 
-Uniform data for the separable VSM blur compute shader.
+Uniform data for the separable SSAO blur compute shader.
 
-| Field          | Type       | Offset | Description                                                          |
-| -------------- | ---------- | ------ | -------------------------------------------------------------------- |
-| `Direction`    | `[2]int32` | 0      | `(1,0)` for horizontal, `(0,1)` for vertical                         |
-| `Radius`       | `int32`    | 8      | Half-width of the box filter kernel in texels                        |
-| `GBufferScale` | `int32`    | 12     | Coordinate multiplier for depth lookups (1 = full-res, 2 = half-res) |
+| Field          | Type       | Offset | Description                                                      |
+| -------------- | ---------- | ------ | ---------------------------------------------------------------- |
+| `Direction`    | `[2]int32` | 0      | `(1,0)` for horizontal pass, `(0,1)` for vertical pass           |
+| `Radius`       | `int32`    | 8      | Half-width of the filter kernel in texels                        |
+| `GBufferScale` | `int32`    | 12     | Lookup scale factor for half-resolution SSAO                     |
+| `CascadeWidth` | `int32`    | 16     | Per-cascade atlas column width; `0` disables horizontal clamping |
+| `_pad`         | `int32`    | 20     | Padding to 24 bytes                                              |
 
-**Size:** 16 bytes
-
-### GPUSATParams
-
-Uniform data for the SAT recursive-doubling compute shader.
-
-| Field       | Type       | Offset | Description                                                          |
-| ----------- | ---------- | ------ | -------------------------------------------------------------------- |
-| `Direction` | `[2]int32` | 0      | `(1,0)` for horizontal, `(0,1)` for vertical                         |
-| `Offset`    | `int32`    | 8      | `2^k` step offset for recursive doubling; 0 = precision distribution |
-| `_pad`      | `int32`    | 12     | Padding to 16 bytes                                                  |
-
-**Size:** 16 bytes
+Total size: **24 bytes**.
 
 ### GPUGBufferOutput
 
@@ -733,75 +790,56 @@ Uniform data for the SSAO compute shader.
 
 **Size:** 176 bytes
 
-### GPUIrradianceProbe
-
-Per-probe data stored in the GPU storage buffer. Contains L2 spherical harmonics (9 coefficients per RGB channel).
-
-| Field      | Type          | Offset | Description                                           |
-| ---------- | ------------- | ------ | ----------------------------------------------------- |
-| `Position` | `[4]float32`  | 0      | World XYZ + status in W (0=inactive, 1=active)        |
-| `SH_R`     | `[12]float32` | 16     | L2 SH red coefficients (indices 0–8 used, 9–11 pad)   |
-| `SH_G`     | `[12]float32` | 64     | L2 SH green coefficients (indices 0–8 used, 9–11 pad) |
-| `SH_B`     | `[12]float32` | 112    | L2 SH blue coefficients (indices 0–8 used, 9–11 pad)  |
-
-**Size:** 160 bytes
-
-Additional helper: `MarshalProbeBuffer(probes []GPUIrradianceProbe) []byte` marshals a slice of probes into a tightly-packed buffer for GPU upload.
-
-### GPUProbeGridParams
-
-Uniform data describing the irradiance probe grid layout.
-
-| Field         | Type         | Offset | Description                               |
-| ------------- | ------------ | ------ | ----------------------------------------- |
-| `GridMin`     | `[3]float32` | 0      | World-space minimum corner of the grid    |
-| `ProbeCountX` | `uint32`     | 12     | Probes along X                            |
-| `GridMax`     | `[3]float32` | 16     | World-space maximum corner of the grid    |
-| `ProbeCountY` | `uint32`     | 28     | Probes along Y                            |
-| `Spacing`     | `[3]float32` | 32     | Distance between adjacent probes per axis |
-| `ProbeCountZ` | `uint32`     | 44     | Probes along Z                            |
-| `TotalProbes` | `uint32`     | 48     | Total probes (X × Y × Z)                  |
-| `_pad`        | `[7]uint32`  | 52     | Padding to 80 bytes (WGSL alignment)      |
-
-**Size:** 80 bytes
-
-### GPUProbeBakeCamera
-
-Camera uniform for probe cubemap face baking.
-
-| Field            | Type          | Offset | Description                         |
-| ---------------- | ------------- | ------ | ----------------------------------- |
-| `ViewProj`       | `[16]float32` | 0      | Cubemap face view-projection matrix |
-| `CameraPosition` | `[3]float32`  | 64     | Probe world-space position          |
-| `_pad`           | `float32`     | 76     | Padding to 80 bytes                 |
-
-**Size:** 80 bytes
-
-### GPUSHProjectParams
-
-Uniform data for the SH projection compute shader.
-
-| Field        | Type     | Offset | Description                        |
-| ------------ | -------- | ------ | ---------------------------------- |
-| `ProbeIndex` | `uint32` | 0      | Target probe index                 |
-| `FaceIndex`  | `uint32` | 4      | Cubemap face being projected (0–5) |
-| `Resolution` | `uint32` | 8      | Bake resolution (pixels per face)  |
-| `_pad`       | `uint32` | 12     | Padding to 16 bytes                |
-
-**Size:** 16 bytes
-
 ### GPUCompositionParams
 
 Uniform data for the composition fragment shader.
 
-| Field                | Type      | Offset | Description                             |
-| -------------------- | --------- | ------ | --------------------------------------- |
-| `ToneMappingEnabled` | `uint32`  | 0      | 1=ACES tone mapping applied, 0=bypassed |
-| `Exposure`           | `float32` | 4      | Exposure multiplier before tone mapping |
-| `_pad1`              | `uint32`  | 8      | Padding                                 |
-| `_pad2`              | `uint32`  | 12     | Padding to 16 bytes                     |
+| Field                 | Type      | Offset | Description                                      |
+| --------------------- | --------- | ------ | ------------------------------------------------ |
+| `ToneMappingEnabled`  | `uint32`  | 0      | 1=ACES tone mapping applied, 0=bypassed          |
+| `Exposure`            | `float32` | 4      | Exposure multiplier before tone mapping          |
+| `AutoExposureEnabled` | `uint32`  | 8      | Non-zero when GPU-driven auto-exposure is active |
+| `_pad2`               | `uint32`  | 12     | Padding to 16 bytes                              |
 
 **Size:** 16 bytes
+
+### GPULuminanceParams
+
+Uniform data for the luminance compute pass used by auto-exposure adaptation.
+
+| Offset | Field                   | Type  | Description                                        |
+| ------ | ----------------------- | ----- | -------------------------------------------------- |
+| 0      | `screen_width`          | `u32` | HDR texture width in pixels.                       |
+| 4      | `screen_height`         | `u32` | HDR texture height in pixels.                      |
+| 8      | `adapt_speed`           | `f32` | Exposure adaptation speed (units/second).          |
+| 12     | `delta_time`            | `f32` | Frame delta time in seconds.                       |
+| 16     | `min_exposure`          | `f32` | Minimum clamped exposure value.                    |
+| 20     | `max_exposure`          | `f32` | Maximum clamped exposure value.                    |
+| 24     | `key_value`             | `f32` | Middle-gray key value for exposure mapping (0.18). |
+| 28     | `auto_exposure_enabled` | `u32` | Non-zero when auto-exposure is active.             |
+
+**Size:** 32 bytes
+
+**Workgroup size:** Configurable via `WithLuminanceWorkgroupSize(size int)` on `CompositionHandler`; defaults to `16`.
+
+### GPUContactShadowParams
+
+Uniform data for the contact shadow compute shader.
+
+| Field            | Type          | Offset | Description                                   |
+| ---------------- | ------------- | ------ | --------------------------------------------- |
+| `ViewProj`       | `[16]float32` | 0      | View-projection matrix (column-major)         |
+| `InvViewProj`    | `[16]float32` | 64     | Inverse view-projection matrix (column-major) |
+| `LightDirection` | `[3]float32`  | 128    | Directional light direction (world space)     |
+| `StepCount`      | `uint32`      | 140    | Number of ray march steps                     |
+| `MaxDistance`    | `float32`     | 144    | Max ray march distance in world units         |
+| `Thickness`      | `float32`     | 148    | Depth thickness tolerance in NDC depth space  |
+| `ScreenWidth`    | `float32`     | 152    | Output texture width in pixels                |
+| `ScreenHeight`   | `float32`     | 156    | Output texture height in pixels               |
+| `CameraPosition` | `[3]float32`  | 160    | World-space camera position                   |
+| `_pad`           | `float32`     | 172    | Padding to 176-byte alignment                 |
+
+**Size:** 176 bytes
 
 ### GPUSSRParams
 
@@ -846,22 +884,23 @@ Uniform data for the light culling compute shader.
 
 Fragment shader uniform for tile-based light indexing.
 
-| Field              | Type     | Offset | Description                |
-| ------------------ | -------- | ------ | -------------------------- |
-| `TileCountX`       | `uint32` | 0      | Number of tile columns     |
-| `MaxLightsPerTile` | `uint32` | 4      | Max light indices per tile |
+| Field              | Type     | Offset | Description                           |
+| ------------------ | -------- | ------ | ------------------------------------- |
+| `TileCountX`       | `uint32` | 0      | Number of tile columns                |
+| `MaxLightsPerTile` | `uint32` | 4      | Maximum light indices stored per tile |
+| `ScreenWidth`      | `uint32` | 8      | Screen width in pixels                |
+| `ScreenHeight`     | `uint32` | 12     | Screen height in pixels               |
 
-**Size:** 8 bytes
+Total size: **16 bytes**.
 
 ---
 
 ## Helper Functions
 
-| Function                                                        | Description                                                                                                                          |
-| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `ToGPULight(l Light) GPULight`                                  | Converts a `Light` to its GPU-aligned struct representation                                                                          |
-| `MarshalLightBuffer(lights []Light, ambient [3]float32) []byte` | Marshals a header + enabled lights into a single byte buffer for GPU upload. Only enabled lights are included, up to `MaxGPULights`. |
-| `MarshalProbeBuffer(probes []GPUIrradianceProbe) []byte`        | Marshals a probe array into a tightly-packed byte buffer for GPU storage buffer upload.                                              |
+| Function                                                                                        | Description                                                                                                                                                                                                                                           |
+| ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ToGPULight(l Light) GPULight`                                                                  | Converts a `Light` to its GPU-aligned struct representation                                                                                                                                                                                           |
+| `(h LightingHandler) MarshalLightBuffer(lights []Light, shadowIndices map[Light]uint32) []byte` | Interface method on `LightingHandler`. Marshals enabled lights into a GPU storage buffer byte slice using the handler's internal ambient color. `shadowIndices` maps each shadow-casting light to its slot index in the `GPULightShadowEntry` buffer. |
 
 ---
 
@@ -875,73 +914,94 @@ import (
 )
 
 func main() {
-    // Create a directional sun light with shadows
+    // Create directional light (sun)
     sun := light.NewLight(light.LightTypeDirectional,
-        light.WithDirection(0.3, -1, 0.5),
-        light.WithColor(1, 0.95, 0.9),
-        light.WithIntensity(1.5),
+        light.WithDirection(0, -1, 0.5),
+        light.WithColor(1.0, 0.95, 0.8),
+        light.WithIntensity(2.0),
         light.WithCastsShadows(true),
+        light.WithShadowBias(0.001),
     )
 
     // Create a point light
-    torch := light.NewLight(light.LightTypePoint,
-        light.WithPosition(5, 2, 0),
-        light.WithColor(1, 0.6, 0.3),
-        light.WithIntensity(3.0),
-        light.WithRange(15.0),
+    bulb := light.NewLight(light.LightTypePoint,
+        light.WithPosition(0, 3, 0),
+        light.WithColor(1.0, 0.8, 0.6),
+        light.WithIntensity(5.0),
+        light.WithRange(20.0),
+        light.WithCastsShadows(true),
     )
 
-    // Create a lighting handler with VSM and PCSS enabled
+    // Create a spot light
+    flashlight := light.NewLight(light.LightTypeSpot,
+        light.WithPosition(0, 5, 0),
+        light.WithDirection(0, -1, 0),
+        light.WithColor(1, 1, 1),
+        light.WithIntensity(8.0),
+        light.WithRange(30.0),
+        light.WithSpotCone(15, 25),
+        light.WithCastsShadows(true),
+    )
+
+    // Create the lighting handler with shadow configuration
     handler := light.NewLightingHandler(
-        light.WithShadowHalfExtent(50.0),
-        light.WithShadowNearFar(0.1, 300.0),
-        light.WithShadowBias(0.002),
-        light.WithShadowNormalBiasScale(3.0),
-        light.WithShadowMapResolution(4096),
         light.WithAmbientColor([3]float32{0.05, 0.05, 0.08}),
-        light.WithVSMBlurRadius(6),
-        light.WithVSMMinVariance(0.0001),
-        light.WithVSMLightBleedReduction(0.4),
-        light.WithPCSSEnabled(true),
-        light.WithVSMLightSize(2.0),
+        light.WithShadowHandler(light.NewShadowHandler(
+            light.WithShadowNearFar(0.1, 300.0),
+            light.WithShadowNormalBiasScale(3.0),
+            light.WithShadowMapResolution(4096),
+            light.WithPCFRadius(1.5),
+            light.WithShadowInnerRadius(50.0),
+        )),
+        light.WithContactShadowHandler(light.NewContactShadowHandler(
+            light.WithContactShadowsEnabled(true),
+            light.WithContactShadowStepCount(16),
+            light.WithContactShadowMaxDistance(1.0),
+            light.WithContactShadowThickness(0.05),
+        )),
     )
-    _ = handler // attach to scene via scene.WithLighting(handler)
 
-    // Marshal for GPU upload
-    lights := []light.Light{sun, torch}
-    ambient := [3]float32{0.05, 0.05, 0.08}
-    buf := light.MarshalLightBuffer(lights, ambient)
-    _ = buf // upload to GPU storage buffer
+    // Add lights
+    handler.AddLight(sun)
+    handler.AddLight(bulb)
+    handler.AddLight(flashlight)
 
-    // Compute tile counts for Forward+ culling
+    // Query tile layout
     tileX, tileY := light.TileCounts(1280, 720)
     _, _ = tileX, tileY
 
-    // Set up shadow data for the directional light (VSM mode)
-    shadow := &light.GPUShadowData{
-        TexelSize:           [2]float32{
-            1.0 / float32(light.ShadowMapResolution),
-            1.0 / float32(light.ShadowMapResolution),
-        },
-        Bias:                light.DefaultShadowBias,
-        MinVariance:         light.DefaultVSMMinVariance,
-        LightBleedReduction: light.DefaultVSMLightBleedReduction,
-        LightSize:           light.DefaultVSMLightSize,
-        ShadowHalfExtent:    light.DefaultShadowHalfExtent,
-    }
-    shadow.ComputeDirectionalLightVP(
-        sun.Direction(),
-        0, 0, 0, // camera center
-        light.DefaultShadowHalfExtent,
-        light.DefaultShadowNear,
-        light.DefaultShadowFar,
-    )
-    shadow.ComputeNormalBias(
-        light.DefaultShadowHalfExtent,
-        light.DefaultShadowNormalBiasScale,
-        light.ShadowMapResolution,
-    )
-    shadowBuf := shadow.Marshal()
-    _ = shadowBuf // upload to GPU uniform buffer
+    _ = handler
 }
 ```
+
+---
+
+## Files
+
+| File                                | Contents                                                                                                                                                                                                                                   |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `light.go`                          | `Light` interface and `LightType` constants                                                                                                                                                                                                |
+| `light_impl.go`                     | Unexported `light` struct and method implementations                                                                                                                                                                                       |
+| `light_builder.go`                  | `LightBuilderOption` type, `With*` functions, `NewLight` constructor                                                                                                                                                                       |
+| `light_handler.go`                  | `LightingHandler` interface                                                                                                                                                                                                                |
+| `light_handler_impl.go`             | Unexported `lightingHandler` struct and method implementations                                                                                                                                                                             |
+| `light_handler_builder.go`          | `LightingHandlerOption` type, `With*` functions, `NewLightingHandler` constructor                                                                                                                                                          |
+| `gbuffer_handler.go`                | `GBufferHandler` interface                                                                                                                                                                                                                 |
+| `gbuffer_handler_impl.go`           | Unexported `gBufferHandler` struct                                                                                                                                                                                                         |
+| `gbuffer_handler_builder.go`        | `GBufferHandlerOption` type and `NewGBufferHandler` constructor                                                                                                                                                                            |
+| `ssao_handler.go`                   | `SSAOHandler` interface                                                                                                                                                                                                                    |
+| `ssao_handler_impl.go`              | Unexported `ssaoHandler` struct                                                                                                                                                                                                            |
+| `ssao_handler_builder.go`           | `SSAOHandlerOption` type and `NewSSAOHandler` constructor                                                                                                                                                                                  |
+| `ssr_handler.go`                    | `SSRHandler` interface                                                                                                                                                                                                                     |
+| `ssr_handler_impl.go`               | Unexported `ssrHandler` struct                                                                                                                                                                                                             |
+| `ssr_handler_builder.go`            | `SSRHandlerOption` type and `NewSSRHandler` constructor                                                                                                                                                                                    |
+| `composition_handler.go`            | `CompositionHandler` interface                                                                                                                                                                                                             |
+| `composition_handler_impl.go`       | Unexported `compositionHandler` struct                                                                                                                                                                                                     |
+| `composition_handler_builder.go`    | `CompositionHandlerOption` type and `NewCompositionHandler` constructor                                                                                                                                                                    |
+| `shadow_handler.go`                 | `ShadowHandler` interface and `ShadowType` constants                                                                                                                                                                                       |
+| `shadow_handler_impl.go`            | Unexported `shadowHandler` struct                                                                                                                                                                                                          |
+| `shadow_handler_builder.go`         | `ShadowHandlerOption` type and `NewShadowHandler` constructor                                                                                                                                                                              |
+| `contact_shadow_handler.go`         | `ContactShadowHandler` interface                                                                                                                                                                                                           |
+| `contact_shadow_handler_impl.go`    | Unexported `contactShadowHandler` struct                                                                                                                                                                                                   |
+| `contact_shadow_handler_builder.go` | `ContactShadowHandlerOption` type and `NewContactShadowHandler` constructor                                                                                                                                                                |
+| `gpu_types.go`                      | All GPU-marshaled structs (`GPULight`, `GPUCSMData`, `GPUCSMCascade`, `GPUShadowUniform`, `GPULightShadowEntry`, `GPUSSAOParams`, `GPUBlurParams`, `GPUTileUniforms`, `GPULuminanceParams`, `GPUContactShadowParams`) and helper functions |

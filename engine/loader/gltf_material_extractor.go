@@ -125,6 +125,11 @@ func (e *gltfMaterialExtractorImpl) ExtractMaterial(materialIndex int) (*common.
 		}
 	}
 
+	result.AlphaMode = mat.AlphaMode
+	if mat.AlphaCutoff != nil {
+		result.AlphaCutoff = *mat.AlphaCutoff
+	}
+
 	return result, nil
 }
 

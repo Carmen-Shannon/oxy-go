@@ -1,9 +1,7 @@
 package light
 
-import "math"
-
 // LightBuilderOption is a function that configures a Light instance during construction.
-type LightBuilderOption func(*lightImpl)
+type LightBuilderOption func(*light)
 
 // WithPosition is an option builder that sets the world-space position of the light.
 //
@@ -15,7 +13,7 @@ type LightBuilderOption func(*lightImpl)
 // Returns:
 //   - LightBuilderOption: a function that applies the position option to a lightImpl
 func WithPosition(x, y, z float32) LightBuilderOption {
-	return func(l *lightImpl) {
+	return func(l *light) {
 		l.position = [3]float32{x, y, z}
 	}
 }
@@ -31,7 +29,7 @@ func WithPosition(x, y, z float32) LightBuilderOption {
 // Returns:
 //   - LightBuilderOption: a function that applies the direction option to a lightImpl
 func WithDirection(x, y, z float32) LightBuilderOption {
-	return func(l *lightImpl) {
+	return func(l *light) {
 		l.direction = normalize3(x, y, z)
 	}
 }
@@ -46,7 +44,7 @@ func WithDirection(x, y, z float32) LightBuilderOption {
 // Returns:
 //   - LightBuilderOption: a function that applies the color option to a lightImpl
 func WithColor(r, g, b float32) LightBuilderOption {
-	return func(l *lightImpl) {
+	return func(l *light) {
 		l.color = [3]float32{r, g, b}
 	}
 }
@@ -59,7 +57,7 @@ func WithColor(r, g, b float32) LightBuilderOption {
 // Returns:
 //   - LightBuilderOption: a function that applies the intensity option to a lightImpl
 func WithIntensity(intensity float32) LightBuilderOption {
-	return func(l *lightImpl) {
+	return func(l *light) {
 		l.intensity = intensity
 	}
 }
@@ -73,7 +71,7 @@ func WithIntensity(intensity float32) LightBuilderOption {
 // Returns:
 //   - LightBuilderOption: a function that applies the range option to a lightImpl
 func WithRange(lightRange float32) LightBuilderOption {
-	return func(l *lightImpl) {
+	return func(l *light) {
 		l.lightRange = lightRange
 	}
 }
@@ -89,7 +87,7 @@ func WithRange(lightRange float32) LightBuilderOption {
 // Returns:
 //   - LightBuilderOption: a function that applies the spot cone option to a lightImpl
 func WithSpotCone(innerDeg, outerDeg float32) LightBuilderOption {
-	return func(l *lightImpl) {
+	return func(l *light) {
 		l.innerCone = cosDeg(innerDeg)
 		l.outerCone = cosDeg(outerDeg)
 	}
@@ -103,7 +101,7 @@ func WithSpotCone(innerDeg, outerDeg float32) LightBuilderOption {
 // Returns:
 //   - LightBuilderOption: a function that applies the enabled option to a lightImpl
 func WithEnabled(enabled bool) LightBuilderOption {
-	return func(l *lightImpl) {
+	return func(l *light) {
 		l.enabled = enabled
 	}
 }
@@ -117,7 +115,7 @@ func WithEnabled(enabled bool) LightBuilderOption {
 // Returns:
 //   - LightBuilderOption: a function that applies the ephemeral option to a lightImpl
 func WithEphemeral(ephemeral bool) LightBuilderOption {
-	return func(l *lightImpl) {
+	return func(l *light) {
 		l.ephemeral = ephemeral
 	}
 }
@@ -131,23 +129,51 @@ func WithEphemeral(ephemeral bool) LightBuilderOption {
 // Returns:
 //   - LightBuilderOption: a function that applies the shadow casting option to a lightImpl
 func WithCastsShadows(castsShadows bool) LightBuilderOption {
-	return func(l *lightImpl) {
+	return func(l *light) {
 		l.castsShadows = castsShadows
 	}
 }
 
-// normalize3 normalizes a 3-component vector. Returns a zero vector if the input
-// has zero length.
-func normalize3(x, y, z float32) [3]float32 {
-	length := float32(math.Sqrt(float64(x*x + y*y + z*z)))
-	if length == 0 {
-		return [3]float32{0, 0, 0}
+// WithShadowBias sets the depth comparison bias for this light's shadow map.
+// Default is 0.003.
+//
+// Parameters:
+//   - bias: the depth bias value
+//
+// Returns:
+//   - LightBuilderOption: a function that applies the shadow bias option to a lightImpl
+func WithShadowBias(bias float32) LightBuilderOption {
+	return func(l *light) {
+		l.shadowBias = bias
 	}
-	inv := 1.0 / length
-	return [3]float32{x * inv, y * inv, z * inv}
 }
 
-// cosDeg converts an angle in degrees to the cosine of that angle in radians.
-func cosDeg(deg float32) float32 {
-	return float32(math.Cos(float64(deg) * math.Pi / 180.0))
+// NewLight creates a new Light of the specified type with sensible defaults and
+// any provided options applied.
+//
+// Parameters:
+//   - lightType: the kind of light to create (directional, point, or spot)
+//   - opts: variadic list of LightBuilderOption functions to configure the light
+//
+// Returns:
+//   - Light: a new Light instance
+func NewLight(lightType LightType, opts ...LightBuilderOption) Light {
+	l := &light{
+		lightType:    lightType,
+		position:     [3]float32{0, 0, 0},
+		direction:    [3]float32{0, -1, 0},
+		color:        [3]float32{1, 1, 1},
+		intensity:    1.0,
+		lightRange:   10.0,
+		innerCone:    0.9063, // cos(25°)
+		outerCone:    0.8192, // cos(35°)
+		enabled:      true,
+		ephemeral:    false,
+		castsShadows: false,
+		shadowBias:   0.0002,
+	}
+	for _, opt := range opts {
+		opt(l)
+	}
+	return l
 }

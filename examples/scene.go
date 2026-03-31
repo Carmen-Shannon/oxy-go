@@ -15,6 +15,8 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/material"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	"github.com/Carmen-Shannon/oxy-go/engine/window"
 )
@@ -75,8 +77,10 @@ func main() {
 			)),
 			model.WithRenderMaterials(material.NewMaterial(
 				material.WithName("rainbow_cube"),
-				material.WithPipelineKey("rainbow_cube"),
-				material.WithFragmentShaderPath("examples/assets/shaders/rainbow-frag.wgsl"),
+				material.WithPipelineKey("rainbow_cube_material"),
+				material.WithPipelineOptions(
+					pipeline.WithFragmentShader(shader.NewShader("rainbow_cube_frag", shader.ShaderTypeFragment, "examples/assets/shaders/rainbow-frag.wgsl")),
+				),
 			)),
 		)),
 		game_object.WithPosition(0, 0, 0),
@@ -85,7 +89,7 @@ func main() {
 		game_object.WithEphemeral(true),
 	)
 
-	_ = sc.Add(cube)
+	_ = sc.AddGameObject(cube)
 
 	eng.AddScene(0, sc)
 

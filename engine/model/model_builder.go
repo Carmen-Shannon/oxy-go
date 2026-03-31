@@ -102,6 +102,34 @@ func WithBoundingRadius(radius float32) ModelBuilderOption {
 	}
 }
 
+// WithBoundingMin is an option builder that sets the minimum corner of the model's
+// axis-aligned bounding box. Use this to propagate AABB data computed at load time.
+//
+// Parameters:
+//   - min: the minimum corner (min X, min Y, min Z)
+//
+// Returns:
+//   - ModelBuilderOption: a function that applies the bounding min option to a model
+func WithBoundingMin(min [3]float32) ModelBuilderOption {
+	return func(m *model) {
+		m.boundingMin = min
+	}
+}
+
+// WithBoundingMax is an option builder that sets the maximum corner of the model's
+// axis-aligned bounding box. Use this to propagate AABB data computed at load time.
+//
+// Parameters:
+//   - max: the maximum corner (max X, max Y, max Z)
+//
+// Returns:
+//   - ModelBuilderOption: a function that applies the bounding max option to a model
+func WithBoundingMax(max [3]float32) ModelBuilderOption {
+	return func(m *model) {
+		m.boundingMax = max
+	}
+}
+
 // WithRenderMaterials is an option builder that sets the render-ready materials for the Model.
 // These are GPU-configured Material instances used during DrawCalls.
 //
@@ -199,4 +227,21 @@ func WithShadowCullMode(mode ShadowCullMode) ModelBuilderOption {
 	return func(m *model) {
 		m.shadowCullMode = mode
 	}
+}
+
+// NewModel creates a new Model instance with the specified options applied.
+//
+// Parameters:
+//   - options: a variadic list of ModelBuilderOption functions to configure the Model
+//
+// Returns:
+//   - Model: a new instance of Model configured with the provided options
+func NewModel(options ...ModelBuilderOption) Model {
+	m := &model{
+		castsShadows: true,
+	}
+	for _, opt := range options {
+		opt(m)
+	}
+	return m
 }

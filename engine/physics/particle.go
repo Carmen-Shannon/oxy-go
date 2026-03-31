@@ -210,10 +210,6 @@ func VoxelizeMesh(src model.Model, particleRadius float32, surfaceOnly bool) []P
 
 						// t = f * dot(e2, q)
 						t := f * (e2x*qx + e2y*qy + e2z*qz)
-						if t < epsilon {
-							continue
-						}
-
 						intersections = append(intersections, ox+t)
 					}
 

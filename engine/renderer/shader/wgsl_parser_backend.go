@@ -75,9 +75,6 @@ var wgslPrimitiveLayoutMap = map[string]wgslTypeLayout{
 // Returns:
 //   - uint64: value rounded up to the next multiple of alignment
 func roundUpAlign(alignment, value uint64) uint64 {
-	if alignment == 0 {
-		return value
-	}
 	return (value + alignment - 1) &^ (alignment - 1)
 }
 
@@ -165,14 +162,6 @@ func computeStructLayout(ps parsedStruct, knownTypes map[string]wgslTypeLayout) 
 			if strings.HasPrefix(field.typeName, "array<") && !strings.Contains(field.typeName, ",") {
 				// Runtime-sized array as last member — struct size is the fixed-prefix offset
 				offset = roundUpAlign(maxAlign, offset)
-				if offset == 0 {
-					// Struct has only a runtime-sized array; use element size as minimum
-					inner := field.typeName[6 : len(field.typeName)-1]
-					elemType := strings.TrimSpace(inner)
-					if elemLayout, elemOk := resolveTypeLayout(elemType, knownTypes); elemOk {
-						return wgslTypeLayout{roundUpAlign(elemLayout.align, elemLayout.size), elemLayout.align}, true
-					}
-				}
 				return wgslTypeLayout{offset, maxAlign}, true
 			}
 			return wgslTypeLayout{}, false

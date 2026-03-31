@@ -157,9 +157,9 @@ func main() {
 		scene.WithActive(true),
 		scene.WithScreenSize(eng.Window().Width(), eng.Window().Height()),
 		scene.WithLighting(light.NewLightingHandler(
-			light.WithShadowHalfExtent(60),
-			light.WithShadowNearFar(0.1, 120),
-			light.WithShadowBias(0.001),
+			light.WithShadowHandler(light.NewShadowHandler(
+				light.WithShadowNearFar(0.1, 1000),
+			)),
 		)),
 	)
 	sc.SetPhysicsHandler(ph)
@@ -172,6 +172,7 @@ func main() {
 		light.WithColor(1.0, 0.95, 0.85),
 		light.WithIntensity(1.5),
 		light.WithCastsShadows(true),
+		light.WithShadowBias(0.001),
 		light.WithEnabled(true),
 	)
 	sc.AddLight(sun)
@@ -213,7 +214,7 @@ func main() {
 		game_object.WithScale(1, 1, 1),
 		game_object.WithRigidBody(boxBody),
 	)
-	sc.Add(boxObj)
+	sc.AddGameObject(boxObj)
 
 	// ── Fox model (animated obstacle in the center of the box) ─────────
 	// Load the fox glTF model and place it at the center of the box floor.
@@ -256,7 +257,7 @@ func main() {
 		game_object.WithScale(foxScale, foxScale, foxScale),
 		game_object.WithRigidBody(foxBody),
 	)
-	sc.Add(fox)
+	sc.AddGameObject(fox)
 
 	// Start a random animation on the fox, looping
 	if foxModel.AnimationCount() > 0 {
@@ -733,7 +734,7 @@ func setupFluidInput(
 			if removeCount > 0 {
 				for i := 0; i < removeCount && len(liveDroplets) > 0; i++ {
 					oldest := liveDroplets[0]
-					sc.Remove(oldest.objID)
+					sc.RemoveGameObject(oldest.objID)
 					liveDroplets = liveDroplets[1:]
 				}
 			}
@@ -782,7 +783,7 @@ func setupFluidInput(
 					game_object.WithScale(1, 1, 1),
 					game_object.WithRigidBody(rb),
 				)
-				objID := sc.Add(obj)
+				objID := sc.AddGameObject(obj)
 				liveDroplets = append(liveDroplets, dropletEntry{objID: objID, body: rb})
 			}
 		}
@@ -804,7 +805,7 @@ func setupFluidInput(
 			for _, d := range liveDroplets {
 				pos := d.body.Position()
 				if pos[1] < -5.0 {
-					sc.Remove(d.objID)
+					sc.RemoveGameObject(d.objID)
 					escaped++
 				} else {
 					liveDroplets[n] = d

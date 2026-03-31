@@ -19,6 +19,11 @@ const (
 	// PresentModeUncapped presents frames immediately without waiting for vertical blank.
 	// May cause screen tearing but provides the lowest latency.
 	PresentModeUncapped
+
+	// PresentModeMailbox is a low-latency mode that allows the GPU to replace the current frame with a newer one if the application produces frames faster than the display refresh rate.
+	// This can reduce latency and stuttering compared to VSync, while avoiding tearing that may occur with Uncapped mode.
+	// Support for this mode is adapter-dependent and may not be available on all hardware.
+	PresentModeMailbox
 )
 
 // MSAASampleCount controls the number of samples used for multisample anti-aliasing (MSAA).
@@ -29,6 +34,9 @@ type MSAASampleCount uint32
 const (
 	// MSAAOff disables multisample anti-aliasing (sample count 1).
 	MSAAOff MSAASampleCount = 1
+
+	// MSAA2x enables 2× multisample anti-aliasing. Adapter-dependent; not all hardware supports this.
+	MSAA2x MSAASampleCount = 2
 
 	// MSAA4x enables 4× multisample anti-aliasing. This is the default.
 	MSAA4x MSAASampleCount = 4

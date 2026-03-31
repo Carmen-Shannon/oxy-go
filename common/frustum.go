@@ -68,11 +68,11 @@ func ExtractFrustumFromMatrix(viewProj []float32) Frustum {
 	f.Planes[FrustumTop].Normal[2] = viewProj[11] - viewProj[9]
 	f.Planes[FrustumTop].Distance = viewProj[15] - viewProj[13]
 
-	// Near plane: row3 + row2
-	f.Planes[FrustumNear].Normal[0] = viewProj[3] + viewProj[2]
-	f.Planes[FrustumNear].Normal[1] = viewProj[7] + viewProj[6]
-	f.Planes[FrustumNear].Normal[2] = viewProj[11] + viewProj[10]
-	f.Planes[FrustumNear].Distance = viewProj[15] + viewProj[14]
+	// Near plane: row2 (WebGPU NDC z in [0,1]; condition is z_clip >= 0)
+	f.Planes[FrustumNear].Normal[0] = viewProj[2]
+	f.Planes[FrustumNear].Normal[1] = viewProj[6]
+	f.Planes[FrustumNear].Normal[2] = viewProj[10]
+	f.Planes[FrustumNear].Distance = viewProj[14]
 
 	// Far plane: row3 - row2
 	f.Planes[FrustumFar].Normal[0] = viewProj[3] - viewProj[2]
@@ -104,4 +104,60 @@ func (f *Frustum) normalizePlane(index int) {
 		p.Normal[2] *= invLen
 		p.Distance *= invLen
 	}
+}
+
+// IntersectSphere returns true if the sphere intersects or is inside the frustum.
+// Uses signed plane distances; a sphere entirely outside any plane returns false.
+//
+// Parameters:
+//   - center: world-space center of the sphere
+//   - radius: radius of the sphere
+//
+// Returns:
+//   - bool: true if the sphere may be visible (conservative)
+func (f *Frustum) IntersectSphere(center [3]float32, radius float32) bool {
+	for i := range f.Planes {
+		p := &f.Planes[i]
+		dist := p.Normal[0]*center[0] + p.Normal[1]*center[1] + p.Normal[2]*center[2] + p.Distance
+		if dist < -radius {
+			return false
+		}
+	}
+	return true
+}
+
+// IntersectAABB returns true if the axis-aligned bounding box intersects or is
+// inside the frustum. Uses the positive-vertex method for each frustum plane.
+//
+// Parameters:
+//   - min: the minimum corner of the AABB
+//   - max: the maximum corner of the AABB
+//
+// Returns:
+//   - bool: true if the AABB may be visible (conservative)
+func (f *Frustum) IntersectAABB(min, max [3]float32) bool {
+	for i := range f.Planes {
+		p := &f.Planes[i]
+		// Positive vertex: the AABB corner most aligned with the plane normal.
+		var px, py, pz float32
+		if p.Normal[0] >= 0 {
+			px = max[0]
+		} else {
+			px = min[0]
+		}
+		if p.Normal[1] >= 0 {
+			py = max[1]
+		} else {
+			py = min[1]
+		}
+		if p.Normal[2] >= 0 {
+			pz = max[2]
+		} else {
+			pz = min[2]
+		}
+		if p.Normal[0]*px+p.Normal[1]*py+p.Normal[2]*pz+p.Distance < 0 {
+			return false
+		}
+	}
+	return true
 }

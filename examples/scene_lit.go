@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"sync"
 
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine"
@@ -29,7 +30,7 @@ func main() {
 		engine.WithProfiling(true),
 		engine.WithTickRate(60),
 		engine.WithWindow(window.NewWindow(
-			window.WithTitle("Oxy Engine - Lit Scene (Forward+ / VSM+PCSS / SSAO / SSR / HDR)"),
+			window.WithTitle("Oxy Engine - Lit Scene (Forward+ / CSM+PCF / SSAO / SSR / HDR)"),
 			window.WithWidth(1920),
 			window.WithHeight(1080),
 		)),
@@ -40,6 +41,7 @@ func main() {
 		renderer.BackendTypeWGPU,
 		eng.Window(),
 		renderer.WithPresentMode(renderer.PresentModeUncapped),
+		renderer.WithGPUSerializedProfiling(false),
 	)
 
 	// ── Camera ──────────────────────────────────────────────────────────
@@ -47,7 +49,7 @@ func main() {
 		camera.WithFov(float32(45.0*math.Pi/180.0)),
 		camera.WithAspect(float32(eng.Window().Width())/float32(eng.Window().Height())),
 		camera.WithNear(0.1),
-		camera.WithFar(1000),
+		camera.WithFar(20000),
 		camera.WithController(camera.NewCameraController(
 			camera.WithRadius(200),
 			camera.WithTarget(0, 40, 0),
@@ -65,26 +67,32 @@ func main() {
 		scene.WithActive(true),
 		scene.WithScreenSize(eng.Window().Width(), eng.Window().Height()),
 		scene.WithLighting(light.NewLightingHandler(
-			light.WithShadowHalfExtent(120),
-			light.WithShadowNearFar(0.1, 400),
-			light.WithShadowBias(0.001),
-			light.WithShadowMapResolution(720),
-			light.WithPCSSEnabled(false),
-			light.WithVSMLightSize(10.0),
-			light.WithVSMMinVariance(0.001),
-			light.WithVSMLightBleedReduction(0.1),
+			light.WithShadowHandler(light.NewShadowHandler(
+				light.WithPCFRadius(2.0),
+				light.WithShadowNearFar(0.1, 1000),
+				light.WithShadowNormalBiasScale(1.0),
+				light.WithShadowMapResolution(2048),
+				light.WithShadowInnerRadius(250),
+			)),
 			light.WithGBufferHandler(light.NewGBufferHandler()),
 			light.WithSSAOHandler(light.NewSSAOHandler(
-				light.WithSSAOSampleCount(16),
-				light.WithSSAORadius(0.5),
+				light.WithSSAOSampleCount(8),
+				light.WithSSAOScreenRadius(24.0),
 				light.WithSSAOBias(0.025),
 				light.WithSSAOPower(2.0),
-				light.WithSSAOBlurRadius(2),
-				light.WithSSAOHalfResolution(true),
+				light.WithSSAOBlurRadius(4),
+				light.WithSSAOHalfResolution(false),
 			)),
 			light.WithCompositionHandler(light.NewCompositionHandler(
 				light.WithToneMappingEnabled(true),
 				light.WithExposure(1.5),
+				light.WithAutoExposure(true),
+				light.WithAdaptSpeed(8.0),
+				light.WithMinExposure(0.02),
+				light.WithMaxExposure(30.0),
+				light.WithBloomEnabled(true),
+				light.WithBloomThreshold(1.0),
+				light.WithBloomIntensity(0.5),
 			)),
 			light.WithSSRHandler(light.NewSSRHandler(
 				light.WithSSRMaxSteps(64),
@@ -101,9 +109,9 @@ func main() {
 	sun := light.NewLight(light.LightTypeDirectional,
 		light.WithDirection(0, -1, 0),
 		light.WithColor(1.0, 0.95, 0.85),
-		light.WithIntensity(1.5),
+		light.WithIntensity(0.5),
 		light.WithCastsShadows(true),
-		light.WithEnabled(true),
+		light.WithEnabled(false),
 	)
 	sc.AddLight(sun)
 
@@ -111,9 +119,10 @@ func main() {
 	bluePoint := light.NewLight(light.LightTypePoint,
 		light.WithPosition(-50, 50, 30),
 		light.WithColor(0.2, 0.4, 1.0),
-		light.WithIntensity(1.5),
+		light.WithIntensity(1.0),
 		light.WithRange(200),
 		light.WithEnabled(true),
+		light.WithCastsShadows(true),
 	)
 	sc.AddLight(bluePoint)
 
@@ -121,21 +130,24 @@ func main() {
 	orangePoint := light.NewLight(light.LightTypePoint,
 		light.WithPosition(50, 50, -30),
 		light.WithColor(1.0, 0.5, 0.1),
-		light.WithIntensity(1.5),
+		light.WithIntensity(1.0),
 		light.WithRange(200),
 		light.WithEnabled(true),
+		light.WithCastsShadows(true),
 	)
 	sc.AddLight(orangePoint)
 
 	// Spot light (overhead, angled down)
 	spot := light.NewLight(light.LightTypeSpot,
-		light.WithPosition(0, 80, 60),
+		light.WithPosition(0, 100, 80),
 		light.WithDirection(0, -1, -0.5),
 		light.WithColor(0.0, 1.0, 0.5),
-		light.WithIntensity(2.0),
+		light.WithIntensity(1.0),
 		light.WithRange(200),
-		light.WithSpotCone(25, 35),
-		light.WithEnabled(true),
+		light.WithSpotCone(15, 15),
+		light.WithEnabled(false),
+		light.WithCastsShadows(true),
+		light.WithShadowBias(0.0002),
 	)
 	sc.AddLight(spot)
 
@@ -155,7 +167,7 @@ func main() {
 		game_object.WithScale(1, 1, 1),
 	)
 
-	_ = sc.Add(fox)
+	foxID := sc.AddGameObject(fox)
 
 	// Start initial animation (first clip, looped)
 	if foxModel.AnimationCount() > 0 {
@@ -176,23 +188,23 @@ func main() {
 			model.WithVertexData(common.SliceToBytes(quadVerts)),
 			model.WithIndexData(common.SliceToBytes(quadIdx)),
 			model.WithIndexCount(len(quadIdx)),
-			model.WithMeshProvider(bind_group_provider.NewBindGroupProvider(
-				"quad_mesh",
-			)),
+			model.WithShadowCullMode(model.ShadowCullModeNone),
+			model.WithMeshProvider(bind_group_provider.NewBindGroupProvider("quad_mesh")),
 			model.WithRenderMaterials(material.NewMaterial(
 				material.WithName("quad_material"),
 				material.WithBaseColor([4]float32{0.7, 0.8, 0.95, quadAlpha}),
-				material.WithRoughness(0.05),
-				material.WithMetallic(1.0),
+				material.WithRoughness(0.3),
+				material.WithMetallic(0.0),
 				material.WithPipelineKey("reflective_floor"),
 			)),
+			model.WithCastsShadows(true),
 		)),
 		game_object.WithPosition(0, -1, 0),
 		game_object.WithScale(1, 1, 1),
 		game_object.WithEphemeral(true),
 	)
 
-	_ = sc.Add(quadObj,
+	_ = sc.AddGameObject(quadObj,
 		pipeline.WithBlendEnabled(true),
 		pipeline.WithBlendState(&wgpu.BlendState{
 			Color: wgpu.BlendComponent{
@@ -234,15 +246,15 @@ func main() {
 		game_object.WithScale(1, 1, 1),
 		game_object.WithEphemeral(true),
 	)
-	_ = sc.Add(sunIndicator)
+	_ = sc.AddGameObject(sunIndicator)
 
 	eng.AddScene(0, sc)
 
 	// ── Input Handling ──────────────────────────────────────────────────
-	setupLitInput(eng, cam, fox, sun, bluePoint, orangePoint, spot, quadObj, sunIndicator)
+	setupLitInput(eng, cam, sc, foxModel, foxID, fox, sun, bluePoint, orangePoint, spot, quadObj, sunIndicator)
 
 	fmt.Println("╔══════════════════════════════════════════════════════╗")
-	fmt.Println("║  Oxy Engine - Lit Scene (Forward+ / VSM+PCSS)        ║")
+	fmt.Println("║  Oxy Engine - Lit Scene (Forward+ / CSM+PCF)         ║")
 	fmt.Println("╠══════════════════════════════════════════════════════╣")
 	fmt.Println("║  Camera: WASD=Pan  Q/E=Up/Down  Scroll=Zoom        ║")
 	fmt.Println("║          Middle-mouse drag=Orbit                    ║")
@@ -252,37 +264,48 @@ func main() {
 	fmt.Println("║  T:      Toggle sun orbit (day/night cycle)          ║")
 	fmt.Println("║  V:      Cycle quad transparency                     ║")
 	fmt.Println("║  1-3:    Switch fox animation                       ║")
-	fmt.Println("║  Shadow: VSM + PCSS (contact-hardening soft shadows) ║")
+	fmt.Println("║  Z:      Add skeletal object (fox)                  ║")
+	fmt.Println("║  C:      Remove skeletal object (fox)               ║")
+	fmt.Println("║  X:      Add simple object (sphere)                 ║")
+	fmt.Println("║  B:      Remove simple object (sphere)              ║")
+	fmt.Println("║  Shadow: CSM + PCF (dual-cascade sphere shadows)      ║")
 	fmt.Println("╚══════════════════════════════════════════════════════╝")
 
-	log.Println("Starting Oxy Engine - Lit Scene (Forward+ / VSM+PCSS)")
+	log.Println("Starting Oxy Engine - Lit Scene (Forward+ / CSM+PCF)")
 	eng.Run()
 }
 
 // setupLitInput wires camera controls (WASD/QE planar movement, middle-mouse orbit,
 // scroll zoom), number-key animation switching, light toggling (L=sun, F=point lights,
-// G=spot), sun orbit (T), and quad transparency cycling (V).
+// G=spot), sun orbit (T), quad transparency cycling (V), and dynamic add/remove
+// demonstration (Z=add fox, C=remove fox, X=add sphere, B=remove sphere).
 //
 // Parameters:
-//   - eng: the engine instance providing window callbacks and tick
-//   - cam: the camera to control
-//   - fox: the fox game object for animation control
-//   - sun: the directional light to toggle
-//   - bluePoint: the blue point light to toggle
-//   - orangePoint: the orange point light to toggle
-//   - spot: the spot light to toggle
-//   - quad: the transparent quad game object for alpha cycling
+//   - eng:          the engine instance providing window callbacks and tick
+//   - cam:          the camera to control
+//   - sc:           the scene, used to add/remove game objects at runtime
+//   - foxModel:     the loaded fox model, used to reconstruct the fox on re-add
+//   - initialFoxID: the scene ID assigned to the fox when it was first added
+//   - fox:          the initial fox game object (used for animation control)
+//   - sun:          the directional light to toggle
+//   - bluePoint:    the blue point light to toggle
+//   - orangePoint:  the orange point light to toggle
+//   - spot:         the spot light to toggle
+//   - quad:         the transparent quad game object for alpha cycling
 //   - sunIndicator: the sun indicator sphere whose position tracks the shadow eye
 func setupLitInput(
 	eng engine.Engine,
 	cam camera.Camera,
+	sc scene.Scene,
+	foxModel model.Model,
+	initialFoxID uint64,
 	fox game_object.GameObject,
 	sun, bluePoint, orangePoint, spot light.Light,
 	quad game_object.GameObject,
 	sunIndicator game_object.GameObject,
 ) {
-	keyState := make(map[uint32]bool)
-	animCount := fox.Model().AnimationCount()
+	var keyState sync.Map
+	animCount := foxModel.AnimationCount()
 	pointsOn := true
 	sunOrbit := false
 	var sunAngle float64 // current orbit angle in radians
@@ -291,14 +314,50 @@ func setupLitInput(
 	alphaLevels := []float32{1.0, 0.75, 0.5, 0.25, 0.0}
 	alphaIdx := 0
 
-	eng.Window().SetKeyDownCallback(func(keyCode uint32) {
-		keyState[keyCode] = true
+	// Dynamic add/remove state for the skeletal fox object.
+	currentFox := fox
+	currentFoxID := initialFoxID
+	foxInScene := true
 
-		// Number keys 1-9 switch animations with a smooth blend transition
+	// Dynamic add/remove state for the simple sphere object.
+	var simpleID uint64
+	simpleInScene := false
+
+	sphereVerts, sphereIdx := buildSphere(15, 12, 16, [4]float32{0.2, 0.9, 0.2, 1.0})
+	simpleSphereModel := model.NewModel(
+		model.WithName("simple_sphere"),
+		model.WithBoundingRadius(15.0),
+		model.WithVertexData(common.SliceToBytes(sphereVerts)),
+		model.WithIndexData(common.SliceToBytes(sphereIdx)),
+		model.WithIndexCount(len(sphereIdx)),
+		model.WithMeshProvider(bind_group_provider.NewBindGroupProvider("simple_sphere_mesh")),
+		model.WithRenderMaterials(material.NewMaterial(
+			material.WithName("simple_sphere_material"),
+			material.WithBaseColor([4]float32{0.2, 0.9, 0.2, 1.0}),
+			material.WithPipelineKey("simple_sphere"),
+		)),
+		model.WithCastsShadows(true),
+		model.WithShadowCullMode(model.ShadowCullModeBack),
+	)
+	buildSimpleObj := func() game_object.GameObject {
+		return game_object.NewGameObject(
+			game_object.WithModel(simpleSphereModel),
+			game_object.WithPosition(60, 20, 0),
+			game_object.WithScale(1, 1, 1),
+		)
+	}
+
+	eng.Window().SetKeyDownCallback(func(keyCode uint32) {
+		keyState.Store(keyCode, true)
+
+		// Number keys 1-9 switch animations with a smooth blend transition.
+		// Guard: only valid when the fox is currently in the scene.
 		if keyCode >= common.Key1 && keyCode <= common.Key9 {
-			clipIdx := int(keyCode - common.Key1)
-			if clipIdx < animCount {
-				fox.Animator().BlendToAnimation(0, uint32(clipIdx), 0.3)
+			if foxInScene {
+				clipIdx := int(keyCode - common.Key1)
+				if clipIdx < animCount {
+					currentFox.Animator().BlendToAnimation(0, uint32(clipIdx), 0.3)
+				}
 			}
 		}
 
@@ -353,10 +412,72 @@ func setupLitInput(
 			quad.Model().SetIndexData(common.SliceToBytes(newIdx))
 			fmt.Printf("[Quad] Alpha = %.2f\n", newAlpha)
 		}
+
+		// Space prints the current camera position info
+		if keyCode == common.KeySpace {
+			tx, ty, tz := cam.Controller().Target()
+			fmt.Printf("[Camera] radius=%.2f target=(%.2f, %.2f, %.2f) azimuth=%.4f elevation=%.4f\n",
+				cam.Controller().Radius(), tx, ty, tz,
+				cam.Controller().Azimuth(), cam.Controller().Elevation())
+		}
+
+		// Z adds the skeletal fox object if it is not currently in the scene.
+		if keyCode == common.KeyZ {
+			if !foxInScene {
+				newFox := game_object.NewGameObject(
+					game_object.WithModel(foxModel),
+					game_object.WithPosition(0, 0, 0),
+					game_object.WithScale(1, 1, 1),
+				)
+				currentFoxID = sc.AddGameObject(newFox)
+				currentFox = newFox
+				if foxModel.AnimationCount() > 0 {
+					newFox.Animator().PlayAnimation(0, 0, true)
+				}
+				foxInScene = true
+				fmt.Printf("[Demo] Fox added (id=%d)\n", currentFoxID)
+			} else {
+				fmt.Println("[Demo] Fox is already in the scene (press C to remove)")
+			}
+		}
+
+		// C removes the skeletal fox object if it is currently in the scene.
+		if keyCode == common.KeyC {
+			if foxInScene {
+				sc.RemoveGameObject(currentFoxID)
+				foxInScene = false
+				fmt.Printf("[Demo] Fox removed (id=%d)\n", currentFoxID)
+			} else {
+				fmt.Println("[Demo] Fox is not in the scene (press Z to add)")
+			}
+		}
+
+		// X adds the simple sphere object if it is not currently in the scene.
+		if keyCode == common.KeyX {
+			if !simpleInScene {
+				obj := buildSimpleObj()
+				simpleID = sc.AddGameObject(obj)
+				simpleInScene = true
+				fmt.Printf("[Demo] Simple sphere added (id=%d)\n", simpleID)
+			} else {
+				fmt.Println("[Demo] Simple sphere is already in the scene (press B to remove)")
+			}
+		}
+
+		// B removes the simple sphere object if it is currently in the scene.
+		if keyCode == common.KeyB {
+			if simpleInScene {
+				sc.RemoveGameObject(simpleID)
+				simpleInScene = false
+				fmt.Printf("[Demo] Simple sphere removed (id=%d)\n", simpleID)
+			} else {
+				fmt.Println("[Demo] Simple sphere is not in the scene (press X to add)")
+			}
+		}
 	})
 
 	eng.Window().SetKeyUpCallback(func(keyCode uint32) {
-		keyState[keyCode] = false
+		keyState.Store(keyCode, false)
 	})
 
 	var dragging bool
@@ -403,35 +524,32 @@ func setupLitInput(
 			sun.SetDirection(0, dirY, dirZ)
 		}
 
-		// Update sun indicator sphere position to show the shadow-map eye.
-		// Eye = center - lightDir * far * 0.5 (matches ComputeDirectionalLightVP).
 		{
 			dir := sun.Direction()
-			const shadowFarHalf = 200.0 // far=400 * 0.5
-			// Shadow frustum center = camera target = (0, 40, 0)
+			const sunDistance = 200.0
 			sunIndicator.SetPosition(
-				0-dir[0]*shadowFarHalf,
-				40-dir[1]*shadowFarHalf,
-				0-dir[2]*shadowFarHalf,
+				0-dir[0]*sunDistance,
+				40-dir[1]*sunDistance,
+				0-dir[2]*sunDistance,
 			)
 		}
 
-		if keyState[common.KeyW] {
+		if v, ok := keyState.Load(common.KeyW); ok && v.(bool) {
 			cam.Controller().PanForward(1)
 		}
-		if keyState[common.KeyS] {
+		if v, ok := keyState.Load(common.KeyS); ok && v.(bool) {
 			cam.Controller().PanForward(-1)
 		}
-		if keyState[common.KeyA] {
+		if v, ok := keyState.Load(common.KeyA); ok && v.(bool) {
 			cam.Controller().PanRight(-1)
 		}
-		if keyState[common.KeyD] {
+		if v, ok := keyState.Load(common.KeyD); ok && v.(bool) {
 			cam.Controller().PanRight(1)
 		}
-		if keyState[common.KeyQ] {
+		if v, ok := keyState.Load(common.KeyQ); ok && v.(bool) {
 			cam.Controller().PanUp(1)
 		}
-		if keyState[common.KeyE] {
+		if v, ok := keyState.Load(common.KeyE); ok && v.(bool) {
 			cam.Controller().PanUp(-1)
 		}
 	})
@@ -453,7 +571,7 @@ func setupLitInput(
 //   - []uint32: 36 indices forming 12 triangles
 func buildLitQuad(alpha float32) ([]model.GPUVertex, []uint32) {
 	color := [4]float32{0.3, 0.5, 0.9, alpha}
-	half := float32(40)       // half-extent in X and Z
+	half := float32(80)       // half-extent in X and Z
 	thickness := float32(1.0) // half-thickness in Y
 
 	// Helper to make a vertex
@@ -575,10 +693,10 @@ func buildSphere(radius float32, rings, segments int, color [4]float32) ([]model
 			c := uint32((r+1)*stride + s)
 			d := uint32((r+1)*stride + s + 1)
 
-			// Upper triangle
-			indices = append(indices, a, c, b)
+			// Upper triangle (CCW from outside — front-facing in WebGPU)
+			indices = append(indices, a, b, c)
 			// Lower triangle
-			indices = append(indices, b, c, d)
+			indices = append(indices, b, d, c)
 		}
 	}
 

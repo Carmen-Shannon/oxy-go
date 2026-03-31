@@ -11,9 +11,9 @@
 
 // ── Input from vertex shader (must match all vertex output locations) ──
 struct FragmentInput {
-    @location(0) uv:    vec2<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) color:  vec4<f32>,
+    @location(0) uv:             vec2<f32>,
+    @location(1) normal:         vec3<f32>,
+    @location(2) color:          vec4<f32>,
     @location(3) world_position: vec3<f32>,
 };
 

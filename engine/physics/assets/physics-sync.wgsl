@@ -27,8 +27,8 @@
 //@oxy:group 0 2 storage_read_write anim_data array<animation_data>
 //@oxy:group 0 3 storage_uniform globals physics_globals
 
-const FLAG_ACTIVE: u32    = 1u;
-const FLAG_KINEMATIC: u32 = 4u;
+//@oxy:inject FLAG_ACTIVE u32 flag_active
+//@oxy:inject FLAG_KINEMATIC u32 flag_kinematic
 
 // quat_to_euler extracts XYZ Euler angles (in radians) from a unit quaternion.
 // Returns (roll, pitch, yaw) matching the Animator's rotation convention.

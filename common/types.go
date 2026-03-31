@@ -78,6 +78,12 @@ type ImportedMaterial struct {
 
 	// MetallicRoughnessTexture holds embedded metallic/roughness data (if present).
 	MetallicRoughnessTexture *ImportedTexture
+
+	// AlphaMode is the GLTF alpha rendering mode: "OPAQUE" (default), "MASK", or "BLEND".
+	AlphaMode string
+
+	// AlphaCutoff is the alpha threshold below which fragments are discarded (for MASK mode).
+	AlphaCutoff float32
 }
 
 // ImportedTexture represents texture data extracted from a model file.

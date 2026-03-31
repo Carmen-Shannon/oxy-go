@@ -36,7 +36,7 @@ struct BoneUpdateParams {
 @group(0) @binding(3) var<uniform> params: BoneUpdateParams;
 //@oxy:group 0 4 storage_read model_instances array<model_data>
 
-const BODY_IDX_MASK: u32 = 0xFFFFFFu;
+//@oxy:inject BODY_IDX_MASK u32 body_idx_mask
 
 // scratch_index computes the flat index into the scratch_matrices buffer.
 // Uses slot 0 (primary animation) exclusively.

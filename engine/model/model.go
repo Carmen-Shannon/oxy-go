@@ -1,3 +1,12 @@
+// Package model provides a GPU-ready container for loaded 3D model data.
+//
+// A [Model] holds CPU-side mesh geometry, skeletal hierarchy, animation clips,
+// and material properties produced by the loader package. GPU resources are
+// initialized by the scene when a model is added. The package also defines
+// supporting domain types ([Skeleton], [AnimationClip], [ShadowCullMode]) and
+// GPU-aligned vertex/instance structs ([GPUVertex], [GPUSkinnedVertex],
+// [GPUModelData]). Instances are created via [NewModel] using the
+// option-builder pattern.
 package model
 
 import (
@@ -6,33 +15,11 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/material"
 )
 
-// model is the implementation of the Model interface.
-type model struct {
-	common.DelegateImpl[Model]
-
-	name                  string
-	skinned               bool
-	skeleton              *Skeleton
-	animations            []*AnimationClip
-	importedMaterials     []common.ImportedMaterial
-	renderMaterials       []material.Material
-	meshProvider          bind_group_provider.BindGroupProvider
-	effectProvider        bind_group_provider.BindGroupProvider
-	computePipelineKey    string
-	boundingRadius        float32
-	vertexData, indexData []byte
-	indexCount            int
-	shadowCullMode        ShadowCullMode
-	castsShadows          bool
-}
-
 // Model defines the interface for a loaded 3D model.
 // A Model is a GPU-ready container holding mesh data via a BindGroupProvider,
 // skeleton hierarchy, animation clips, and material properties.
 // It is produced by the Loader after importing and processing a model file.
 type Model interface {
-	common.Delegate[Model]
-
 	// Name retrieves the model identifier.
 	//
 	// Returns:
@@ -137,6 +124,20 @@ type Model interface {
 	//   - float32: the bounding radius
 	BoundingRadius() float32
 
+	// BoundingMin returns the minimum corner of the model's axis-aligned bounding box
+	// in model space. Computed from all mesh vertices at load time.
+	//
+	// Returns:
+	//   - [3]float32: the minimum corner (min X, min Y, min Z)
+	BoundingMin() [3]float32
+
+	// BoundingMax returns the maximum corner of the model's axis-aligned bounding box
+	// in model space. Computed from all mesh vertices at load time.
+	//
+	// Returns:
+	//   - [3]float32: the maximum corner (max X, max Y, max Z)
+	BoundingMax() [3]float32
+
 	// SetComputePipelineKey sets the compute pipeline key for this model's animator.
 	//
 	// Parameters:
@@ -207,58 +208,34 @@ type Model interface {
 
 var _ Model = &model{}
 
-// NewModel creates a new Model instance with the specified options applied.
-//
-// Parameters:
-//   - options: a variadic list of ModelBuilderOption functions to configure the Model
-//
-// Returns:
-//   - Model: a new instance of Model configured with the provided options
-func NewModel(options ...ModelBuilderOption) Model {
-	m := &model{
-		castsShadows: true,
-	}
-	for _, opt := range options {
-		opt(m)
-	}
-	m.Delegate = m
-	return m
-}
+func (m *model) Name() string                                          { return m.name }
+func (m *model) Skinned() bool                                         { return m.skinned }
+func (m *model) Skeleton() *Skeleton                                   { return m.skeleton }
+func (m *model) Animations() []*AnimationClip                          { return m.animations }
+func (m *model) ImportedMaterials() []common.ImportedMaterial          { return m.importedMaterials }
+func (m *model) MeshProvider() bind_group_provider.BindGroupProvider   { return m.meshProvider }
+func (m *model) ComputePipelineKey() string                            { return m.computePipelineKey }
+func (m *model) SetComputePipelineKey(key string)                      { m.computePipelineKey = key }
+func (m *model) AnimationCount() int                                   { return len(m.animations) }
+func (m *model) VertexData() []byte                                    { return m.vertexData }
+func (m *model) SetVertexData(data []byte)                             { m.vertexData = data }
+func (m *model) IndexData() []byte                                     { return m.indexData }
+func (m *model) SetIndexData(data []byte)                              { m.indexData = data }
+func (m *model) IndexCount() int                                       { return m.indexCount }
+func (m *model) SetIndexCount(count int)                               { m.indexCount = count }
+func (m *model) RenderMaterials() []material.Material                  { return m.renderMaterials }
+func (m *model) SetRenderMaterials(mats []material.Material)           { m.renderMaterials = mats }
+func (m *model) BoundingRadius() float32                               { return m.boundingRadius }
+func (m *model) BoundingMin() [3]float32                               { return m.boundingMin }
+func (m *model) BoundingMax() [3]float32                               { return m.boundingMax }
+func (m *model) EffectProvider() bind_group_provider.BindGroupProvider { return m.effectProvider }
+func (m *model) CastsShadows() bool                                    { return m.castsShadows }
+func (m *model) SetCastsShadows(casts bool)                            { m.castsShadows = casts }
+func (m *model) ShadowCullMode() ShadowCullMode                        { return m.shadowCullMode }
+func (m *model) SetShadowCullMode(mode ShadowCullMode)                 { m.shadowCullMode = mode }
 
-func (m *model) Name() string {
-	return m.name
-}
-
-func (m *model) Skinned() bool {
-	return m.skinned
-}
-
-func (m *model) Skeleton() *Skeleton {
-	return m.skeleton
-}
-
-func (m *model) Animations() []*AnimationClip {
-	return m.animations
-}
-
-func (m *model) ImportedMaterials() []common.ImportedMaterial {
-	return m.importedMaterials
-}
-
-func (m *model) MeshProvider() bind_group_provider.BindGroupProvider {
-	return m.meshProvider
-}
-
-func (m *model) ComputePipelineKey() string {
-	return m.computePipelineKey
-}
-
-func (m *model) SetComputePipelineKey(key string) {
-	m.computePipelineKey = key
-}
-
-func (m *model) AnimationCount() int {
-	return len(m.animations)
+func (m *model) SetEffectProvider(provider bind_group_provider.BindGroupProvider) {
+	m.effectProvider = provider
 }
 
 func (m *model) AnimationNames() []string {
@@ -269,30 +246,6 @@ func (m *model) AnimationNames() []string {
 	return names
 }
 
-func (m *model) VertexData() []byte {
-	return m.vertexData
-}
-
-func (m *model) SetVertexData(data []byte) {
-	m.vertexData = data
-}
-
-func (m *model) IndexData() []byte {
-	return m.indexData
-}
-
-func (m *model) SetIndexData(data []byte) {
-	m.indexData = data
-}
-
-func (m *model) IndexCount() int {
-	return m.indexCount
-}
-
-func (m *model) SetIndexCount(count int) {
-	m.indexCount = count
-}
-
 func (m *model) GetAnimationIndex(name string) int {
 	for i, anim := range m.animations {
 		if anim.Name == name {
@@ -300,40 +253,4 @@ func (m *model) GetAnimationIndex(name string) int {
 		}
 	}
 	return -1
-}
-
-func (m *model) RenderMaterials() []material.Material {
-	return m.renderMaterials
-}
-
-func (m *model) SetRenderMaterials(mats []material.Material) {
-	m.renderMaterials = mats
-}
-
-func (m *model) BoundingRadius() float32 {
-	return m.boundingRadius
-}
-
-func (m *model) EffectProvider() bind_group_provider.BindGroupProvider {
-	return m.effectProvider
-}
-
-func (m *model) SetEffectProvider(provider bind_group_provider.BindGroupProvider) {
-	m.effectProvider = provider
-}
-
-func (m *model) CastsShadows() bool {
-	return m.castsShadows
-}
-
-func (m *model) SetCastsShadows(casts bool) {
-	m.castsShadows = casts
-}
-
-func (m *model) ShadowCullMode() ShadowCullMode {
-	return m.shadowCullMode
-}
-
-func (m *model) SetShadowCullMode(mode ShadowCullMode) {
-	m.shadowCullMode = mode
 }

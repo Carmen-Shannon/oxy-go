@@ -8,7 +8,7 @@
 
 // Maximum number of bones supported per skeleton. Must match the compute
 // shader's MAX_BONES constant so the per-instance stride is consistent.
-const MAX_BONES: u32 = 64u;
+//@oxy:inject MAX_BONES u32 max_bones
 
 //@oxy:include skinned_vertex
 //@oxy:include camera

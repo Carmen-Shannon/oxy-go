@@ -96,7 +96,7 @@ Creates a new `Pipeline` with the specified key and type. The delegation target 
 - Blend: **disabled**
 - Cull mode: **None**, topology: **TriangleList**, front face: **CCW**
 - Write mask: **All**
-- Blend state: **SrcAlpha / OneMinusSrcAlpha** (pre-configured but inactive until blend is enabled)
+- Blend state: Color channel `SrcAlpha / OneMinusSrcAlpha`; Alpha channel `One / OneMinusSrcAlpha` (pre-configured but inactive until blend is enabled)
 
 Builder options are applied after defaults.
 
@@ -104,7 +104,8 @@ Builder options are applied after defaults.
 
 ## Files
 
-| File                  | Purpose                                                     |
-| --------------------- | ----------------------------------------------------------- |
-| `pipeline.go`         | `Pipeline` interface, `pipeline` struct, constructor, impls |
-| `pipeline_builder.go` | `PipelineBuilderOption` type and 13 builder functions       |
+| File                  | Purpose                                                                                                                |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `pipeline.go`         | `Pipeline` interface, `PipelineType` constants, compile-time implementation check, and exported method implementations |
+| `pipeline_impl.go`    | Unexported `pipeline` struct definition                                                                                |
+| `pipeline_builder.go` | `PipelineBuilderOption` type and 13 builder functions                                                                  |

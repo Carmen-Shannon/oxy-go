@@ -283,6 +283,13 @@ type gltfMaterial struct {
 	// NormalTexture is the normal map.
 	NormalTexture *gltfNormalTextureInfo `json:"normalTexture,omitempty"`
 
+	// AlphaMode is the alpha rendering mode.
+	// "OPAQUE" (default), "MASK", "BLEND"
+	AlphaMode string `json:"alphaMode,omitempty"`
+
+	// AlphaCutoff is the alpha cutoff for MASK mode.
+	AlphaCutoff *float32 `json:"alphaCutoff,omitempty"`
+
 	// TODO: Uncomment when PBR rendering is implemented:
 	// // OcclusionTexture is the occlusion map.
 	// OcclusionTexture *gltfOcclusionTextureInfo `json:"occlusionTexture,omitempty"`
@@ -292,13 +299,6 @@ type gltfMaterial struct {
 	//
 	// // EmissiveFactor is the emissive color (RGB).
 	// EmissiveFactor *[3]float32 `json:"emissiveFactor,omitempty"`
-	//
-	// // AlphaMode is the alpha rendering mode.
-	// // "OPAQUE" (default), "MASK", "BLEND"
-	// AlphaMode string `json:"alphaMode,omitempty"`
-	//
-	// // AlphaCutoff is the alpha cutoff for MASK mode.
-	// AlphaCutoff *float32 `json:"alphaCutoff,omitempty"`
 	//
 	// // DoubleSided indicates if the material is double-sided.
 	// DoubleSided bool `json:"doubleSided,omitempty"`

@@ -1,5 +1,7 @@
 package physics
 
+import "github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
+
 // PhysicsBuilderOption is a functional option for configuring a physicsImpl during construction.
 type PhysicsBuilderOption func(*physicsImpl)
 
@@ -39,7 +41,7 @@ func WithMaxSubsteps(maxSubsteps int) PhysicsBuilderOption {
 //
 // Returns:
 //   - PhysicsBuilderOption: a function that applies the max bodies option to a physicsImpl
-func WithMaxBodies(maxBodies uint32) PhysicsBuilderOption {
+func WithMaxBodies(maxBodies int) PhysicsBuilderOption {
 	return func(p *physicsImpl) {
 		p.maxBodies = maxBodies
 	}
@@ -53,7 +55,7 @@ func WithMaxBodies(maxBodies uint32) PhysicsBuilderOption {
 //
 // Returns:
 //   - PhysicsBuilderOption: a function that applies the max particles option to a physicsImpl
-func WithMaxParticles(maxParticles uint32) PhysicsBuilderOption {
+func WithMaxParticles(maxParticles int) PhysicsBuilderOption {
 	return func(p *physicsImpl) {
 		p.maxParticles = maxParticles
 	}
@@ -67,7 +69,7 @@ func WithMaxParticles(maxParticles uint32) PhysicsBuilderOption {
 //
 // Returns:
 //   - PhysicsBuilderOption: a function that applies the max grid cells option to a physicsImpl
-func WithMaxGridCells(maxGridCells uint32) PhysicsBuilderOption {
+func WithMaxGridCells(maxGridCells int) PhysicsBuilderOption {
 	return func(p *physicsImpl) {
 		p.maxGridCells = maxGridCells
 	}
@@ -143,14 +145,55 @@ func WithGravity(gravity [3]float32) PhysicsBuilderOption {
 //   - PhysicsBuilderOption: a function that applies the boundary plane option to a physicsImpl
 func WithBoundaryPlanes(planes [][6]float32) PhysicsBuilderOption {
 	return func(p *physicsImpl) {
-		n := len(planes)
-		if n > 6 {
-			n = 6
-		}
-		p.boundaryCount = uint32(n)
-		for i := 0; i < n; i++ {
+		n := min(len(planes), 6)
+		p.boundaryCount = n
+		for i := range n {
 			p.boundaryPlanes[i] = [4]float32{planes[i][0], planes[i][1], planes[i][2], planes[i][3]}
 			p.boundaryYRanges[i] = [4]float32{planes[i][4], planes[i][5], 0, 0}
 		}
 	}
+}
+
+// NewPhysics creates a new Physics instance with sensible defaults. The returned
+// system starts disabled and becomes active upon the first RegisterBody call.
+// Use PhysicsBuilderOption values to override default configuration.
+//
+// Parameters:
+//   - options: variadic list of PhysicsBuilderOption functions to configure the physics system
+//
+// Returns:
+//   - Physics: a new Physics instance
+func NewPhysics(options ...PhysicsBuilderOption) Physics {
+	r := &physicsImpl{
+		enabled:         false,
+		bodiesMap:       make(map[uint64]int),
+		stagedWriteData: make([]bind_group_provider.BufferWrite, 0, 16),
+		buffers:         bind_group_provider.NewBindGroupProvider("physics_buffers"),
+		bgps: map[string]bind_group_provider.BindGroupProvider{
+			"particle_values":   bind_group_provider.NewBindGroupProvider("particle_values"),
+			"aabb_reduce":       bind_group_provider.NewBindGroupProvider("aabb_reduce"),
+			"grid_build_params": bind_group_provider.NewBindGroupProvider("grid_build_params"),
+			"grid_clear":        bind_group_provider.NewBindGroupProvider("grid_clear"),
+			"grid_insert":       bind_group_provider.NewBindGroupProvider("grid_insert"),
+			"collision":         bind_group_provider.NewBindGroupProvider("collision"),
+			"momenta":           bind_group_provider.NewBindGroupProvider("momenta"),
+			"integrate":         bind_group_provider.NewBindGroupProvider("integrate"),
+			"sync":              bind_group_provider.NewBindGroupProvider("sync"),
+		},
+		pipelineKeys: make(map[string]string),
+		fixedDt:      1.0 / 60.0,
+		maxSubsteps:  4,
+		maxBodies:    256,
+		maxParticles: 2048,
+		maxGridCells: 128 * 128 * 128,
+		springCoeff:  1.0,
+		dampingCoeff: 0.1,
+		shearCoeff:   0.5,
+		slotsPerCell: 16,
+		bodyIdxMask:  0xFFFFFF,
+	}
+	for _, opt := range options {
+		opt(r)
+	}
+	return r
 }

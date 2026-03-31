@@ -36,60 +36,6 @@ type cameraControllerImpl struct {
 	panSpeed float32
 }
 
-// Compile-time interface compliance check
-var _ CameraController = &cameraControllerImpl{}
-
-// NewCameraController creates a new camera controller with sensible defaults.
-// The returned controller supports both orbit and planar controls simultaneously.
-//
-// Parameters:
-//   - options: functional options to configure the controller
-//
-// Returns:
-//   - CameraController: the newly created controller
-func NewCameraController(options ...CameraControllerOption) CameraController {
-	cc := &cameraControllerImpl{
-		mu:     &sync.Mutex{},
-		target: [3]float32{0, 0, 0},
-
-		radius:    250.0,
-		azimuth:   0.0,
-		elevation: float32(math.Pi / 6),
-
-		minRadius:    20.0,
-		maxRadius:    2000.0,
-		minElevation: 0.05,
-		maxElevation: float32(math.Pi/2 - 0.1),
-
-		orbitSpeed:       0.03,
-		mouseSensitivity: 0.005,
-		zoomSpeed:        15.0,
-
-		panSpeed: 1.0,
-	}
-
-	for _, option := range options {
-		option(cc)
-	}
-
-	cc.updatePosition()
-	return cc
-}
-
-// NewOrbitController creates a new camera controller configured for orbit-style control.
-// This is a convenience wrapper around NewCameraController for backward compatibility.
-//
-// Parameters:
-//   - options: functional options to configure the controller
-//
-// Returns:
-//   - CameraController: the newly created controller
-func NewOrbitController(options ...CameraControllerOption) CameraController {
-	return NewCameraController(options...)
-}
-
-// --- internal helpers ---
-
 // updatePosition recomputes the camera position from spherical coordinates.
 // Must be called whenever radius, azimuth, elevation, or target changes.
 // Caller must hold the mutex.
@@ -109,7 +55,6 @@ func (cc *cameraControllerImpl) updatePosition() {
 // If position and target coincide, all returned components are zero.
 // Caller must hold the mutex.
 func (cc *cameraControllerImpl) localAxes() (rx, ry, rz, ux, uy, uz, fx, fy, fz float32) {
-	// backward = normalize(position - target), matching LookAt's z-axis
 	bx := cc.position[0] - cc.target[0]
 	by := cc.position[1] - cc.target[1]
 	bz := cc.position[2] - cc.target[2]
@@ -121,8 +66,6 @@ func (cc *cameraControllerImpl) localAxes() (rx, ry, rz, ux, uy, uz, fx, fy, fz 
 	by /= bLen
 	bz /= bLen
 
-	// right = normalize(cross(worldUp, backward)) where worldUp = (0, 1, 0)
-	// cross((0,1,0), (bx,by,bz)) = (1*bz - 0*by, 0*bx - 0*bz, 0*by - 1*bx) = (bz, 0, -bx)
 	rx = bz
 	rz = -bx
 	rLen := float32(math.Sqrt(float64(rx*rx + rz*rz)))
@@ -132,19 +75,15 @@ func (cc *cameraControllerImpl) localAxes() (rx, ry, rz, ux, uy, uz, fx, fy, fz 
 	rx /= rLen
 	rz /= rLen
 
-	// up = cross(backward, right), matching LookAt's y-axis
 	ux = by*rz - bz*ry
 	uy = bz*rx - bx*rz
 	uz = bx*ry - by*rx
 
-	// forward = -backward
 	fx = -bx
 	fy = -by
 	fz = -bz
 	return
 }
-
-// --- CameraController shared methods ---
 
 func (cc *cameraControllerImpl) Position() (x, y, z float32) {
 	cc.mu.Lock()
@@ -187,8 +126,6 @@ func (cc *cameraControllerImpl) Zoom(delta float32) {
 	}
 	cc.updatePosition()
 }
-
-// --- orbitCameraController implementation ---
 
 func (cc *cameraControllerImpl) OrbitLeft() {
 	cc.mu.Lock()
@@ -317,8 +254,6 @@ func (cc *cameraControllerImpl) ZoomSpeed() float32 {
 	return cc.zoomSpeed
 }
 
-// --- planarCameraController implementation ---
-
 func (cc *cameraControllerImpl) PanRight(delta float32) {
 	cc.mu.Lock()
 	defer cc.mu.Unlock()
@@ -327,7 +262,7 @@ func (cc *cameraControllerImpl) PanRight(delta float32) {
 	offset := delta * cc.panSpeed
 
 	cc.target[0] += rx * offset
-	cc.target[1] += 0 // ry is always 0 for right vector with worldUp=(0,1,0)
+	cc.target[1] += 0
 	cc.target[2] += rz * offset
 	cc.position[0] += rx * offset
 	cc.position[1] += 0

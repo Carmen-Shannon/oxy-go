@@ -10,11 +10,11 @@ The `engine/window` package provides a platform-abstracted windowing layer built
 
 ```
 Window (public interface, embeds common.Delegate[Window])
- └─ engineWindow (unexported struct, embeds common.DelegateImpl[Window])
+ └─ window (unexported struct in window_impl.go)
       └── glfwWindow (platform-specific GLFW state)
 ```
 
-The public `Window` interface is implemented by `engineWindow`, which delegates platform-specific operations to free functions (`newPlatformWindow`, `platformProcessMessages`, etc.) that operate on an internal `glfwWindow`. This separation allows future platform backends without changing the public API.
+The public `Window` interface is implemented by `window`. The `window` struct holds a `backend platformBackend` field (defined in `window_impl.go`). The `platformBackend` interface exposes four methods — `isRunning()`, `processMessages()`, `surfaceDescriptor()`, and `close()` — that abstract all platform-specific operations. `window_glfw.go` provides the `glfwWindow` concrete implementation of this interface.
 
 ---
 
@@ -144,8 +144,9 @@ The Engine constructor typically creates the window and wires it into the engine
 
 ## Files
 
-| File                | Purpose                                                                                            |
-| ------------------- | -------------------------------------------------------------------------------------------------- |
-| `window.go`         | `Window` interface, `engineWindow` struct, `NewWindow` constructor, callback setters, message loop |
-| `window_builder.go` | `WindowBuilderOption` type and 7 builder functions                                                 |
-| `window_glfw.go`    | GLFW platform layer: window creation, input callbacks, surface descriptor, message polling         |
+| File                | Purpose                                                                                      |
+| ------------------- | -------------------------------------------------------------------------------------------- |
+| `window.go`         | `Window` interface and exported method implementations (callback setters, `ProcessMessages`) |
+| `window_impl.go`    | `platformBackend` interface, unexported `window` struct definition                           |
+| `window_builder.go` | `WindowBuilderOption` type and 7 builder functions                                           |
+| `window_glfw.go`    | GLFW platform layer: window creation, input callbacks, surface descriptor, message polling   |

@@ -1,3 +1,12 @@
+// Package physics provides a GPU-accelerated rigid body physics system driven
+// entirely by compute shaders.
+//
+// The primary [Physics] interface manages body and particle registration,
+// per-frame fixed-timestep simulation stepping, GPU buffer staging, and
+// asynchronous readback of results. Individual bodies are represented by
+// [RigidBody], and mesh surfaces are discretized into [Particle] volumes via
+// [VoxelizeMesh]. Instances are created with [NewPhysics] using the
+// option-builder pattern.
 package physics
 
 import (
@@ -9,47 +18,23 @@ import (
 	"github.com/cogentcore/webgpu/wgpu"
 )
 
-// physicsImpl is the implementation of the Physics interface. It manages GPU-side
-// rigid body simulation state including body/particle registration, fixed-timestep
-// accumulation, staged buffer writes, and asynchronous GPU readback.
-type physicsImpl struct {
-	enabled bool
+// PhysicsState is a named type for rigid body state bit flags.
+// These values are injected into WGSL shaders via the @oxy:inject annotation system.
+type PhysicsState int
 
-	bodies        []RigidBody
-	bodiesMap     map[uint64]int
-	bodiesCount   int
-	particleCount int
-	syncMap       []uint32
+const (
+	// PhysicsStateActive is the bit flag indicating an active rigid body (bit 0).
+	// This value is injected into WGSL shaders via the @oxy:inject annotation system.
+	PhysicsStateActive PhysicsState = 1
 
-	freeBodySlots    []int       // stack of reusable body indices
-	bodyParticleInfo [][2]uint32 // [particleStart, particleCount] per body slot
+	// PhysicsStateStatic is the bit flag indicating a static rigid body (bit 1).
+	// This value is injected into WGSL shaders via the @oxy:inject annotation system.
+	PhysicsStateStatic PhysicsState = 2
 
-	buffers bind_group_provider.BindGroupProvider
-	bgps    map[string]bind_group_provider.BindGroupProvider
-
-	pipelineKeys map[string]string
-
-	accumulator      float32
-	fixedDt          float32
-	maxSubsteps      int
-	maxBodies        uint32
-	maxParticles     uint32
-	maxGridCells     uint32
-	particleDiameter float32
-
-	springCoeff, dampingCoeff, shearCoeff float32
-
-	gravity [3]float32
-
-	boundaryPlanes  [6][4]float32
-	boundaryYRanges [6][4]float32
-	boundaryCount   uint32
-
-	readbackRequested bool
-	readbackPending   bool
-	stagingBuffer     *wgpu.Buffer
-	stagedWriteData   []bind_group_provider.BufferWrite
-}
+	// PhysicsStateKinematic is the bit flag indicating a kinematic rigid body (bit 2).
+	// This value is injected into WGSL shaders via the @oxy:inject annotation system.
+	PhysicsStateKinematic PhysicsState = 4
+)
 
 // Physics defines the interface for the GPU-accelerated rigid body physics system.
 // It manages body/particle registration, per-frame simulation stepping, GPU buffer
@@ -111,20 +96,20 @@ type Physics interface {
 	// MaxBodies returns the upper limit of rigid bodies the system can hold.
 	//
 	// Returns:
-	//   - uint32: the maximum body count
-	MaxBodies() uint32
+	//   - int: the maximum body count
+	MaxBodies() int
 
 	// MaxParticles returns the upper limit of particles across all bodies.
 	//
 	// Returns:
-	//   - uint32: the maximum particle count
-	MaxParticles() uint32
+	//   - int: the maximum particle count
+	MaxParticles() int
 
 	// MaxGridCells returns the upper limit of spatial grid cells (x*y*z cap).
 	//
 	// Returns:
-	//   - uint32: the maximum grid cell count
-	MaxGridCells() uint32
+	//   - int: the maximum grid cell count
+	MaxGridCells() int
 
 	// SetPipelineKey associates a compute pipeline cache key with the given stage name.
 	//
@@ -132,6 +117,20 @@ type Physics interface {
 	//   - name: the stage identifier
 	//   - key: the pipeline cache key to store
 	SetPipelineKey(name, key string)
+
+	// SlotsPerCell returns the number of body index slots per grid cell in the
+	// spatial hash grid.
+	//
+	// Returns:
+	//   - uint32: the slots-per-cell count
+	SlotsPerCell() uint32
+
+	// BodyIdxMask returns the bitmask used to extract the body index from a
+	// packed body+bone index.
+	//
+	// Returns:
+	//   - uint32: the body index mask
+	BodyIdxMask() uint32
 
 	// RegisterBody registers a rigid body in the physics system, uploading its GPU
 	// data (body struct, particles, sync mapping) via staged buffer writes. If a
@@ -238,63 +237,23 @@ type Physics interface {
 	ProcessReadback(data []byte)
 }
 
-// NewPhysics creates a new Physics instance with sensible defaults. The returned
-// system starts disabled and becomes active upon the first RegisterBody call.
-// Use PhysicsBuilderOption values to override default configuration.
-//
-// Parameters:
-//   - options: variadic list of PhysicsBuilderOption functions to configure the physics system
-//
-// Returns:
-//   - Physics: a new Physics instance
-func NewPhysics(options ...PhysicsBuilderOption) Physics {
-	r := &physicsImpl{
-		enabled:         false,
-		bodiesMap:       make(map[uint64]int),
-		stagedWriteData: make([]bind_group_provider.BufferWrite, 0, 16),
-		buffers:         bind_group_provider.NewBindGroupProvider("physics_buffers"),
-		bgps: map[string]bind_group_provider.BindGroupProvider{
-			"particle_values":   bind_group_provider.NewBindGroupProvider("particle_values"),
-			"aabb_reduce":       bind_group_provider.NewBindGroupProvider("aabb_reduce"),
-			"grid_build_params": bind_group_provider.NewBindGroupProvider("grid_build_params"),
-			"grid_clear":        bind_group_provider.NewBindGroupProvider("grid_clear"),
-			"grid_insert":       bind_group_provider.NewBindGroupProvider("grid_insert"),
-			"collision":         bind_group_provider.NewBindGroupProvider("collision"),
-			"momenta":           bind_group_provider.NewBindGroupProvider("momenta"),
-			"integrate":         bind_group_provider.NewBindGroupProvider("integrate"),
-			"sync":              bind_group_provider.NewBindGroupProvider("sync"),
-		},
-		pipelineKeys: make(map[string]string),
-		fixedDt:      1.0 / 60.0,
-		maxSubsteps:  4,
-		maxBodies:    256,
-		maxParticles: 2048,
-		maxGridCells: 128 * 128 * 128,
-		springCoeff:  1.0,
-		dampingCoeff: 0.1,
-		shearCoeff:   0.5,
-	}
-	for _, opt := range options {
-		opt(r)
-	}
-	return r
-}
-
-func (p *physicsImpl) Enabled() bool {
-	return p.enabled
-}
-
-func (p *physicsImpl) BodiesCount() int {
-	return p.bodiesCount
-}
-
-func (p *physicsImpl) ParticleCount() int {
-	return p.particleCount
-}
-
-func (p *physicsImpl) Buffers() bind_group_provider.BindGroupProvider {
-	return p.buffers
-}
+func (p *physicsImpl) Enabled() bool                                  { return p.enabled }
+func (p *physicsImpl) BodiesCount() int                               { return p.bodiesCount }
+func (p *physicsImpl) ParticleCount() int                             { return p.particleCount }
+func (p *physicsImpl) Buffers() bind_group_provider.BindGroupProvider { return p.buffers }
+func (p *physicsImpl) PipelineKey(key string) string                  { return p.pipelineKeys[key] }
+func (p *physicsImpl) PipelineKeys() map[string]string                { return p.pipelineKeys }
+func (p *physicsImpl) MaxBodies() int                                 { return p.maxBodies }
+func (p *physicsImpl) MaxParticles() int                              { return p.maxParticles }
+func (p *physicsImpl) MaxGridCells() int                              { return p.maxGridCells }
+func (p *physicsImpl) SetPipelineKey(name, key string)                { p.pipelineKeys[name] = key }
+func (p *physicsImpl) SlotsPerCell() uint32                           { return p.slotsPerCell }
+func (p *physicsImpl) BodyIdxMask() uint32                            { return p.bodyIdxMask }
+func (p *physicsImpl) RequestReadback()                               { p.readbackRequested = true }
+func (p *physicsImpl) ReadbackPending() bool                          { return p.readbackPending }
+func (p *physicsImpl) ClearReadbackPending()                          { p.readbackPending = false }
+func (p *physicsImpl) StagingBuffer() *wgpu.Buffer                    { return p.stagingBuffer }
+func (p *physicsImpl) SetStagingBuffer(buf *wgpu.Buffer)              { p.stagingBuffer = buf }
 
 func (p *physicsImpl) Bgp(key string) bind_group_provider.BindGroupProvider {
 	return p.bgps[key]
@@ -304,38 +263,6 @@ func (p *physicsImpl) Bgps() map[string]bind_group_provider.BindGroupProvider {
 	return p.bgps
 }
 
-func (p *physicsImpl) PipelineKey(key string) string {
-	return p.pipelineKeys[key]
-}
-
-// PipelineKeys returns the full map of compute pipeline cache keys keyed by stage name.
-//
-// Returns:
-//   - map[string]string: all pipeline key mappings
-func (p *physicsImpl) PipelineKeys() map[string]string {
-	return p.pipelineKeys
-}
-
-func (p *physicsImpl) MaxBodies() uint32 {
-	return p.maxBodies
-}
-
-func (p *physicsImpl) MaxParticles() uint32 {
-	return p.maxParticles
-}
-
-func (p *physicsImpl) MaxGridCells() uint32 {
-	return p.maxGridCells
-}
-
-func (p *physicsImpl) SetPipelineKey(name, key string) {
-	p.pipelineKeys[name] = key
-}
-
-func (p *physicsImpl) RequestReadback() {
-	p.readbackRequested = true
-}
-
 func (p *physicsImpl) ConsumeReadbackRequest() bool {
 	if !p.readbackRequested {
 		return false
@@ -343,22 +270,6 @@ func (p *physicsImpl) ConsumeReadbackRequest() bool {
 	p.readbackRequested = false
 	p.readbackPending = true
 	return true
-}
-
-func (p *physicsImpl) ReadbackPending() bool {
-	return p.readbackPending
-}
-
-func (p *physicsImpl) ClearReadbackPending() {
-	p.readbackPending = false
-}
-
-func (p *physicsImpl) StagingBuffer() *wgpu.Buffer {
-	return p.stagingBuffer
-}
-
-func (p *physicsImpl) SetStagingBuffer(buf *wgpu.Buffer) {
-	p.stagingBuffer = buf
 }
 
 func (p *physicsImpl) ProcessReadback(data []byte) {
@@ -401,22 +312,22 @@ func (p *physicsImpl) RegisterBody(objID uint64, position, rotation [3]float32, 
 		// Reuse a freed slot — keeps bodiesCount/particleCount bounded.
 		bodyIndex = p.freeBodySlots[len(p.freeBodySlots)-1]
 		p.freeBodySlots = p.freeBodySlots[:len(p.freeBodySlots)-1]
-		particleStart = p.bodyParticleInfo[bodyIndex][0]
+		particleStart = uint32(p.bodyParticleInfo[bodyIndex][0])
 		p.bodies[bodyIndex] = rb
-		p.syncMap[bodyIndex] = instanceID
+		p.syncMap[bodyIndex] = int(instanceID)
 	} else {
 		// Allocate a new slot.
 		bodyIndex = p.bodiesCount
 		particleStart = uint32(p.particleCount)
 		p.bodies = append(p.bodies, rb)
-		p.syncMap = append(p.syncMap, instanceID)
-		p.bodyParticleInfo = append(p.bodyParticleInfo, [2]uint32{})
+		p.syncMap = append(p.syncMap, int(instanceID))
+		p.bodyParticleInfo = append(p.bodyParticleInfo, [2]int{})
 		p.bodiesCount++
 		p.particleCount += int(particleCountU)
 	}
 
 	p.bodiesMap[objID] = bodyIndex
-	p.bodyParticleInfo[bodyIndex] = [2]uint32{particleStart, particleCountU}
+	p.bodyParticleInfo[bodyIndex] = [2]int{int(particleStart), int(particleCountU)}
 
 	quat := eulerToQuaternion(rotation)
 
@@ -442,13 +353,13 @@ func (p *physicsImpl) RegisterBody(objID uint64, position, rotation [3]float32, 
 
 	var flags uint32
 	if rb.Active() {
-		flags |= 1
+		flags |= uint32(PhysicsStateActive)
 	}
 	if rb.Static() {
-		flags |= 2
+		flags |= uint32(PhysicsStateStatic)
 	}
 	if rb.Kinematic() {
-		flags |= 4
+		flags |= uint32(PhysicsStateKinematic)
 	}
 
 	// convert row-major [9]float32 inverse inertia tensor to column-major padded [12]float32
@@ -459,7 +370,7 @@ func (p *physicsImpl) RegisterBody(objID uint64, position, rotation [3]float32, 
 		invI[2], invI[5], invI[8], 0,
 	}
 
-	particleStart = p.bodyParticleInfo[bodyIndex][0]
+	particleStart = uint32(p.bodyParticleInfo[bodyIndex][0])
 	particleCount := particleCountU
 
 	gpuBody := GPUBody{
@@ -588,7 +499,7 @@ func (p *physicsImpl) BodyParticleInfo(bodyIndex int) (start, count uint32) {
 		return 0, 0
 	}
 	info := p.bodyParticleInfo[bodyIndex]
-	return info[0], info[1]
+	return uint32(info[0]), uint32(info[1])
 }
 
 func (p *physicsImpl) StagedWriteData() []bind_group_provider.BufferWrite {
@@ -673,8 +584,8 @@ func (p *physicsImpl) PrepareStep(dt float32) (substeps int, globalsData []byte)
 		ShearCoeff:       p.shearCoeff,
 		BodyCount:        uint32(p.bodiesCount),
 		ParticleCount:    uint32(p.particleCount),
-		MaxGridCells:     p.maxGridCells,
-		BoundaryCount:    p.boundaryCount,
+		MaxGridCells:     uint32(p.maxGridCells),
+		BoundaryCount:    uint32(p.boundaryCount),
 		GravityX:         p.gravity[0],
 		GravityY:         p.gravity[1],
 		GravityZ:         p.gravity[2],
@@ -683,28 +594,4 @@ func (p *physicsImpl) PrepareStep(dt float32) (substeps int, globalsData []byte)
 	}
 
 	return substeps, globals.Marshal()
-}
-
-// eulerToQuaternion converts XYZ Euler angles (in radians) to a unit quaternion
-// stored as [x, y, z, w].
-//
-// Parameters:
-//   - euler: rotation angles as [3]float32 in XYZ order (radians)
-//
-// Returns:
-//   - [4]float32: unit quaternion as [x, y, z, w]
-func eulerToQuaternion(euler [3]float32) [4]float32 {
-	cx := float32(math.Cos(float64(euler[0] * 0.5)))
-	sx := float32(math.Sin(float64(euler[0] * 0.5)))
-	cy := float32(math.Cos(float64(euler[1] * 0.5)))
-	sy := float32(math.Sin(float64(euler[1] * 0.5)))
-	cz := float32(math.Cos(float64(euler[2] * 0.5)))
-	sz := float32(math.Sin(float64(euler[2] * 0.5)))
-
-	return [4]float32{
-		sx*cy*cz - cx*sy*sz,
-		cx*sy*cz + sx*cy*sz,
-		cx*cy*sz - sx*sy*cz,
-		cx*cy*cz + sx*sy*sz,
-	}
 }

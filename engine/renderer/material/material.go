@@ -1,26 +1,13 @@
+// Package material defines renderer material abstractions for surface shading and resource setup.
+//
+// Its primary interface is [Material], which models render surface properties and
+// GPU binding associations used by renderer initialization and draw paths.
 package material
 
 import (
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 )
-
-// material is the implementation of the Material interface.
-type material struct {
-	common.DelegateImpl[Material]
-
-	name                     string
-	baseColor                [4]float32
-	metallic                 float32
-	roughness                float32
-	diffuseTexture           *common.ImportedTexture
-	normalTexture            *common.ImportedTexture
-	metallicRoughnessTexture *common.ImportedTexture
-	pipelineKey              string
-	bindGroupProvider        bind_group_provider.BindGroupProvider
-	fragmentShaderPath       string
-	providers                map[int]bind_group_provider.BindGroupProvider
-}
 
 // Material defines the interface for a render material, encapsulating surface
 // properties, texture references, and GPU resource bindings needed for draw calls.
@@ -57,6 +44,13 @@ type Material interface {
 	// Returns:
 	//   - float32: the roughness factor
 	Roughness() float32
+
+	// AlphaCutoff retrieves the alpha discard threshold for this material.
+	// Fragments with alpha below this value are discarded in alpha-tested rendering.
+	//
+	// Returns:
+	//   - float32: the alpha cutoff threshold
+	AlphaCutoff() float32
 
 	// DiffuseTexture retrieves the diffuse/albedo texture data reference, or nil if none is set.
 	//
@@ -100,18 +94,13 @@ type Material interface {
 	//   - provider: the bind group provider containing GPU resources for this material
 	SetBindGroupProvider(provider bind_group_provider.BindGroupProvider)
 
-	// FragmentShaderPath retrieves the path to the fragment shader associated with this material.
-	// An empty string indicates that the engine default fragment shader should be used.
+	// PipelineOptions retrieves the pipeline builder options associated with this material.
+	// These are applied when the scene registers the material's render pipeline at Add time.
+	// Each value is a pipeline.PipelineBuilderOption passed as any to avoid import cycles.
 	//
 	// Returns:
-	//   - string: the fragment shader asset path, or empty for the engine default
-	FragmentShaderPath() string
-
-	// SetFragmentShaderPath sets the path to the fragment shader for this material.
-	//
-	// Parameters:
-	//   - path: the fragment shader asset path
-	SetFragmentShaderPath(path string)
+	//   - []any: the pipeline builder options, or nil if none are set
+	PipelineOptions() []any
 
 	// Provider retrieves the bind group provider associated with the specified group index.
 	// Returns nil if no provider has been set for the given group.
@@ -135,77 +124,27 @@ type Material interface {
 
 var _ Material = &material{}
 
-// NewMaterial creates a new Material instance configured with the provided options.
-//
-// Parameters:
-//   - options: variadic list of MaterialBuilderOption functions to configure the material
-//
-// Returns:
-//   - Material: a new Material instance
-func NewMaterial(options ...MaterialBuilderOption) Material {
-	m := &material{
-		baseColor: [4]float32{1, 1, 1, 1},
-		metallic:  0.0,
-		roughness: 1.0,
-		providers: make(map[int]bind_group_provider.BindGroupProvider),
-	}
-	for _, opt := range options {
-		opt(m)
-	}
-	m.Delegate = m
-	return m
-}
-
-func (m *material) Name() string {
-	return m.name
-}
-
-func (m *material) BaseColor() [4]float32 {
-	return m.baseColor
-}
-
-func (m *material) Metallic() float32 {
-	return m.metallic
-}
-
-func (m *material) Roughness() float32 {
-	return m.roughness
-}
-
-func (m *material) DiffuseTexture() *common.ImportedTexture {
-	return m.diffuseTexture
-}
-
-func (m *material) NormalTexture() *common.ImportedTexture {
-	return m.normalTexture
-}
+func (m *material) Name() string                            { return m.name }
+func (m *material) BaseColor() [4]float32                   { return m.baseColor }
+func (m *material) Metallic() float32                       { return m.metallic }
+func (m *material) Roughness() float32                      { return m.roughness }
+func (m *material) AlphaCutoff() float32                    { return m.alphaCutoff }
+func (m *material) DiffuseTexture() *common.ImportedTexture { return m.diffuseTexture }
+func (m *material) NormalTexture() *common.ImportedTexture  { return m.normalTexture }
+func (m *material) PipelineOptions() []any                  { return m.pipelineOpts }
+func (m *material) PipelineKey() string                     { return m.pipelineKey }
+func (m *material) SetPipelineKey(key string)               { m.pipelineKey = key }
 
 func (m *material) MetallicRoughnessTexture() *common.ImportedTexture {
 	return m.metallicRoughnessTexture
-}
-
-func (m *material) PipelineKey() string {
-	return m.pipelineKey
 }
 
 func (m *material) BindGroupProvider() bind_group_provider.BindGroupProvider {
 	return m.bindGroupProvider
 }
 
-func (m *material) SetPipelineKey(key string) {
-	m.pipelineKey = key
-}
-
 func (m *material) SetBindGroupProvider(provider bind_group_provider.BindGroupProvider) {
 	m.bindGroupProvider = provider
-}
-
-func (m *material) FragmentShaderPath() string {
-	return m.fragmentShaderPath
-}
-
-func (m *material) SetFragmentShaderPath(path string) {
-	m.fragmentShaderPath = path
 }
 
 func (m *material) Provider(group int) bind_group_provider.BindGroupProvider {

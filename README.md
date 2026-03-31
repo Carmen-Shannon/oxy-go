@@ -25,6 +25,7 @@ Oxy is a forward-rendering 3D engine built from scratch in Go. It uses WebGPU fo
 - **Forward+ Rendering** — Tiled light culling compute pass followed by a lit forward render pass.
 - **Skeletal Animation** — GPU-driven skeletal animation via compute shaders with bone blending, channel interpolation, and indirect draw.
 - **Shadow Mapping** — Depth-only shadow passes with PCF sampling and configurable shadow uniforms.
+- **Post-Processing** — SSAO, screen-space reflections (SSR), contact shadows, auto-exposure, and bloom.
 - **glTF Loader** — Full glTF 2.0 import pipeline: meshes, materials, skeletons, and animations.
 - **WGSL Shader Annotations** — A custom pre-processor that embeds resource metadata directly in WGSL source files, enabling declarative GPU resource wiring with zero string-based lookups at runtime. See the [Annotation System Documentation](README_ANNOTATIONS.md).
 - **Scene Graph** — Scenes manage cameras, lights, game objects, pipelines, shaders, and bind group providers in a single composable unit.
@@ -86,7 +87,7 @@ import (
 
 func main() {
     eng := engine.NewEngine(
-        engine.WithProfiler(true), // profiler option
+        engine.WithProfiling(true), // profiler option
         engine.WithTickRate(60), // engine tick rate in hz
         engine.WithWindow(window.NewWindow(
             window.WithTitle("Oxy Engine"),
@@ -150,7 +151,15 @@ WGSL shaders use `@oxy:` annotations to declare their resource requirements dire
 Run the full test suite with coverage across the `common` and `engine` packages:
 
 ```bash
-go test ./tests/... -coverpkg="github.com/Carmen-Shannon/oxy-go/common/...,github.com/Carmen-Shannon/oxy-go/engine/..." -coverprofile="coverage.out"
+# Linux / macOS / CI
+PKGS=$(go list ./common/... ./engine/... | grep -v '/mocks$' | tr '\n' ',' | sed 's/,$//'); \
+go test ./common/... ./engine/... -coverpkg="${PKGS}" -coverprofile="coverage.out"
+```
+
+```powershell
+# Windows (PowerShell)
+$pkgs = (go list ./common/... ./engine/... | Where-Object { $_ -notmatch '/mocks$' }) -join ','; `
+go test ./common/... ./engine/... -coverpkg="$pkgs" -coverprofile="coverage.out"
 ```
 
 Then view the per-function coverage report:
@@ -175,7 +184,7 @@ Then regenerate all mocks from the project root:
 mockery
 ```
 
-Mockery reads `.mockery.yaml` automatically and writes generated mocks to `tests/mocks/`.
+Mockery reads `.mockery.yaml` automatically and writes generated mocks into each package's own `mocks/` subdirectory (e.g., `engine/mocks/`, `common/mocks/`).
 
 ---
 

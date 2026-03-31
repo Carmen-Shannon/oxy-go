@@ -37,7 +37,7 @@ func (g *GPUVertex) Size() int {
 // Returns:
 //   - []byte: 64-byte buffer ready for GPU upload.
 func (g *GPUVertex) Marshal() []byte {
-	buf := make([]byte, 64)
+	buf := make([]byte, g.Size())
 	binary.LittleEndian.PutUint32(buf[0:4], math.Float32bits(g.Position[0]))
 	binary.LittleEndian.PutUint32(buf[4:8], math.Float32bits(g.Position[1]))
 	binary.LittleEndian.PutUint32(buf[8:12], math.Float32bits(g.Position[2]))
@@ -86,7 +86,7 @@ func (g *GPUSkinnedVertex) Size() int {
 // Returns:
 //   - []byte: 96-byte buffer ready for GPU upload.
 func (g *GPUSkinnedVertex) Marshal() []byte {
-	buf := make([]byte, 96)
+	buf := make([]byte, g.Size())
 	// Base vertex fields (64 bytes)
 	binary.LittleEndian.PutUint32(buf[0:4], math.Float32bits(g.Position[0]))
 	binary.LittleEndian.PutUint32(buf[4:8], math.Float32bits(g.Position[1]))
@@ -137,6 +137,36 @@ func ComputeBoundingRadius(vertices []GPUSkinnedVertex) float32 {
 	return float32(math.Sqrt(float64(maxDistSq)))
 }
 
+// ComputeBoundingAABB calculates the axis-aligned bounding box from a slice of
+// GPUSkinnedVertex positions. Returns the component-wise minimum and maximum
+// across all vertices.
+//
+// Parameters:
+//   - vertices: the vertex data to compute the AABB from
+//
+// Returns:
+//   - [3]float32: minimum corner (min X, min Y, min Z)
+//   - [3]float32: maximum corner (max X, max Y, max Z)
+func ComputeBoundingAABB(vertices []GPUSkinnedVertex) ([3]float32, [3]float32) {
+	if len(vertices) == 0 {
+		return [3]float32{}, [3]float32{}
+	}
+	min := vertices[0].Position
+	max := vertices[0].Position
+	for _, v := range vertices[1:] {
+		p := v.Position
+		for i := range 3 {
+			if p[i] < min[i] {
+				min[i] = p[i]
+			}
+			if p[i] > max[i] {
+				max[i] = p[i]
+			}
+		}
+	}
+	return min, max
+}
+
 // GPUModelDataSource is the canonical WGSL definition of the ModelData struct for per-instance model matrices.
 // Matches GPUModelData layout exactly (64 bytes, std430 aligned).
 //
@@ -163,8 +193,8 @@ func (g *GPUModelData) Size() int {
 // Returns:
 //   - []byte: 64-byte buffer ready for GPU upload.
 func (g *GPUModelData) Marshal() []byte {
-	buf := make([]byte, 64)
-	for i := 0; i < 16; i++ {
+	buf := make([]byte, g.Size())
+	for i := range 16 {
 		binary.LittleEndian.PutUint32(buf[i*4:(i+1)*4], math.Float32bits(g.Model[i]))
 	}
 	return buf

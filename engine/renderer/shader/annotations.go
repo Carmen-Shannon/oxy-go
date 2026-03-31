@@ -63,6 +63,16 @@ const (
 	//   //@oxy:provider 2 0 material diffuse_texture
 	//   //@oxy:provider 4 0 shadow
 	AnnotationTypeProvider AnnotationType = "provider"
+
+	// annotationTypeInject replaces the annotation line with a typed WGSL const
+	// declaration whose value is looked up at pre-process time from an injection map
+	// passed to Process(). Like annotationTypeInclude, this annotation is consumed
+	// entirely during pre-processing and does not produce a declaration entry.
+	//
+	// Syntax: //@oxy:inject <const_name> <wgsl_type> <injection_key>
+	//
+	// Example: //@oxy:inject MAX_BONES u32 max_bones
+	annotationTypeInject AnnotationType = "inject"
 )
 
 // Annotation represents a single parsed @oxy: annotation from a WGSL shader source line.
@@ -134,13 +144,17 @@ const (
 	// Source: engine/light/assets/light-cull-uniforms.wgsl
 	annotationArgLightCullUniforms AnnotationArg = "light_cull_uniforms"
 
-	// AnnotationArgShadowData identifies the ShadowData struct for the lit fragment shader's shadow sampling.
-	// Source: engine/light/assets/shadow-data.wgsl
-	AnnotationArgShadowData AnnotationArg = "shadow_data"
-
 	// AnnotationArgShadowUniform identifies the ShadowUniform struct for the shadow depth pass.
 	// Source: engine/light/assets/shadow-uniform.wgsl
 	AnnotationArgShadowUniform AnnotationArg = "shadow_uniform"
+
+	// AnnotationArgCSMData identifies the CSMData and CSMCascade structs for cascaded shadow map data.
+	// Source: engine/light/assets/csm-data.wgsl
+	AnnotationArgCSMData AnnotationArg = "csm_data"
+
+	// AnnotationArgLightShadowEntry identifies the LightShadowEntry struct for per-light shadow data.
+	// Source: engine/light/assets/light-shadow-entry.wgsl
+	AnnotationArgLightShadowEntry AnnotationArg = "light_shadow_entry"
 
 	// AnnotationArgTileUniforms identifies the TileUniforms struct for Forward+ tile configuration.
 	// Source: engine/light/assets/tile-uniforms.wgsl
@@ -210,29 +224,9 @@ const (
 	// Source: engine/light/assets/ssao-params.wgsl
 	annotationArgSSAOParams AnnotationArg = "ssao_params"
 
-	// annotationArgBlurParams identifies the BlurParams struct for the VSM separable blur compute shader.
+	// annotationArgBlurParams identifies the BlurParams struct for the separable blur compute shader.
 	// Source: engine/light/assets/blur-params.wgsl
 	annotationArgBlurParams AnnotationArg = "blur_params"
-
-	// annotationArgSATParams identifies the SATParams struct for the SAT recursive-doubling compute shader.
-	// Source: engine/light/assets/sat-params.wgsl
-	annotationArgSATParams AnnotationArg = "sat_params"
-
-	// AnnotationArgIrradianceProbe identifies the IrradianceProbe struct for probe grid storage.
-	// Source: engine/light/assets/irradiance-probe.wgsl
-	AnnotationArgIrradianceProbe AnnotationArg = "irradiance_probe"
-
-	// AnnotationArgProbeGridParams identifies the ProbeGridParams struct for probe grid uniform data.
-	// Source: engine/light/assets/probe-grid-params.wgsl
-	AnnotationArgProbeGridParams AnnotationArg = "probe_grid_params"
-
-	// annotationArgProbeBakeCamera identifies the ProbeBakeCamera struct for cubemap face baking uniforms.
-	// Source: engine/light/assets/probe-bake-camera.wgsl
-	annotationArgProbeBakeCamera AnnotationArg = "probe_bake_camera"
-
-	// annotationArgSHProjectParams identifies the SHProjectParams struct for the SH projection compute shader.
-	// Source: engine/light/assets/sh-project-params.wgsl
-	annotationArgSHProjectParams AnnotationArg = "sh_project_params"
 
 	// annotationArgCompositionParams identifies the CompositionParams struct for the composition fragment shader.
 	// Source: engine/light/assets/composition-params.wgsl
@@ -241,6 +235,19 @@ const (
 	// annotationArgSSRParams identifies the SSRParams struct for the SSR compute shader.
 	// Source: engine/light/assets/ssr-params.wgsl
 	annotationArgSSRParams AnnotationArg = "ssr_params"
+
+	// annotationArgContactShadowParams identifies the ContactShadowParams struct for the contact shadow compute shader.
+	// Source: engine/light/assets/contact-shadow-params.wgsl
+	annotationArgContactShadowParams AnnotationArg = "contact_shadow_params"
+
+	// annotationArgLuminanceParams identifies the LuminanceParams struct for the luminance compute shader.
+	// Source: engine/light/assets/luminance-params.wgsl
+	annotationArgLuminanceParams AnnotationArg = "luminance_params"
+
+	// annotationArgBloomParams identifies the GPUBloomParams struct type used by the bloom
+	// downsample compute shader for threshold configuration.
+	// Source: engine/light/assets/bloom-params.wgsl
+	annotationArgBloomParams AnnotationArg = "bloom_params"
 )
 
 // ── Address space arguments ────────────────────────────────────────────────────
@@ -294,9 +301,6 @@ const (
 	// AnnotationArgSSAO identifies the SSAO provider (blurred occlusion texture + sampler for the lit shader).
 	AnnotationArgSSAO AnnotationArg = "ssao"
 
-	// AnnotationArgProbes identifies the irradiance probe grid provider (probe storage buffer + grid params uniform for the lit shader).
-	AnnotationArgProbes AnnotationArg = "probes"
-
 	// AnnotationArgComposition identifies the composition provider (HDR texture + SSR texture + sampler + params uniform).
 	AnnotationArgComposition AnnotationArg = "composition"
 
@@ -308,6 +312,98 @@ const (
 
 	// AnnotationArgHiZDown identifies the Hi-Z downsample provider (mip N-1 → mip N min-downsample).
 	AnnotationArgHiZDown AnnotationArg = "hiz_down"
+
+	// AnnotationArgHiZDownMax identifies the hiz_down_max compute provider (MAX pyramid downsample).
+	AnnotationArgHiZDownMax AnnotationArg = "hiz_down_max"
+
+	// AnnotationArgContactShadows identifies the contact shadows provider (contact shadow texture + sampler for the lit shader).
+	AnnotationArgContactShadows AnnotationArg = "contact_shadows"
+
+	// AnnotationArgAnimatorHiZ identifies the animator Hi-Z occlusion culling provider
+	// (Hi-Z full mip chain texture for the animator compute shaders).
+	AnnotationArgAnimatorHiZ AnnotationArg = "animator_hiz"
+
+	// AnnotationArgAnimatorMaxHiZ identifies the animator MAX Hi-Z occlusion culling provider.
+	AnnotationArgAnimatorMaxHiZ AnnotationArg = "animator_max_hiz"
+)
+
+// ── Injection key arguments ────────────────────────────────────────────────────
+// These identify registered injection keys for @oxy:inject annotations. Each maps
+// to a Go-side value that is provided in the injection map parameter of Process().
+
+const (
+	// annotationArgInjectMaxBones injects the maximum bone count for skinned mesh shaders.
+	// Go source: engine/scene/scene.go — maxBonesGPU constant.
+	annotationArgInjectMaxBones AnnotationArg = "max_bones"
+
+	// annotationArgInjectMaxSSAOSamples injects the maximum SSAO kernel sample count
+	// (caps the uniform array size and sample loop).
+	// Go source: engine/scene/scene.go — SSAO sample count clamp.
+	annotationArgInjectMaxSSAOSamples AnnotationArg = "max_ssao_samples"
+
+	// annotationArgInjectTileSize injects the Forward+ light-culling tile width/height in pixels.
+	// Go source: engine/light/light_handler_builder.go — tileSize field.
+	annotationArgInjectTileSize AnnotationArg = "tile_size"
+
+	// annotationArgInjectMaxLightsPerTile injects the maximum number of lights stored per tile
+	// in the Forward+ light index buffer.
+	// Go source: engine/light/light_handler_builder.go — maxLightsPerTile field.
+	annotationArgInjectMaxLightsPerTile AnnotationArg = "max_lights_per_tile"
+
+	// annotationArgInjectNumThreads injects the total workgroup thread count for light culling
+	// (pre-computed as tileSize × tileSize in Go).
+	// Go source: derived from tileSize in engine/light/light_handler_builder.go.
+	annotationArgInjectNumThreads AnnotationArg = "num_threads"
+
+	// annotationArgInjectSlotsPerCell injects the number of body slots per physics grid cell.
+	// Go source: implicit from GPUGridCell struct layout in engine/physics/gpu_types.go.
+	annotationArgInjectSlotsPerCell AnnotationArg = "slots_per_cell"
+
+	// annotationArgInjectFlagActive injects the physics body "active" bit flag value.
+	// Go source: engine/physics/physics.go — rigid body flag constants.
+	annotationArgInjectFlagActive AnnotationArg = "flag_active"
+
+	// annotationArgInjectFlagStatic injects the physics body "static" bit flag value.
+	// Go source: engine/physics/physics.go — rigid body flag constants.
+	annotationArgInjectFlagStatic AnnotationArg = "flag_static"
+
+	// annotationArgInjectFlagKinematic injects the physics body "kinematic" bit flag value.
+	// Go source: engine/physics/physics.go — rigid body flag constants.
+	annotationArgInjectFlagKinematic AnnotationArg = "flag_kinematic"
+
+	// annotationArgInjectEmptySentinel injects the empty-cell sentinel value used in physics
+	// grid cells to mark unused slots (typically 0xFFFFFFFF).
+	// Go source: engine/scene/scene.go — grid cell initialization constant.
+	annotationArgInjectEmptySentinel AnnotationArg = "empty_sentinel"
+
+	// annotationArgInjectBodyIdxMask injects the bitmask used to extract the body index
+	// from a packed body-index/bone-index u32 in physics shaders.
+	// Go source: engine/physics/physics.go — packing logic (bodyIndex | boneIndex<<24).
+	annotationArgInjectBodyIdxMask AnnotationArg = "body_idx_mask"
+
+	// annotationArgInjectPCFSamples injects the number of Poisson-disk PCF shadow samples
+	// used in CSM and spot/point shadow sampling.
+	// Go source: engine/light/shadow_handler.go (or configurable via builder).
+	annotationArgInjectPCFSamples AnnotationArg = "pcf_samples"
+
+	// annotationArgInjectLightTypeDirectional injects the integer constant identifying
+	// directional lights in the GPU Light struct's type field.
+	// Go source: engine/light/light.go — LightTypeDirectional iota value.
+	annotationArgInjectLightTypeDirectional AnnotationArg = "light_type_directional"
+
+	// annotationArgInjectLightTypePoint injects the integer constant identifying
+	// point lights in the GPU Light struct's type field.
+	// Go source: engine/light/light.go — LightTypePoint iota value.
+	annotationArgInjectLightTypePoint AnnotationArg = "light_type_point"
+
+	// annotationArgInjectLightTypeSpot injects the integer constant identifying
+	// spot lights in the GPU Light struct's type field.
+	// Go source: engine/light/light.go — LightTypeSpot iota value.
+	annotationArgInjectLightTypeSpot AnnotationArg = "light_type_spot"
+
+	// annotationArgInjectLuminanceWorkgroupSize injects the luminance compute workgroup tile dimension.
+	// Go source: engine/light/composition_handler.go — CompositionHandler.LuminanceWorkgroupSize().
+	annotationArgInjectLuminanceWorkgroupSize AnnotationArg = "luminance_workgroup_size"
 )
 
 // ── Material binding role arguments ────────────────────────────────────────────
@@ -367,7 +463,43 @@ const (
 
 	// AnnotationArgHiZTexture identifies the full Hi-Z depth pyramid texture binding role.
 	AnnotationArgHiZTexture AnnotationArg = "hiz_texture"
+
+	// AnnotationArgMaxHiZTexture identifies the MAX Hi-Z depth pyramid texture binding role (occlusion culling).
+	AnnotationArgMaxHiZTexture AnnotationArg = "hiz_max_texture"
+
+	// AnnotationArgSpotShadowTexture identifies the spot/point shadow atlas depth texture binding role.
+	AnnotationArgSpotShadowTexture AnnotationArg = "spot_shadow_texture"
+
+	// AnnotationArgContactShadowTexture identifies the contact shadow occlusion texture binding role.
+	AnnotationArgContactShadowTexture AnnotationArg = "contact_shadow_texture"
+
+	// AnnotationArgContactShadowSampler identifies the contact shadow sampler binding role.
+	AnnotationArgContactShadowSampler AnnotationArg = "contact_shadow_sampler"
+
+	// AnnotationArgMaterialParams identifies the per-material scalar parameters uniform binding role.
+	AnnotationArgMaterialParams AnnotationArg = "material_params"
 )
+
+var validInjectionKeys = []AnnotationArg{
+	annotationArgInjectMaxBones,
+	annotationArgInjectMaxSSAOSamples,
+	annotationArgInjectTileSize,
+	annotationArgInjectMaxLightsPerTile,
+	annotationArgInjectNumThreads,
+	annotationArgInjectSlotsPerCell,
+	annotationArgInjectFlagActive,
+	annotationArgInjectFlagStatic,
+	annotationArgInjectFlagKinematic,
+	annotationArgInjectEmptySentinel,
+	annotationArgInjectBodyIdxMask,
+	annotationArgInjectPCFSamples,
+	annotationArgInjectLightTypeDirectional,
+	annotationArgInjectLightTypePoint,
+	annotationArgInjectLightTypeSpot,
+	annotationArgInjectLuminanceWorkgroupSize,
+}
+
+var validWGSLTypes = []string{"u32", "f32", "i32"}
 
 // validStructTypes lists all AnnotationArg values that are accepted as struct type
 // arguments in @oxy:include and @oxy:group annotations. Each entry must have a
@@ -381,8 +513,9 @@ var validStructTypes = []AnnotationArg{
 	AnnotationArgLight,
 	AnnotationArgLightHeader,
 	annotationArgLightCullUniforms,
-	AnnotationArgShadowData,
 	AnnotationArgShadowUniform,
+	AnnotationArgCSMData,
+	AnnotationArgLightShadowEntry,
 	AnnotationArgTileUniforms,
 	AnnotationArgAnimationData,
 	AnnotationArgSkeletalAnimationData,
@@ -401,13 +534,11 @@ var validStructTypes = []AnnotationArg{
 	AnnotationArgGBufferOutput,
 	annotationArgSSAOParams,
 	annotationArgBlurParams,
-	annotationArgSATParams,
-	AnnotationArgIrradianceProbe,
-	AnnotationArgProbeGridParams,
-	annotationArgProbeBakeCamera,
-	annotationArgSHProjectParams,
 	annotationArgCompositionParams,
 	annotationArgSSRParams,
+	annotationArgContactShadowParams,
+	annotationArgLuminanceParams,
+	annotationArgBloomParams,
 }
 
 // validAddressSpaces lists all AnnotationArg values that are accepted as address
@@ -433,11 +564,14 @@ var validProviderIdentities = []AnnotationArg{
 	AnnotationArgAnimatorPacked,
 	AnnotationArgAnimatorScratch,
 	AnnotationArgSSAO,
-	AnnotationArgProbes,
 	AnnotationArgComposition,
 	AnnotationArgSSR,
 	AnnotationArgHiZInit,
 	AnnotationArgHiZDown,
+	AnnotationArgHiZDownMax,
+	AnnotationArgContactShadows,
+	AnnotationArgAnimatorHiZ,
+	AnnotationArgAnimatorMaxHiZ,
 }
 
 // validBindingRoles lists all AnnotationArg values that are accepted as binding
@@ -461,6 +595,11 @@ var validBindingRoles = []AnnotationArg{
 	AnnotationArgHiZOut,
 	AnnotationArgHiZIn,
 	AnnotationArgHiZTexture,
+	AnnotationArgMaxHiZTexture,
+	AnnotationArgSpotShadowTexture,
+	AnnotationArgContactShadowTexture,
+	AnnotationArgContactShadowSampler,
+	AnnotationArgMaterialParams,
 }
 
 // parseAnnotation attempts to parse a single line of WGSL source as an @oxy: annotation.
@@ -532,6 +671,21 @@ func parseAnnotation(line string, lineNum int) (*Annotation, error) {
 			Line:    lineNum,
 			Group:   &groupInt,
 			Binding: &bindingInt,
+		}, nil
+	case string(annotationTypeInject):
+		if len(args) != 4 {
+			return nil, fmt.Errorf("line %d: @oxy:inject annotation requires exactly three arguments (const_name, wgsl_type, injection_key)", lineNum)
+		}
+		if !slices.Contains(validWGSLTypes, args[2]) {
+			return nil, fmt.Errorf("line %d: unsupported WGSL type %q in @oxy:inject annotation", lineNum, args[2])
+		}
+		if !slices.Contains(validInjectionKeys, AnnotationArg(args[3])) {
+			return nil, fmt.Errorf("line %d: unknown injection key %q in @oxy:inject annotation", lineNum, args[3])
+		}
+		return &Annotation{
+			Type: annotationTypeInject,
+			Args: []AnnotationArg{AnnotationArg(args[1]), AnnotationArg(args[2]), AnnotationArg(args[3])},
+			Line: lineNum,
 		}, nil
 	case string(AnnotationTypeProvider):
 		if len(args) < 4 || len(args) > 5 {

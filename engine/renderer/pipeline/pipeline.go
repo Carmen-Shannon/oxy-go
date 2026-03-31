@@ -1,3 +1,7 @@
+// Package pipeline defines renderer pipeline abstractions centered on the [Pipeline] interface.
+//
+// It models render and compute pipeline configuration and pipeline references used by renderer
+// pipeline registration and lookup.
 package pipeline
 
 import (
@@ -16,41 +20,6 @@ const (
 	// PipelineTypeRender indicates a render pipeline with vertex and fragment shader entry points.
 	PipelineTypeRender
 )
-
-// pipeline is the implementation of the Pipeline interface.
-// It holds the underlying WebGPU pipeline objects and related data for both render and compute pipelines.
-type pipeline struct {
-	common.DelegateImpl[Pipeline]
-
-	// pipelineType indicates the type of pipeline this is; compute or render
-	pipelineType PipelineType
-	// pipelineKey is the unique identifier for this pipeline, used for caching and lookups
-	pipelineKey string
-
-	// the following shader references are used for pipeline creation and material binding, they are required to be set before initializing a pipeline.
-
-	vertexShader, fragmentShader, computeShader shader.Shader
-
-	// renderPipeline is the render pipeline if this is a render pipeline, nil otherwise
-	renderPipeline *wgpu.RenderPipeline
-	// computePipeline is the compute pipeline if this is a compute pipeline, nil otherwise
-	computePipeline *wgpu.ComputePipeline
-
-	// The following properties are used to configure the pipeline during creation and can be toggled/set with the builder options.
-	// These are only used for renderer pipelines, compute pipelines still set defaults but do not utilize them.
-
-	depthTestEnabled    bool
-	depthWriteEnabled   bool
-	depthCompare        wgpu.CompareFunction
-	depthBias           int32
-	depthBiasSlopeScale float32
-	blendEnabled        bool
-	cullMode            wgpu.CullMode
-	topology            wgpu.PrimitiveTopology
-	frontFace           wgpu.FrontFace
-	writeMask           wgpu.ColorWriteMask
-	blendState          *wgpu.BlendState
-}
 
 // Pipeline defines the interface for a GPU pipeline, encapsulating either a render pipeline
 // (vertex + fragment shaders) or a compute pipeline (compute shader). It holds all configuration
@@ -169,53 +138,9 @@ type Pipeline interface {
 
 var _ Pipeline = &pipeline{}
 
-// NewPipeline is the entry point to create a new Pipeline interface. A PipelineType must be specified and provided upon creation.
-//
-// Parameters:
-//   - pipelineKey: the unique key for this pipeline
-//   - pipelineType: the type of pipeline to create (render or compute)
-//   - opts: a variadic list of PipelineBuilderOption functions to configure the pipeline
-//
-// Returns:
-//   - Pipeline: a new Pipeline instance with the specified type and configuration
-func NewPipeline(pipelineKey string, pipelineType PipelineType, opts ...PipelineBuilderOption) Pipeline {
-	p := &pipeline{
-		pipelineKey:       pipelineKey,
-		pipelineType:      pipelineType,
-		depthTestEnabled:  true,
-		depthWriteEnabled: true,
-		blendEnabled:      false,
-		cullMode:          wgpu.CullModeNone,
-		topology:          wgpu.PrimitiveTopologyTriangleList,
-		frontFace:         wgpu.FrontFaceCCW,
-		writeMask:         wgpu.ColorWriteMaskAll,
-		blendState: &wgpu.BlendState{
-			Color: wgpu.BlendComponent{
-				SrcFactor: wgpu.BlendFactorSrcAlpha,
-				DstFactor: wgpu.BlendFactorOneMinusSrcAlpha,
-				Operation: wgpu.BlendOperationAdd,
-			},
-			Alpha: wgpu.BlendComponent{
-				SrcFactor: wgpu.BlendFactorOne,
-				DstFactor: wgpu.BlendFactorOneMinusSrcAlpha,
-				Operation: wgpu.BlendOperationAdd,
-			},
-		},
-	}
-	for _, opt := range opts {
-		opt(p)
-	}
-	p.Delegate = p
-	return p
-}
+func (p *pipeline) Type() PipelineType { return p.pipelineType }
 
-func (p *pipeline) Type() PipelineType {
-	return p.pipelineType
-}
-
-func (p *pipeline) PipelineKey() string {
-	return p.pipelineKey
-}
+func (p *pipeline) PipelineKey() string { return p.pipelineKey }
 
 func (p *pipeline) Pipeline() any {
 	switch p.pipelineType {
@@ -228,49 +153,27 @@ func (p *pipeline) Pipeline() any {
 	}
 }
 
-func (p *pipeline) DepthTestEnabled() bool {
-	return p.depthTestEnabled
-}
+func (p *pipeline) DepthTestEnabled() bool { return p.depthTestEnabled }
 
-func (p *pipeline) DepthWriteEnabled() bool {
-	return p.depthWriteEnabled
-}
+func (p *pipeline) DepthWriteEnabled() bool { return p.depthWriteEnabled }
 
-func (p *pipeline) DepthCompare() wgpu.CompareFunction {
-	return p.depthCompare
-}
+func (p *pipeline) DepthCompare() wgpu.CompareFunction { return p.depthCompare }
 
-func (p *pipeline) DepthBias() int32 {
-	return p.depthBias
-}
+func (p *pipeline) DepthBias() int32 { return p.depthBias }
 
-func (p *pipeline) DepthBiasSlopeScale() float32 {
-	return p.depthBiasSlopeScale
-}
+func (p *pipeline) DepthBiasSlopeScale() float32 { return p.depthBiasSlopeScale }
 
-func (p *pipeline) BlendEnabled() bool {
-	return p.blendEnabled
-}
+func (p *pipeline) BlendEnabled() bool { return p.blendEnabled }
 
-func (p *pipeline) CullMode() wgpu.CullMode {
-	return p.cullMode
-}
+func (p *pipeline) CullMode() wgpu.CullMode { return p.cullMode }
 
-func (p *pipeline) Topology() wgpu.PrimitiveTopology {
-	return p.topology
-}
+func (p *pipeline) Topology() wgpu.PrimitiveTopology { return p.topology }
 
-func (p *pipeline) FrontFace() wgpu.FrontFace {
-	return p.frontFace
-}
+func (p *pipeline) FrontFace() wgpu.FrontFace { return p.frontFace }
 
-func (p *pipeline) WriteMask() wgpu.ColorWriteMask {
-	return p.writeMask
-}
+func (p *pipeline) WriteMask() wgpu.ColorWriteMask { return p.writeMask }
 
-func (p *pipeline) BlendState() *wgpu.BlendState {
-	return p.blendState
-}
+func (p *pipeline) BlendState() *wgpu.BlendState { return p.blendState }
 
 func (p *pipeline) Shader(shaderType shader.ShaderType) shader.Shader {
 	switch shaderType {
@@ -285,10 +188,6 @@ func (p *pipeline) Shader(shaderType shader.ShaderType) shader.Shader {
 	}
 }
 
-func (p *pipeline) SetRenderPipeline(rp *wgpu.RenderPipeline) {
-	p.renderPipeline = rp
-}
+func (p *pipeline) SetRenderPipeline(rp *wgpu.RenderPipeline) { p.renderPipeline = rp }
 
-func (p *pipeline) SetComputePipeline(cp *wgpu.ComputePipeline) {
-	p.computePipeline = cp
-}
+func (p *pipeline) SetComputePipeline(cp *wgpu.ComputePipeline) { p.computePipeline = cp }

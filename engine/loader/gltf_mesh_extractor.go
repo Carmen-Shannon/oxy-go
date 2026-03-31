@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
 )
 
@@ -78,16 +79,94 @@ func (e *gltfMeshExtractorImpl) ExtractAllMeshes() ([]model.ImportedMesh, error)
 		return nil, fmt.Errorf("no document loaded")
 	}
 
+	// Fallback: no active scene → iterate raw mesh list with identity transform.
+	if doc.Scene == nil || len(doc.Scenes) == 0 {
+		var allMeshes []model.ImportedMesh
+		for i := range doc.Meshes {
+			meshes, err := e.ExtractMesh(i)
+			if err != nil {
+				return nil, fmt.Errorf("mesh %d: %w", i, err)
+			}
+			allMeshes = append(allMeshes, meshes...)
+		}
+		return allMeshes, nil
+	}
+
+	scene := &doc.Scenes[*doc.Scene]
+	var identity [16]float32
+	common.Identity(identity[:])
+
 	var allMeshes []model.ImportedMesh
-	for i := range doc.Meshes {
-		meshes, err := e.ExtractMesh(i)
+	for _, nodeIdx := range scene.Nodes {
+		meshes, err := e.gltfWalkNode(doc, nodeIdx, identity)
 		if err != nil {
-			return nil, fmt.Errorf("mesh %d: %w", i, err)
+			return nil, err
 		}
 		allMeshes = append(allMeshes, meshes...)
 	}
 
 	return allMeshes, nil
+}
+
+// gltfWalkNode recursively traverses the node hierarchy of the active scene.
+// It accumulates world transforms and extracts mesh primitives at each mesh node.
+// For nodes with a skin the world transform is not applied to vertex data, because
+// the skeleton drives world positioning at runtime.
+//
+// Parameters:
+//   - doc: the parsed glTF document
+//   - nodeIdx: index into doc.Nodes for the current node
+//   - parentWorld: accumulated column-major 4×4 world transform from ancestor nodes
+//
+// Returns:
+//   - []model.ImportedMesh: all meshes extracted from this node and its descendants
+//   - error: error if any extraction step fails
+func (e *gltfMeshExtractorImpl) gltfWalkNode(doc *gltfDocument, nodeIdx int, parentWorld [16]float32) ([]model.ImportedMesh, error) {
+	if nodeIdx < 0 || nodeIdx >= len(doc.Nodes) {
+		return nil, fmt.Errorf("node index %d out of range", nodeIdx)
+	}
+	node := &doc.Nodes[nodeIdx]
+
+	// Accumulate world transform: worldMat = parentWorld × nodeLocal
+	local := gltfNodeLocalMatrix(node)
+	var worldMat [16]float32
+	common.Mul4(worldMat[:], parentWorld[:], local[:])
+
+	var result []model.ImportedMesh
+
+	if node.Mesh != nil {
+		meshIdx := *node.Mesh
+		if meshIdx < 0 || meshIdx >= len(doc.Meshes) {
+			return nil, fmt.Errorf("node %d references out-of-range mesh %d", nodeIdx, meshIdx)
+		}
+		mesh := &doc.Meshes[meshIdx]
+
+		for primIdx := range mesh.Primitives {
+			prim := &mesh.Primitives[primIdx]
+			imported, err := e.extractPrimitive(prim, mesh.Name, primIdx)
+			if err != nil {
+				return nil, fmt.Errorf("node %d mesh %d primitive %d: %w", nodeIdx, meshIdx, primIdx, err)
+			}
+
+			// Skinned nodes: the skeleton repositions vertices at runtime; do not
+			// bake the world transform into vertex data.
+			if node.Skin == nil {
+				gltfApplyWorldTransform(imported, worldMat)
+			}
+
+			result = append(result, *imported)
+		}
+	}
+
+	for _, childIdx := range node.Children {
+		childMeshes, err := e.gltfWalkNode(doc, childIdx, worldMat)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, childMeshes...)
+	}
+
+	return result, nil
 }
 
 // extractPrimitive extracts a single primitive as an ImportedMesh.
@@ -346,6 +425,164 @@ func (e *gltfMeshExtractorImpl) readColorAccessor(accessorIndex int) ([][4]float
 	}
 
 	return nil, fmt.Errorf("unsupported color format: type=%s, componentType=%d", acc.Type, acc.ComponentType)
+}
+
+// gltfQuatToMatrix converts a unit quaternion (xyzw, GLTF convention) to a
+// column-major 4×4 rotation matrix.
+//
+// Parameters:
+//   - q: quaternion as [x, y, z, w]
+//
+// Returns:
+//   - [16]float32: column-major 4×4 rotation matrix
+func gltfQuatToMatrix(q [4]float32) [16]float32 {
+	x, y, z, w := q[0], q[1], q[2], q[3]
+	var m [16]float32
+	m[0] = 1 - 2*(y*y+z*z)
+	m[1] = 2 * (x*y + w*z)
+	m[2] = 2 * (x*z - w*y)
+	m[3] = 0
+	m[4] = 2 * (x*y - w*z)
+	m[5] = 1 - 2*(x*x+z*z)
+	m[6] = 2 * (y*z + w*x)
+	m[7] = 0
+	m[8] = 2 * (x*z + w*y)
+	m[9] = 2 * (y*z - w*x)
+	m[10] = 1 - 2*(x*x+y*y)
+	m[11] = 0
+	m[12], m[13], m[14], m[15] = 0, 0, 0, 1
+	return m
+}
+
+// gltfNodeLocalMatrix builds the local column-major 4×4 transform for a glTF node.
+// If the node specifies a Matrix it is returned directly (GLTF stores it column-major).
+// Otherwise the TRS components are composed as T × R × S using default identity
+// values for any missing component.
+//
+// Parameters:
+//   - node: the glTF node to compute a local matrix for
+//
+// Returns:
+//   - [16]float32: column-major 4×4 local transform matrix
+func gltfNodeLocalMatrix(node *gltfNode) [16]float32 {
+	if node.Matrix != nil {
+		return *node.Matrix
+	}
+
+	translation := [3]float32{0, 0, 0}
+	rotation := [4]float32{0, 0, 0, 1}
+	scale := [3]float32{1, 1, 1}
+
+	if node.Translation != nil {
+		translation = *node.Translation
+	}
+	if node.Rotation != nil {
+		rotation = *node.Rotation
+	}
+	if node.Scale != nil {
+		scale = *node.Scale
+	}
+
+	rot := gltfQuatToMatrix(rotation)
+	sx, sy, sz := scale[0], scale[1], scale[2]
+	tx, ty, tz := translation[0], translation[1], translation[2]
+
+	var m [16]float32
+	m[0] = rot[0] * sx
+	m[1] = rot[1] * sx
+	m[2] = rot[2] * sx
+	m[3] = 0
+	m[4] = rot[4] * sy
+	m[5] = rot[5] * sy
+	m[6] = rot[6] * sy
+	m[7] = 0
+	m[8] = rot[8] * sz
+	m[9] = rot[9] * sz
+	m[10] = rot[10] * sz
+	m[11] = 0
+	m[12] = tx
+	m[13] = ty
+	m[14] = tz
+	m[15] = 1
+	return m
+}
+
+// gltfTransformPoint applies a column-major 4×4 matrix to a 3D point (w=1).
+//
+// Parameters:
+//   - m: column-major 4×4 transform matrix
+//   - p: the 3D point to transform
+//
+// Returns:
+//   - [3]float32: the transformed point
+func gltfTransformPoint(m [16]float32, p [3]float32) [3]float32 {
+	return [3]float32{
+		m[0]*p[0] + m[4]*p[1] + m[8]*p[2] + m[12],
+		m[1]*p[0] + m[5]*p[1] + m[9]*p[2] + m[13],
+		m[2]*p[0] + m[6]*p[1] + m[10]*p[2] + m[14],
+	}
+}
+
+// gltfTransformNormal applies the inverse-transpose of a column-major 4×4 matrix
+// to a 3D normal vector and renormalizes. If the matrix is singular the original
+// normal is returned unchanged.
+//
+// Parameters:
+//   - m: column-major 4×4 world transform matrix
+//   - n: the surface normal to transform
+//
+// Returns:
+//   - [3]float32: the transformed and renormalized normal
+func gltfTransformNormal(m [16]float32, n [3]float32) [3]float32 {
+	var inv [16]float32
+	if !common.Invert4(inv[:], m[:]) {
+		return n
+	}
+	// Normal transform is M^{-T}: (M^{-T} × n)_i = Σ_j inv[i*4+j] * n[j]
+	nx := inv[0]*n[0] + inv[1]*n[1] + inv[2]*n[2]
+	ny := inv[4]*n[0] + inv[5]*n[1] + inv[6]*n[2]
+	nz := inv[8]*n[0] + inv[9]*n[1] + inv[10]*n[2]
+
+	length := float32(math.Sqrt(float64(nx*nx + ny*ny + nz*nz)))
+	if length < 1e-6 {
+		return n
+	}
+	invLen := 1.0 / length
+	return [3]float32{nx * invLen, ny * invLen, nz * invLen}
+}
+
+// gltfApplyWorldTransform transforms all vertex positions, normals, and tangents
+// in an imported mesh by the given column-major world matrix, then recomputes the
+// axis-aligned bounding box from the transformed positions.
+//
+// Parameters:
+//   - imported: the mesh whose vertex data will be transformed in-place
+//   - worldMat: column-major 4×4 world transform to apply
+func gltfApplyWorldTransform(imported *model.ImportedMesh, worldMat [16]float32) {
+	bmin := [3]float32{float32(1e38), float32(1e38), float32(1e38)}
+	bmax := [3]float32{float32(-1e38), float32(-1e38), float32(-1e38)}
+
+	for i := range imported.Vertices {
+		v := &imported.Vertices[i]
+
+		v.Position = gltfTransformPoint(worldMat, v.Position)
+		v.Normal = gltfTransformNormal(worldMat, v.Normal)
+
+		txyz := gltfTransformNormal(worldMat, [3]float32{v.Tangent[0], v.Tangent[1], v.Tangent[2]})
+		v.Tangent = [4]float32{txyz[0], txyz[1], txyz[2], v.Tangent[3]}
+
+		for j := range 3 {
+			if v.Position[j] < bmin[j] {
+				bmin[j] = v.Position[j]
+			}
+			if v.Position[j] > bmax[j] {
+				bmax[j] = v.Position[j]
+			}
+		}
+	}
+
+	imported.BoundingMin = bmin
+	imported.BoundingMax = bmax
 }
 
 // gltfCalculateBoundingBox computes the axis-aligned bounding box for positions.

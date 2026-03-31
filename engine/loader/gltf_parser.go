@@ -199,12 +199,12 @@ func (p *gltfParserImpl) parseGLB(data []byte) error {
 		return errors.New("GLB file too small")
 	}
 
-	r := bytes.NewReader(data)
-
-	var header gltfGLBHeader
-	if err := binary.Read(r, binary.LittleEndian, &header); err != nil {
-		return fmt.Errorf("failed to read GLB header: %w", err)
+	header := gltfGLBHeader{
+		Magic:   binary.LittleEndian.Uint32(data[0:4]),
+		Version: binary.LittleEndian.Uint32(data[4:8]),
+		Length:  binary.LittleEndian.Uint32(data[8:12]),
 	}
+	r := bytes.NewReader(data[12:])
 
 	if header.Magic != gltfGLBMagic {
 		return errInvalidGLBMagic
@@ -368,13 +368,7 @@ func (p *gltfParserImpl) ReadVec2Accessor(accessorIndex int) ([][2]float32, erro
 	}
 
 	result := make([][2]float32, acc.Count)
-	r := bytes.NewReader(data)
-	for i := 0; i < acc.Count; i++ {
-		if err := binary.Read(r, binary.LittleEndian, &result[i]); err != nil {
-			return nil, err
-		}
-	}
-
+	_ = binary.Read(bytes.NewReader(data), binary.LittleEndian, &result)
 	return result, nil
 }
 
@@ -390,13 +384,7 @@ func (p *gltfParserImpl) ReadVec3Accessor(accessorIndex int) ([][3]float32, erro
 	}
 
 	result := make([][3]float32, acc.Count)
-	r := bytes.NewReader(data)
-	for i := 0; i < acc.Count; i++ {
-		if err := binary.Read(r, binary.LittleEndian, &result[i]); err != nil {
-			return nil, err
-		}
-	}
-
+	_ = binary.Read(bytes.NewReader(data), binary.LittleEndian, &result)
 	return result, nil
 }
 
@@ -412,13 +400,7 @@ func (p *gltfParserImpl) ReadVec4Accessor(accessorIndex int) ([][4]float32, erro
 	}
 
 	result := make([][4]float32, acc.Count)
-	r := bytes.NewReader(data)
-	for i := 0; i < acc.Count; i++ {
-		if err := binary.Read(r, binary.LittleEndian, &result[i]); err != nil {
-			return nil, err
-		}
-	}
-
+	_ = binary.Read(bytes.NewReader(data), binary.LittleEndian, &result)
 	return result, nil
 }
 
@@ -434,13 +416,7 @@ func (p *gltfParserImpl) ReadScalarAccessor(accessorIndex int) ([]float32, error
 	}
 
 	result := make([]float32, acc.Count)
-	r := bytes.NewReader(data)
-	for i := 0; i < acc.Count; i++ {
-		if err := binary.Read(r, binary.LittleEndian, &result[i]); err != nil {
-			return nil, err
-		}
-	}
-
+	_ = binary.Read(bytes.NewReader(data), binary.LittleEndian, &result)
 	return result, nil
 }
 
@@ -456,13 +432,7 @@ func (p *gltfParserImpl) ReadMat4Accessor(accessorIndex int) ([][16]float32, err
 	}
 
 	result := make([][16]float32, acc.Count)
-	r := bytes.NewReader(data)
-	for i := 0; i < acc.Count; i++ {
-		if err := binary.Read(r, binary.LittleEndian, &result[i]); err != nil {
-			return nil, err
-		}
-	}
-
+	_ = binary.Read(bytes.NewReader(data), binary.LittleEndian, &result)
 	return result, nil
 }
 
@@ -478,28 +448,19 @@ func (p *gltfParserImpl) ReadIndicesAccessor(accessorIndex int) ([]uint32, error
 	}
 
 	result := make([]uint32, acc.Count)
-	r := bytes.NewReader(data)
 
 	switch acc.ComponentType {
 	case gltfComponentTypeUnsignedByte:
 		for i := 0; i < acc.Count; i++ {
-			var v uint8
-			if err := binary.Read(r, binary.LittleEndian, &v); err != nil {
-				return nil, err
-			}
-			result[i] = uint32(v)
+			result[i] = uint32(data[i])
 		}
 	case gltfComponentTypeUnsignedShort:
 		for i := 0; i < acc.Count; i++ {
-			var v uint16
-			if err := binary.Read(r, binary.LittleEndian, &v); err != nil {
-				return nil, err
-			}
-			result[i] = uint32(v)
+			result[i] = uint32(binary.LittleEndian.Uint16(data[i*2:]))
 		}
 	case gltfComponentTypeUnsignedInt:
-		if err := binary.Read(r, binary.LittleEndian, &result); err != nil {
-			return nil, err
+		for i := 0; i < acc.Count; i++ {
+			result[i] = binary.LittleEndian.Uint32(data[i*4:])
 		}
 	default:
 		return nil, fmt.Errorf("unsupported index component type: %d", acc.ComponentType)
@@ -520,24 +481,20 @@ func (p *gltfParserImpl) ReadJointsAccessor(accessorIndex int) ([][4]uint32, err
 	}
 
 	result := make([][4]uint32, acc.Count)
-	r := bytes.NewReader(data)
 
 	switch acc.ComponentType {
 	case gltfComponentTypeUnsignedByte:
 		for i := 0; i < acc.Count; i++ {
-			var v [4]uint8
-			if err := binary.Read(r, binary.LittleEndian, &v); err != nil {
-				return nil, err
-			}
-			result[i] = [4]uint32{uint32(v[0]), uint32(v[1]), uint32(v[2]), uint32(v[3])}
+			result[i] = [4]uint32{uint32(data[i*4]), uint32(data[i*4+1]), uint32(data[i*4+2]), uint32(data[i*4+3])}
 		}
 	case gltfComponentTypeUnsignedShort:
 		for i := 0; i < acc.Count; i++ {
-			var v [4]uint16
-			if err := binary.Read(r, binary.LittleEndian, &v); err != nil {
-				return nil, err
+			result[i] = [4]uint32{
+				uint32(binary.LittleEndian.Uint16(data[i*8:])),
+				uint32(binary.LittleEndian.Uint16(data[i*8+2:])),
+				uint32(binary.LittleEndian.Uint16(data[i*8+4:])),
+				uint32(binary.LittleEndian.Uint16(data[i*8+6:])),
 			}
-			result[i] = [4]uint32{uint32(v[0]), uint32(v[1]), uint32(v[2]), uint32(v[3])}
 		}
 	default:
 		return nil, fmt.Errorf("unsupported joints component type: %d", acc.ComponentType)

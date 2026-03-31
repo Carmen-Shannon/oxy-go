@@ -27,6 +27,10 @@ struct FragmentInput {
 //@oxy:include gbuffer_output
 //@oxy:include camera
 
+struct MaterialParams {
+    alpha_cutoff: f32,
+}
+
 // ── Bind groups ────────────────────────────────────────────────────
 //@oxy:group 0 0 storage_uniform camera camera
 //@oxy:provider 2 0 material diffuse_texture
@@ -41,12 +45,14 @@ struct FragmentInput {
 @group(2) @binding(4) var metallic_roughness_texture: texture_2d<f32>;
 //@oxy:provider 2 5 material metallic_roughness_sampler
 @group(2) @binding(5) var metallic_roughness_sampler: sampler;
+//@oxy:provider 2 6 material material_params
+@group(2) @binding(6) var<uniform> material_params: MaterialParams;
 
 @fragment
 fn fs_main(in: FragmentInput) -> GBufferOutput {
     let tex_color = textureSample(diffuse_texture, diffuse_sampler, in.uv);
 
-    if tex_color.a < 0.01 {
+    if (tex_color.a < material_params.alpha_cutoff) {
         discard;
     }
 

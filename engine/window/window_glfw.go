@@ -11,20 +11,20 @@ import (
 
 // glfwWindow holds the GLFW-specific window state.
 type glfwWindow struct {
-	parent  *engineWindow
+	parent  *window
 	window  *glfw.Window
 	running bool
 }
 
-// newPlatformWindow creates the GLFW window with input callbacks and stores it as the internal window.
+// newPlatformWindow creates the GLFW window with input callbacks and returns it as a platformBackend.
 //
 // GLFW reference: https://www.glfw.org/docs/latest/window_guide.html
 // go-gl/glfw: https://pkg.go.dev/github.com/go-gl/glfw/v3.3/glfw
-func newPlatformWindow(w *engineWindow) error {
+func newPlatformWindow(w *window) (platformBackend, error) {
 	runtime.LockOSThread()
 
 	if err := glfw.Init(); err != nil {
-		return fmt.Errorf("failed to initialize GLFW: %v", err)
+		return nil, fmt.Errorf("failed to initialize GLFW: %v", err)
 	}
 
 	// WebGPU provides its own graphics API, so disable OpenGL context creation.
@@ -34,7 +34,7 @@ func newPlatformWindow(w *engineWindow) error {
 	win, err := glfw.CreateWindow(w.width, w.height, w.title, nil, nil)
 	if err != nil {
 		glfw.Terminate()
-		return fmt.Errorf("failed to create GLFW window: %v", err)
+		return nil, fmt.Errorf("failed to create GLFW window: %v", err)
 	}
 
 	gw := &glfwWindow{
@@ -42,7 +42,6 @@ func newPlatformWindow(w *engineWindow) error {
 		window:  win,
 		running: true,
 	}
-	w.internalWindow = gw
 
 	// Register GLFW callbacks for input and window events.
 	// Reference: https://pkg.go.dev/github.com/go-gl/glfw/v3.3/glfw#Window.SetKeyCallback
@@ -112,62 +111,26 @@ func newPlatformWindow(w *engineWindow) error {
 	w.width = fbWidth
 	w.height = fbHeight
 
-	return nil
+	return gw, nil
 }
 
-// platformGetSurfaceDescriptor creates a platform-appropriate wgpu.SurfaceDescriptor from the GLFW window.
-// Uses the wgpuglfw bridge package which has per-platform implementations (Windows, X11, Wayland, macOS).
-//
-// Reference: https://pkg.go.dev/github.com/cogentcore/webgpu/wgpuglfw#GetSurfaceDescriptor
-func platformGetSurfaceDescriptor(w *engineWindow) *wgpu.SurfaceDescriptor {
-	if w.internalWindow == nil {
-		return nil
-	}
-	gw := w.internalWindow.(*glfwWindow)
-	return wgpuglfw.GetSurfaceDescriptor(gw.window)
-}
-
-// platformIsRunningCheck returns whether the GLFW window is still active.
-// Returns false if the internal window is nil, the running flag is cleared, or GLFW reports ShouldClose.
-//
-// Parameters:
-//   - w: the engineWindow to check
-//
-// Returns:
-//   - bool: true if the window is still running
-func platformIsRunningCheck(w *engineWindow) bool {
-	if w.internalWindow == nil {
-		return false
-	}
-	gw := w.internalWindow.(*glfwWindow)
+func (gw *glfwWindow) isRunning() bool {
 	return gw.running && !gw.window.ShouldClose()
 }
 
-// platformCloseWindow destroys the GLFW window and terminates the GLFW library.
-// Returns an error if the internal window has not been initialized.
-//
-// Parameters:
-//   - w: the engineWindow to close
-//
-// Returns:
-//   - error: error if the window is not initialized
-func platformCloseWindow(w *engineWindow) error {
-	if w.internalWindow == nil {
-		return fmt.Errorf("window is not initialized")
-	}
-	gw := w.internalWindow.(*glfwWindow)
+func (gw *glfwWindow) processMessages() bool {
+	glfw.PollEvents()
+	return gw.isRunning()
+}
+
+func (gw *glfwWindow) surfaceDescriptor() *wgpu.SurfaceDescriptor {
+	return wgpuglfw.GetSurfaceDescriptor(gw.window)
+}
+
+func (gw *glfwWindow) close() error {
 	gw.running = false
 	gw.window.SetShouldClose(true)
 	gw.window.Destroy()
 	glfw.Terminate()
 	return nil
-}
-
-// platformProcessMessages polls GLFW for pending events without blocking.
-// This is the GLFW equivalent of the Win32 PeekMessage loop.
-//
-// Reference: https://pkg.go.dev/github.com/go-gl/glfw/v3.3/glfw#PollEvents
-func platformProcessMessages(w *engineWindow) bool {
-	glfw.PollEvents()
-	return platformIsRunningCheck(w)
 }

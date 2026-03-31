@@ -1,36 +1,40 @@
+// Package renderer defines the high-level rendering orchestration layer built on top of a renderer backend.
+//
+// The package centers on [Renderer], which coordinates pipeline and material caching,
+// bind group and GPU buffer/texture initialization, and per-frame pass orchestration
+// across compute, geometry/shadow, gbuffer, and composition stages.
 package renderer
 
 import (
 	"fmt"
-	"sort"
-	"strings"
-	"sync"
 
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/material"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
-	"github.com/Carmen-Shannon/oxy-go/engine/window"
 	"github.com/cogentcore/webgpu/wgpu"
 )
 
-// renderer is the implementation of the Renderer interface.
-type renderer struct {
-	common.DelegateImpl[Renderer]
+// ComputeGroupProvider pairs a WGSL group index with the BindGroupProvider that
+// supplies the bind group for that group slot in a compute dispatch.
+type ComputeGroupProvider struct {
+	Group    uint32
+	Provider bind_group_provider.BindGroupProvider
+}
 
-	mu *sync.Mutex
+// ComputeDispatch groups a compute pipeline key, an ordered list of group providers,
+// and the workgroup dispatch dimensions for use with DispatchComputeBatch.
+type ComputeDispatch struct {
+	PipelineKey    string
+	Providers      []ComputeGroupProvider
+	WorkGroupCount [3]uint32
+}
 
-	pipelineCache map[string]pipeline.Pipeline
-	materialCache map[string]material.Material
-
-	backendType RendererBackendType
-	backend     RendererBackend
-
-	// Pre-creation config collected from builder options
-	forceFallbackAdapter bool
-	pendingPresentMode   *PresentMode
-	pendingMSAA          *MSAASampleCount
+// ComputeDispatchEntry is the resolved form of ComputeDispatch used between
+// the renderer impl and the backend — the pipeline key has been resolved to a Pipeline object.
+type ComputeDispatchEntry struct {
+	Pipeline       pipeline.Pipeline
+	Providers      []ComputeGroupProvider
+	WorkGroupCount [3]uint32
 }
 
 // Renderer defines the interface for the rendering system.
@@ -211,7 +215,7 @@ type Renderer interface {
 
 	// BeginComputeFrame creates a single command encoder for batching all compute dispatches
 	// within a frame into one GPU submission. Must be paired with EndComputeFrame after all
-	// DispatchCompute calls for the frame.
+	// DispatchComputeBatch calls for the frame.
 	//
 	// Returns:
 	//   - error: an error if the command encoder could not be created
@@ -219,17 +223,17 @@ type Renderer interface {
 
 	// EndComputeFrame finishes the batched compute command encoder and submits the resulting
 	// command buffer to the GPU queue. Must be called after BeginComputeFrame and all
-	// DispatchCompute calls for the frame.
+	// DispatchComputeBatch calls for the frame.
 	EndComputeFrame()
 
-	// DispatchCompute looks up the cached compute Pipeline by key, then encodes a compute pass
-	// within the current batched compute frame started by BeginComputeFrame.
+	// DispatchComputeBatch encodes all dispatches in the slice into a single compute pass.
+	// Within the pass, SetPipeline is called only when the PipelineKey changes between
+	// consecutive entries, reducing pass-boundary overhead. All dispatches must be within
+	// an open BeginComputeFrame/EndComputeFrame block.
 	//
 	// Parameters:
-	//   - pipelineKey: the unique identifier for the cached compute Pipeline to use
-	//   - computeProvider: the BindGroupProvider whose BindGroup will be set on the compute pass
-	//   - workGroupCount: the number of workgroups to dispatch in the x, y, and z dimensions
-	DispatchCompute(pipelineKey string, computeProvider bind_group_provider.BindGroupProvider, workGroupCount [3]uint32)
+	//   - dispatches: ordered slice of ComputeDispatch entries to encode
+	DispatchComputeBatch(dispatches []ComputeDispatch)
 
 	// BeginFrame acquires the swapchain texture and begins the main render pass.
 	// Must be paired with EndFrame after all DrawCall invocations within a single frame.
@@ -280,39 +284,6 @@ type Renderer interface {
 	// Parameters:
 	//   - mode: the PresentMode to use (VSync, Uncapped, or TripleBuffered)
 	SetPresentMode(mode PresentMode)
-
-	// RegisterMaterial creates GPU resources (textures, samplers, bind group) for a Material
-	// and optionally registers a new render pipeline from the supplied pipeline builder options.
-	// When pipelineOpts are provided and no pipeline exists for the material's PipelineKey,
-	// a new render pipeline is created, registered, and the material's PipelineKey is updated.
-	//
-	// When no pipelineOpts are provided but the pipeline does not yet exist and the material
-	// has a FragmentShaderPath set, RegisterMaterial automatically derives a new pipeline by
-	// cloning the vertex shader from the best-matching existing pipeline (longest pipeline key
-	// that is a prefix of the material's PipelineKey) and pairing it with a new fragment shader
-	// built from the material's FragmentShaderPath. This allows callers to create variant
-	// pipelines without referencing internal engine shader paths.
-	//
-	// The fragment shader from the resolved pipeline is inspected for @oxy:provider annotations
-	// with the "material" identity to determine per-binding texture and sampler assignments.
-	//
-	// Parameters:
-	//   - mat: the Material to initialize GPU resources for
-	//   - key: a unique identifier prefix for the GPU bind group provider
-	//   - pipelineOpts: optional pipeline builder options for creating and registering a new render pipeline
-	//
-	// Returns:
-	//   - error: an error if GPU resource creation or pipeline registration fails
-	RegisterMaterial(mat material.Material, key string, pipelineOpts ...pipeline.PipelineBuilderOption) error
-
-	// Material returns the associated material from the material cache by name, provided it has already been registered.
-	//
-	// Parameters:
-	//   - name: the unique identifier for the Material to retrieve
-	//
-	// Returns:
-	//   - material.Material: the Material associated with the name, or nil if not found
-	Material(name string) material.Material
 
 	// BeginGeometryFrame opens a shared command encoder that merges shadow and G-Buffer
 	// render passes into a single GPU submission, reducing per-frame driver overhead.
@@ -367,69 +338,22 @@ type Renderer interface {
 	// EndShadowFrame finishes the shadow command encoder and submits to the GPU queue.
 	EndShadowFrame()
 
-	// CreateVSMTextures creates the GPU textures required for variance shadow mapping:
-	// an RG32Float color texture for depth moments, a Depth32Float auxiliary depth texture
-	// for hardware z-testing, and an RG32Float scratch texture for the intermediate blur result.
-	//
-	// Parameters:
-	//   - width: shadow map width in texels
-	//   - height: shadow map height in texels
-	//
-	// Returns:
-	//   - vsmView: texture view for the VSM moments texture
-	//   - vsmTex: the underlying VSM moments texture
-	//   - scratchView: texture view for the scratch blur texture
-	//   - scratchTex: the underlying scratch blur texture
-	//   - depthView: texture view for the auxiliary depth texture
-	//   - depthTex: the underlying auxiliary depth texture
-	//   - err: an error if texture creation fails
-	CreateVSMTextures(width, height int) (vsmView *wgpu.TextureView, vsmTex *wgpu.Texture, scratchView *wgpu.TextureView, scratchTex *wgpu.Texture, depthView *wgpu.TextureView, depthTex *wgpu.Texture, err error)
+	// CreateShadowDepthTexture creates a Depth32Float shadow atlas texture for
+	// depth-only shadow rendering.
+	CreateShadowDepthTexture(width, height int) (depthView *wgpu.TextureView, depthTex *wgpu.Texture, err error)
 
-	// CreateLinearSampler creates a linear filtering sampler suitable for VSM texture lookups.
-	// Unlike the comparison sampler used for PCF, this sampler performs standard bilinear
-	// filtering on the RG32Float moments texture.
-	//
-	// Returns:
-	//   - *wgpu.Sampler: the linear sampler
-	//   - error: an error if sampler creation fails
+	// CreateComparisonSampler creates a comparison sampler for PCF shadow lookups.
+	CreateComparisonSampler() (*wgpu.Sampler, error)
+
+	// CreateLinearSampler creates a standard linear filtering sampler for
+	// post-processing passes (SSAO, SSR, composition).
 	CreateLinearSampler() (*wgpu.Sampler, error)
 
-	// RegisterVSMShadowPipeline registers a render pipeline for VSM shadow map generation.
-	// Unlike the depth-only PCF pipeline, this pipeline includes a fragment shader that
-	// outputs depth moments to an RG32Float color target, uses a Depth32Float depth-stencil
-	// for hardware z-testing, and applies no hardware depth bias.
-	//
-	// Parameters:
-	//   - p: the pipeline object containing the VSM vertex and fragment shaders
-	//
-	// Returns:
-	//   - error: an error if pipeline creation fails
-	RegisterVSMShadowPipeline(p pipeline.Pipeline) error
+	// RegisterShadowDepthPipeline creates a depth-only render pipeline for shadow maps.
+	RegisterShadowDepthPipeline(p pipeline.Pipeline) error
 
-	// BeginVSMShadowPass starts a render pass targeting both the VSM color texture (RG32Float)
-	// and the auxiliary depth texture (Depth32Float). Must be called between BeginShadowFrame
-	// and EndShadowFrame.
-	//
-	// Parameters:
-	//   - vsmView: the VSM moments texture view (color attachment)
-	//   - depthView: the auxiliary depth texture view (depth-stencil attachment)
-	BeginVSMShadowPass(vsmView *wgpu.TextureView, depthView *wgpu.TextureView)
-
-	// CreateSATTextures creates two RGBA32Float textures for the Summed-Area Table
-	// ping-pong passes used by PCSS. Each texture has TextureBinding + StorageBinding
-	// usage. Returns the texture views and textures for both ping-pong targets.
-	//
-	// Parameters:
-	//   - width: the SAT texture width in texels
-	//   - height: the SAT texture height in texels
-	//
-	// Returns:
-	//   - satAView: texture view for SAT texture A
-	//   - satATex: SAT texture A
-	//   - satBView: texture view for SAT texture B
-	//   - satBTex: SAT texture B
-	//   - err: error if texture creation fails
-	CreateSATTextures(width, height int) (satAView *wgpu.TextureView, satATex *wgpu.Texture, satBView *wgpu.TextureView, satBTex *wgpu.Texture, err error)
+	// BeginShadowDepthPass starts a depth-only shadow render pass at the given viewport.
+	BeginShadowDepthPass(depthView *wgpu.TextureView, x, y, width, height uint32, clear bool)
 
 	// BeginGBufferFrame creates a command encoder for batching G-Buffer geometry
 	// pre-pass draw calls. Must be paired with EndGBufferFrame.
@@ -521,83 +445,8 @@ type Renderer interface {
 	//   - blurredTex: the underlying blurred SSAO texture
 	//   - scratchView: texture view for the scratch blur texture
 	//   - scratchTex: the underlying scratch blur texture
-	//   - noiseView: texture view for the 4×4 noise texture
-	//   - noiseTex: the underlying noise texture
 	//   - err: an error if texture creation fails
-	CreateSSAOTextures(width, height int) (rawView *wgpu.TextureView, rawTex *wgpu.Texture, blurredView *wgpu.TextureView, blurredTex *wgpu.Texture, scratchView *wgpu.TextureView, scratchTex *wgpu.Texture, noiseView *wgpu.TextureView, noiseTex *wgpu.Texture, err error)
-
-	// CreateProbeBakeTextures creates the GPU textures required for rendering
-	// cubemap faces during irradiance probe baking.
-	//
-	// Parameters:
-	//   - resolution: the cubemap face edge size in pixels
-	//
-	// Returns:
-	//   - colorView: texture view for the bake color texture
-	//   - colorTex: the underlying bake color texture
-	//   - depthView: texture view for the bake depth texture
-	//   - depthTex: the underlying bake depth texture
-	//   - err: an error if texture creation fails
-	CreateProbeBakeTextures(resolution int) (colorView *wgpu.TextureView, colorTex *wgpu.Texture, depthView *wgpu.TextureView, depthTex *wgpu.Texture, err error)
-
-	// RegisterProbeBakePipeline registers a render pipeline for irradiance
-	// probe cubemap baking and caches it by PipelineKey. The pipeline writes
-	// to a single RGBA8Unorm color target and Depth24Plus depth-stencil.
-	//
-	// Parameters:
-	//   - p: the pipeline containing vertex and fragment shaders for probe baking
-	//
-	// Returns:
-	//   - error: an error if pipeline creation fails
-	RegisterProbeBakePipeline(p pipeline.Pipeline) error
-
-	// BeginProbeBakeFrame creates a command encoder for batching probe bake
-	// draw calls. Must be paired with EndProbeBakeFrame.
-	//
-	// Returns:
-	//   - error: an error if the command encoder could not be created
-	BeginProbeBakeFrame() error
-
-	// BeginProbeBakePass starts a render pass targeting the probe bake textures.
-	// Must be called between BeginProbeBakeFrame and EndProbeBakeFrame.
-	//
-	// Parameters:
-	//   - colorView: texture view for the RGBA8Unorm bake color attachment
-	//   - depthView: texture view for the Depth24Plus bake depth attachment
-	BeginProbeBakePass(colorView, depthView *wgpu.TextureView)
-
-	// ProbeBakeDrawCall encodes a single instanced draw command within the
-	// current probe bake render pass.
-	//
-	// Parameters:
-	//   - pipelineKey: the unique identifier for the cached probe bake Pipeline
-	//   - meshProvider: the BindGroupProvider holding vertex and index buffers
-	//   - instanceCount: the number of instances to draw
-	//   - bindGroups: bind group providers for the probe bake pass
-	//
-	// Returns:
-	//   - error: an error if the pipeline is not found
-	ProbeBakeDrawCall(pipelineKey string, meshProvider bind_group_provider.BindGroupProvider, instanceCount uint32, bindGroups []bind_group_provider.BindGroupProvider) error
-
-	// ProbeBakeDrawCallIndirect encodes a single indirect instanced draw
-	// command within the current probe bake render pass.
-	//
-	// Parameters:
-	//   - pipelineKey: the unique identifier for the cached probe bake Pipeline
-	//   - meshProvider: the BindGroupProvider holding vertex and index buffers
-	//   - indirectBuffer: the GPU buffer containing DrawIndexedIndirect arguments
-	//   - bindGroups: bind group providers for the probe bake pass
-	//
-	// Returns:
-	//   - error: an error if the pipeline is not found
-	ProbeBakeDrawCallIndirect(pipelineKey string, meshProvider bind_group_provider.BindGroupProvider, indirectBuffer *wgpu.Buffer, bindGroups []bind_group_provider.BindGroupProvider) error
-
-	// EndProbeBakePass ends the current probe bake render pass.
-	EndProbeBakePass()
-
-	// EndProbeBakeFrame finishes the probe bake command encoder and submits
-	// to the GPU queue.
-	EndProbeBakeFrame()
+	CreateSSAOTextures(width, height int) (rawView *wgpu.TextureView, rawTex *wgpu.Texture, blurredView *wgpu.TextureView, blurredTex *wgpu.Texture, scratchView *wgpu.TextureView, scratchTex *wgpu.Texture, err error)
 
 	// BeginHDRFrame creates a command encoder and begins a render pass targeting an
 	// offscreen RGBA16Float HDR texture instead of the swapchain. When MSAA is active,
@@ -647,6 +496,19 @@ type Renderer interface {
 	//   - err: an error if texture creation fails
 	CreateSSRTextures(width, height int) (ssrView *wgpu.TextureView, ssrTex *wgpu.Texture, err error)
 
+	// CreateContactShadowTextures creates the GPU texture required for contact
+	// shadow output.
+	//
+	// Parameters:
+	//   - width: texture width in pixels
+	//   - height: texture height in pixels
+	//
+	// Returns:
+	//   - csView: texture view for the contact shadow output texture
+	//   - csTex: the underlying contact shadow output texture
+	//   - err: an error if texture creation fails
+	CreateContactShadowTextures(width, height int) (csView *wgpu.TextureView, csTex *wgpu.Texture, err error)
+
 	// CreateHiZTextures creates the R32Float Hi-Z depth pyramid texture with a
 	// full mip chain, plus per-mip read and storage texture views.
 	//
@@ -662,6 +524,36 @@ type Renderer interface {
 	//   - mipCount: the number of mip levels generated
 	//   - err: an error if texture creation fails
 	CreateHiZTextures(width, height int) (hizView *wgpu.TextureView, hizTex *wgpu.Texture, mipReadViews []*wgpu.TextureView, mipStorageViews []*wgpu.TextureView, mipCount int, err error)
+
+	// CreateBloomTextures creates two RGBA16Float mip chain textures for bloom
+	// processing — a downsample chain and an upsample chain — each with per-mip
+	// read views and storage views. The mip count is capped at 6.
+	//
+	// Parameters:
+	//   - width: the width for mip 0 (should be half screen width)
+	//   - height: the height for mip 0 (should be half screen height)
+	//
+	// Returns:
+	//   - downTex: the downsample chain texture
+	//   - downReadViews: per-mip read views for the downsample chain
+	//   - downStorageViews: per-mip storage views for the downsample chain
+	//   - upTex: the upsample chain texture
+	//   - upReadViews: per-mip read views for the upsample chain
+	//   - upStorageViews: per-mip storage views for the upsample chain
+	//   - upMip0View: mip 0 read view of the upsample chain (final bloom output)
+	//   - mipCount: the number of mip levels created
+	//   - err: error if texture creation fails
+	CreateBloomTextures(width, height int) (
+		downTex *wgpu.Texture,
+		downReadViews []*wgpu.TextureView,
+		downStorageViews []*wgpu.TextureView,
+		upTex *wgpu.Texture,
+		upReadViews []*wgpu.TextureView,
+		upStorageViews []*wgpu.TextureView,
+		upMip0View *wgpu.TextureView,
+		mipCount int,
+		err error,
+	)
 
 	// RegisterCompositionPipeline registers a render pipeline for the fullscreen
 	// composition / tone mapping pass and caches it by PipelineKey.
@@ -702,11 +594,27 @@ type Renderer interface {
 	// to the GPU queue.
 	EndCompositionFrame()
 
+	// FlushFrame submits all accumulated per-frame command buffers to the GPU in a
+	// single queue submission and clears the pending slice.
+	FlushFrame() wgpu.SubmissionIndex
+
+	// WaitIdle blocks until all in-flight GPU work has completed.
+	// Must be called before releasing GPU resources (e.g., on window resize).
+	WaitIdle()
+
 	// SampleCount returns the MSAA sample count for the main render pass.
 	//
 	// Returns:
 	//   - uint32: the MSAA sample count (1 when disabled)
 	SampleCount() uint32
+
+	// MaxTextureDimension2D returns the maximum 2D texture dimension the device was
+	// created with. This is queried from the adapter at device-creation time and
+	// raised to the adapter's reported limit when higher than the WebGPU default.
+	//
+	// Returns:
+	//   - uint32: the maximum texture width or height in texels
+	MaxTextureDimension2D() uint32
 
 	// SetRenderTargetFormat overrides the color target format used when creating
 	// render pipelines. Defaults to the swapchain surface format. Set to
@@ -716,73 +624,64 @@ type Renderer interface {
 	// Parameters:
 	//   - format: the wgpu.TextureFormat to use for render pipeline color targets
 	SetRenderTargetFormat(format wgpu.TextureFormat)
+
+	// SetInjections sets the injection map used for WGSL shader pre-processing.
+	// Values in the map are injected into shaders that use @oxy:inject annotations.
+	//
+	// Parameters:
+	//   - injections: map of injection keys to WGSL-formatted values.
+	SetInjections(injections map[string]string)
+
+	// GPUTimings returns the GPU execution time in milliseconds for each render phase
+	// from the previous frame, keyed by phase label (e.g. "GPU_Compute1", "GPU_Geometry").
+	// Always returns nil — GPU timestamp readback via MapAsync is permanently disabled due to
+	// a library-level bug in github.com/Carmen-Shannon/webgpu.
+	GPUTimings() map[string]float64
+
+	// SyncGPUTimestamps is retained for interface compatibility. It performs a frames-in-flight
+	// fence via Device.Poll; GPU timestamp readback via MapAsync is permanently disabled due to
+	// a library-level bug in github.com/Carmen-Shannon/webgpu.
+	SyncGPUTimestamps()
+
+	// CurrentFrameSlot returns the index of the frame slot currently being encoded (0 or 1).
+	CurrentFrameSlot() int
 }
 
 var _ Renderer = &renderer{}
 
-// NewRenderer creates a new Renderer instance with the specified backend type and surface descriptor.
-// The surface descriptor is platform-specific and is typically obtained from Window.GetSurfaceDescriptor().
-//
-// Parameters:
-//   - backendType: the type of rendering backend to use (e.g., WGPU)
-//   - surfaceDescriptor: the platform-specific surface descriptor for WebGPU surface creation
-//   - options: variadic list of RendererBuilderOption functions to configure the Renderer
-//
-// Returns:
-//   - Renderer: a new instance of Renderer configured with the specified backend and options
-func NewRenderer(backendType RendererBackendType, window window.Window, options ...RendererBuilderOption) Renderer {
-	r := &renderer{
-		mu:            &sync.Mutex{},
-		pipelineCache: make(map[string]pipeline.Pipeline),
-		materialCache: make(map[string]material.Material),
-		backendType:   backendType,
-	}
-
-	// Apply options first so config flags (e.g. forceFallbackAdapter) are
-	// available before the backend requests a GPU adapter.
-	for _, opt := range options {
-		opt(r)
-	}
-
-	msaa := MSAA4x // default
-	if r.pendingMSAA != nil {
-		msaa = *r.pendingMSAA
-	}
-
-	switch backendType {
-	case BackendTypeWGPU:
-		fallthrough
-	default:
-		r.backend = newWGPURendererBackend(window.SurfaceDescriptor(), r.forceFallbackAdapter, msaa)
-	}
-
-	if r.pendingPresentMode != nil {
-		r.backend.SetPresentMode(*r.pendingPresentMode)
-	}
-
-	r.backend.ConfigureSurface(window.Width(), window.Height())
-	r.Delegate = r
-	return r
-}
-
-func (r *renderer) Resize(width, height int) {
-	r.backend.ConfigureSurface(width, height)
-}
-
-func (r *renderer) SetPresentMode(mode PresentMode) {
-	r.backend.SetPresentMode(mode)
-}
+func (r *renderer) Resize(width, height int)                            { r.backend.ConfigureSurface(width, height) }
+func (r *renderer) SetPresentMode(mode PresentMode)                     { r.backend.SetPresentMode(mode) }
+func (r *renderer) Pipelines() map[string]pipeline.Pipeline             { return r.pipelineCache }
+func (r *renderer) SetPipelines(pipelines map[string]pipeline.Pipeline) { r.pipelineCache = pipelines }
+func (r *renderer) BeginComputeFrame() error                            { return r.backend.BeginComputeFrame() }
+func (r *renderer) EndComputeFrame()                                    { r.backend.EndComputeFrame() }
+func (r *renderer) BeginFrame() error                                   { return r.backend.BeginFrame() }
+func (r *renderer) EndFrame()                                           { r.backend.EndFrame() }
+func (r *renderer) Present()                                            { r.backend.Present() }
+func (r *renderer) BeginGeometryFrame() error                           { return r.backend.BeginGeometryFrame() }
+func (r *renderer) EndGeometryFrame()                                   { r.backend.EndGeometryFrame() }
+func (r *renderer) BeginShadowFrame() error                             { return r.backend.BeginShadowFrame() }
+func (r *renderer) EndShadowPass()                                      { r.backend.EndShadowPass() }
+func (r *renderer) EndShadowFrame()                                     { r.backend.EndShadowFrame() }
+func (r *renderer) EndGBufferPass()                                     { r.backend.EndGBufferPass() }
+func (r *renderer) EndGBufferFrame()                                    { r.backend.EndGBufferFrame() }
+func (r *renderer) BeginCompositionFrame() error                        { return r.backend.BeginCompositionFrame() }
+func (r *renderer) BeginCompositionPass()                               { r.backend.BeginCompositionPass() }
+func (r *renderer) EndCompositionPass()                                 { r.backend.EndCompositionPass() }
+func (r *renderer) EndCompositionFrame()                                { r.backend.EndCompositionFrame() }
+func (r *renderer) FlushFrame() wgpu.SubmissionIndex                    { return r.backend.FlushFrame() }
+func (r *renderer) WaitIdle()                                           { r.backend.WaitIdle() }
+func (r *renderer) SampleCount() uint32                                 { return r.backend.SampleCount() }
+func (r *renderer) MaxTextureDimension2D() uint32                       { return r.backend.MaxTextureDimension2D() }
+func (r *renderer) SetInjections(injections map[string]string)          { r.injections = injections }
+func (r *renderer) GPUTimings() map[string]float64                      { return r.backend.GPUTimings() }
+func (r *renderer) SyncGPUTimestamps()                                  { r.backend.SyncGPUTimestamps() }
+func (r *renderer) CurrentFrameSlot() int                               { return r.backend.CurrentFrameSlot() }
 
 func (r *renderer) Pipeline(key string) pipeline.Pipeline {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.pipelineCache[key]
-}
-
-func (r *renderer) Pipelines() map[string]pipeline.Pipeline {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.pipelineCache
 }
 
 func (r *renderer) RegisterPipelines(pipelines ...pipeline.Pipeline) error {
@@ -808,296 +707,10 @@ func (r *renderer) RegisterPipelines(pipelines ...pipeline.Pipeline) error {
 	return nil
 }
 
-func (r *renderer) RegisterMaterial(mat material.Material, key string, pipelineOpts ...pipeline.PipelineBuilderOption) error {
-	pipelineKey := mat.PipelineKey()
-	if pipelineKey == "" {
-		return fmt.Errorf("material %q has no pipeline key set", mat.Name())
-	}
-
-	// If the pipeline doesn't exist yet, create one. When the material specifies a
-	// fragment shader path, vertex and fragment shaders are auto-derived from the
-	// best-matching base pipeline so callers never need to reference internal engine
-	// shader paths. Any additional pipelineOpts (blend state, cull mode, etc.) are
-	// merged on top of the auto-derived shaders.
-	if r.Pipeline(pipelineKey) == nil {
-		var opts []pipeline.PipelineBuilderOption
-
-		// Auto-derive shaders when the material carries a fragment shader path.
-		// The derived vertex+fragment shader options are prepended so that any
-		// explicit shader options supplied by the caller take precedence.
-		if mat.FragmentShaderPath() != "" {
-			basePipeline := r.findBasePipeline(pipelineKey)
-			if basePipeline == nil {
-				return fmt.Errorf("pipeline %q not found and no base pipeline exists to derive from", pipelineKey)
-			}
-			vertShader := basePipeline.Shader(shader.ShaderTypeVertex)
-			if vertShader == nil {
-				return fmt.Errorf("base pipeline %q has no vertex shader to derive from", basePipeline.PipelineKey())
-			}
-			fragShader := shader.NewShader(pipelineKey+"_fragment", shader.ShaderTypeFragment, mat.FragmentShaderPath())
-			opts = append(opts, pipeline.WithVertexShader(vertShader), pipeline.WithFragmentShader(fragShader))
-		}
-
-		// Append caller-supplied options so they can override defaults (e.g. blend, cull mode).
-		opts = append(opts, pipelineOpts...)
-
-		if len(opts) > 0 {
-			p := pipeline.NewPipeline(pipelineKey, pipeline.PipelineTypeRender, opts...)
-			if err := r.RegisterPipelines(p); err != nil {
-				return fmt.Errorf("failed to register pipeline %q: %w", pipelineKey, err)
-			}
-		}
-	}
-
-	p := r.Pipeline(pipelineKey)
-	if p == nil {
-		return fmt.Errorf("pipeline %q not found", pipelineKey)
-	}
-	fragShader := p.Shader(shader.ShaderTypeFragment)
-	if fragShader == nil {
-		return fmt.Errorf("pipeline %q has no fragment shader", pipelineKey)
-	}
-
-	if err := r.initMaterialGPU(mat, fragShader, key); err != nil {
-		return err
-	}
-
-	// Always cache the material by name so it can be retrieved via Material(),
-	// even when initMaterialGPU is a no-op (e.g. shaders without @oxy:provider material).
-	r.mu.Lock()
-	r.materialCache[mat.Name()] = mat
-	r.mu.Unlock()
-
-	return nil
-}
-
-// findBasePipeline searches the pipeline cache for the longest-matching key that is a prefix
-// of the given pipelineKey and belongs to a render pipeline with a vertex shader. This is used
-// to derive new pipelines for materials that only differ in their fragment shader.
-func (r *renderer) findBasePipeline(pipelineKey string) pipeline.Pipeline {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	var best pipeline.Pipeline
-	bestLen := 0
-	for k, p := range r.pipelineCache {
-		if p.Type() != pipeline.PipelineTypeRender {
-			continue
-		}
-		if p.Shader(shader.ShaderTypeVertex) == nil {
-			continue
-		}
-		if strings.HasPrefix(pipelineKey, k) && len(k) > bestLen {
-			best = p
-			bestLen = len(k)
-		}
-	}
-	return best
-}
-
-func (r *renderer) Material(name string) material.Material {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.materialCache[name]
-}
-
-// initMaterialGPU creates GPU resources (textures, samplers, bind group) for a single Material
-// by inspecting the fragment shader's pre-processed Declarations for @oxy:provider annotations
-// with the "material" identity. Multiple material groups are supported: each group with an
-// @oxy:provider material annotation gets its own BindGroupProvider, enabling a single material
-// to own resources across several bind groups (e.g. textures at group 2, effect uniforms at group 3).
-// Per-binding roles (diffuse_texture, normal_texture, etc.) are resolved from the declaration Args,
-// eliminating the need for variable-name string matching.
-func (r *renderer) initMaterialGPU(mat material.Material, fragmentShader shader.Shader, providerName string) error {
-	// Phase 1: Collect all groups annotated with @oxy:provider material and their binding roles.
-	type groupInfo struct {
-		bindingRoles map[int]shader.AnnotationArg
-	}
-	materialGroups := make(map[int]*groupInfo)
-
-	for _, decl := range fragmentShader.Declarations() {
-		if decl.Type != shader.AnnotationTypeProvider || decl.Group == nil {
-			continue
-		}
-		if decl.Args[0] != shader.AnnotationArgMaterial {
-			continue
-		}
-		g := *decl.Group
-		if _, exists := materialGroups[g]; !exists {
-			materialGroups[g] = &groupInfo{bindingRoles: make(map[int]shader.AnnotationArg)}
-		}
-		if len(decl.Args) > 1 && decl.Binding != nil {
-			materialGroups[g].bindingRoles[*decl.Binding] = decl.Args[1]
-		}
-	}
-
-	if len(materialGroups) == 0 {
-		return nil
-	}
-
-	// Sort group indices so the lowest group (typically the texture group) becomes the
-	// primary BindGroupProvider for backward-compatible access via mat.BindGroupProvider().
-	groupIndices := make([]int, 0, len(materialGroups))
-	for g := range materialGroups {
-		groupIndices = append(groupIndices, g)
-	}
-	sort.Ints(groupIndices)
-
-	// Texture role → material texture lookup
-	type textureBinding struct {
-		tex  *common.ImportedTexture
-		role shader.AnnotationArg
-	}
-	roleToTexture := map[shader.AnnotationArg]textureBinding{
-		shader.AnnotationArgDiffuseTexture:           {tex: mat.DiffuseTexture(), role: shader.AnnotationArgDiffuseTexture},
-		shader.AnnotationArgNormalTexture:            {tex: mat.NormalTexture(), role: shader.AnnotationArgNormalTexture},
-		shader.AnnotationArgMetallicRoughnessTexture: {tex: mat.MetallicRoughnessTexture(), role: shader.AnnotationArgMetallicRoughnessTexture},
-	}
-	textureSamplerPairs := map[shader.AnnotationArg]shader.AnnotationArg{
-		shader.AnnotationArgDiffuseTexture:           shader.AnnotationArgDiffuseSampler,
-		shader.AnnotationArgNormalTexture:            shader.AnnotationArgNormalSampler,
-		shader.AnnotationArgMetallicRoughnessTexture: shader.AnnotationArgMetallicRoughnessSampler,
-	}
-
-	// Phase 2: For each material group, create a BGP, process textures/samplers, init bind group.
-	firstGroup := true
-	for _, groupIdx := range groupIndices {
-		gi := materialGroups[groupIdx]
-		provName := fmt.Sprintf("%s_g%d", providerName, groupIdx)
-		provider := bind_group_provider.NewBindGroupProvider(provName)
-
-		// Build binding→role reverse map for this group
-		roleToBinding := make(map[shader.AnnotationArg]int)
-		for binding, role := range gi.bindingRoles {
-			roleToBinding[role] = binding
-		}
-
-		// Process user-supplied textures + their paired samplers
-		for texRole, tb := range roleToTexture {
-			if tb.tex == nil {
-				continue
-			}
-			texBindingIdx, hasTexBinding := roleToBinding[texRole]
-			if !hasTexBinding {
-				continue
-			}
-
-			samplerRole := textureSamplerPairs[texRole]
-			samplerBindingIdx, hasSamplerBinding := roleToBinding[samplerRole]
-
-			pixels, width, height, err := tb.tex.Decode()
-			if err != nil {
-				return fmt.Errorf("failed to decode %s texture: %w", texRole, err)
-			}
-			isLinear := texRole == shader.AnnotationArgNormalTexture || texRole == shader.AnnotationArgMetallicRoughnessTexture
-			stagingData := common.TextureStagingData{
-				Pixels: pixels,
-				Width:  width,
-				Height: height,
-				Linear: isLinear,
-			}
-			if err := r.InitTextureView(provider, texBindingIdx, stagingData); err != nil {
-				return fmt.Errorf("failed to init %s texture view: %w", texRole, err)
-			}
-			if hasSamplerBinding {
-				samplerData := common.SamplerStagingData{
-					AddressModeU:  wgpu.AddressModeRepeat,
-					AddressModeV:  wgpu.AddressModeRepeat,
-					AddressModeW:  wgpu.AddressModeRepeat,
-					MagFilter:     wgpu.FilterModeLinear,
-					MinFilter:     wgpu.FilterModeLinear,
-					MipmapFilter:  wgpu.MipmapFilterModeLinear,
-					LodMinClamp:   0,
-					LodMaxClamp:   32,
-					MaxAnisotropy: 1,
-				}
-				if tb.tex.SamplerData != nil {
-					samplerData = *tb.tex.SamplerData
-				}
-				if err := r.InitSampler(provider, samplerBindingIdx, samplerData); err != nil {
-					return fmt.Errorf("failed to init %s sampler: %w", samplerRole, err)
-				}
-			}
-		}
-
-		// Fill in fallback textures/samplers for any texture or sampler bindings without data.
-		descriptor := fragmentShader.BindGroupLayoutDescriptor(groupIdx)
-		for _, entry := range descriptor.Entries {
-			binding := int(entry.Binding)
-			isTexture := entry.Texture.SampleType != wgpu.TextureSampleTypeUndefined
-			isSampler := entry.Sampler.Type != wgpu.SamplerBindingTypeUndefined
-
-			if isTexture && provider.TextureView(binding) == nil {
-				role := gi.bindingRoles[binding]
-				var pixel [4]byte
-				switch role {
-				case shader.AnnotationArgNormalTexture:
-					pixel = [4]byte{128, 128, 255, 255}
-				case shader.AnnotationArgMetallicRoughnessTexture:
-					// Encode the material's scalar roughness (G) and metallic (B) into the
-					// fallback 1×1 texture so shaders that read these values from the texture
-					// (e.g. the G-Buffer pass for SSR) get the correct material properties.
-					roughByte := byte(mat.Roughness() * 255)
-					metalByte := byte(mat.Metallic() * 255)
-					pixel = [4]byte{0, roughByte, metalByte, 255}
-				default:
-					pixel = [4]byte{255, 255, 255, 255}
-				}
-				isLinear := role == shader.AnnotationArgNormalTexture || role == shader.AnnotationArgMetallicRoughnessTexture
-				fallback := common.TextureStagingData{
-					Pixels: pixel[:],
-					Width:  1,
-					Height: 1,
-					Linear: isLinear,
-				}
-				if err := r.InitTextureView(provider, binding, fallback); err != nil {
-					return fmt.Errorf("failed to init fallback texture at binding %d: %w", binding, err)
-				}
-			}
-
-			if isSampler && provider.Sampler(binding) == nil {
-				fallbackSampler := common.SamplerStagingData{
-					AddressModeU:  wgpu.AddressModeRepeat,
-					AddressModeV:  wgpu.AddressModeRepeat,
-					AddressModeW:  wgpu.AddressModeRepeat,
-					MagFilter:     wgpu.FilterModeLinear,
-					MinFilter:     wgpu.FilterModeLinear,
-					MipmapFilter:  wgpu.MipmapFilterModeLinear,
-					LodMinClamp:   0,
-					LodMaxClamp:   32,
-					MaxAnisotropy: 1,
-				}
-				if err := r.InitSampler(provider, binding, fallbackSampler); err != nil {
-					return fmt.Errorf("failed to init fallback sampler at binding %d: %w", binding, err)
-				}
-			}
-		}
-
-		if err := r.InitBindGroup(provider, descriptor, nil, nil); err != nil {
-			return fmt.Errorf("failed to init material bind group for group %d: %w", groupIdx, err)
-		}
-
-		// First material group becomes the primary BindGroupProvider for backward compat.
-		if firstGroup {
-			mat.SetBindGroupProvider(provider)
-			firstGroup = false
-		}
-		mat.SetProvider(groupIdx, provider)
-	}
-
-	return nil
-}
-
 func (r *renderer) SetPipeline(key string, p pipeline.Pipeline) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.pipelineCache[key] = p
-}
-
-func (r *renderer) SetPipelines(pipelines map[string]pipeline.Pipeline) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.pipelineCache = pipelines
 }
 
 func (r *renderer) InitMeshBuffers(provider bind_group_provider.BindGroupProvider, vertexData, indexData []byte, indexCount int) error {
@@ -1144,28 +757,23 @@ func (r *renderer) WriteTexture(tex *wgpu.Texture, data []byte, width, height, b
 	r.backend.WriteTexture(tex, data, width, height, bytesPerRow)
 }
 
-func (r *renderer) BeginComputeFrame() error {
-	return r.backend.BeginComputeFrame()
-}
-
-func (r *renderer) EndComputeFrame() {
-	r.backend.EndComputeFrame()
-}
-
-func (r *renderer) DispatchCompute(pipelineKey string, computeProvider bind_group_provider.BindGroupProvider, workGroupCount [3]uint32) {
+func (r *renderer) DispatchComputeBatch(dispatches []ComputeDispatch) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	p, exists := r.pipelineCache[pipelineKey]
-	if !exists {
-		return
+	entries := make([]ComputeDispatchEntry, 0, len(dispatches))
+	for _, d := range dispatches {
+		p, exists := r.pipelineCache[d.PipelineKey]
+		if !exists {
+			continue
+		}
+		entries = append(entries, ComputeDispatchEntry{
+			Pipeline:       p,
+			Providers:      d.Providers,
+			WorkGroupCount: d.WorkGroupCount,
+		})
 	}
+	r.mu.Unlock()
 
-	r.backend.DispatchCompute(p, computeProvider, workGroupCount)
-}
-
-func (r *renderer) BeginFrame() error {
-	return r.backend.BeginFrame()
+	r.backend.DispatchComputeBatch(entries)
 }
 
 func (r *renderer) DrawCall(pipelineKey string, meshProvider bind_group_provider.BindGroupProvider, instanceCount uint32, bindGroups []bind_group_provider.BindGroupProvider) error {
@@ -1194,26 +802,6 @@ func (r *renderer) DrawCallIndirect(pipelineKey string, meshProvider bind_group_
 	return nil
 }
 
-func (r *renderer) EndFrame() {
-	r.backend.EndFrame()
-}
-
-func (r *renderer) Present() {
-	r.backend.Present()
-}
-
-func (r *renderer) BeginGeometryFrame() error {
-	return r.backend.BeginGeometryFrame()
-}
-
-func (r *renderer) EndGeometryFrame() {
-	r.backend.EndGeometryFrame()
-}
-
-func (r *renderer) BeginShadowFrame() error {
-	return r.backend.BeginShadowFrame()
-}
-
 func (r *renderer) ShadowDrawCall(pipelineKey string, meshProvider bind_group_provider.BindGroupProvider, instanceCount uint32, bindGroups []bind_group_provider.BindGroupProvider) error {
 	r.mu.Lock()
 	p, exists := r.pipelineCache[pipelineKey]
@@ -1240,23 +828,18 @@ func (r *renderer) ShadowDrawCallIndirect(pipelineKey string, meshProvider bind_
 	return nil
 }
 
-func (r *renderer) EndShadowPass() {
-	r.backend.EndShadowPass()
+func (r *renderer) CreateShadowDepthTexture(width, height int) (depthView *wgpu.TextureView, depthTex *wgpu.Texture, err error) {
+	return r.backend.CreateShadowDepthTexture(width, height)
 }
 
-func (r *renderer) EndShadowFrame() {
-	r.backend.EndShadowFrame()
+func (r *renderer) CreateComparisonSampler() (*wgpu.Sampler, error) {
+	return r.backend.CreateComparisonSampler()
 }
-
-func (r *renderer) CreateVSMTextures(width, height int) (vsmView *wgpu.TextureView, vsmTex *wgpu.Texture, scratchView *wgpu.TextureView, scratchTex *wgpu.Texture, depthView *wgpu.TextureView, depthTex *wgpu.Texture, err error) {
-	return r.backend.CreateVSMTextures(width, height)
-}
-
 func (r *renderer) CreateLinearSampler() (*wgpu.Sampler, error) {
 	return r.backend.CreateLinearSampler()
 }
 
-func (r *renderer) RegisterVSMShadowPipeline(p pipeline.Pipeline) error {
+func (r *renderer) RegisterShadowDepthPipeline(p pipeline.Pipeline) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -1265,24 +848,18 @@ func (r *renderer) RegisterVSMShadowPipeline(p pipeline.Pipeline) error {
 		return nil
 	}
 
-	if err := r.backend.RegisterVSMShadowPipeline(p); err != nil {
+	if err := r.backend.RegisterShadowDepthPipeline(p); err != nil {
 		return err
 	}
 	r.pipelineCache[key] = p
 	return nil
 }
 
-func (r *renderer) BeginVSMShadowPass(vsmView *wgpu.TextureView, depthView *wgpu.TextureView) {
-	r.backend.BeginVSMShadowPass(vsmView, depthView)
+func (r *renderer) BeginShadowDepthPass(depthView *wgpu.TextureView, x, y, width, height uint32, clear bool) {
+	r.backend.BeginShadowDepthPass(depthView, x, y, width, height, clear)
 }
 
-func (r *renderer) CreateSATTextures(width, height int) (satAView *wgpu.TextureView, satATex *wgpu.Texture, satBView *wgpu.TextureView, satBTex *wgpu.Texture, err error) {
-	return r.backend.CreateSATTextures(width, height)
-}
-
-func (r *renderer) BeginGBufferFrame() error {
-	return r.backend.BeginGBufferFrame()
-}
+func (r *renderer) BeginGBufferFrame() error { return r.backend.BeginGBufferFrame() }
 
 func (r *renderer) GBufferDrawCall(pipelineKey string, meshProvider bind_group_provider.BindGroupProvider, instanceCount uint32, bindGroups []bind_group_provider.BindGroupProvider) error {
 	r.mu.Lock()
@@ -1310,14 +887,6 @@ func (r *renderer) GBufferDrawCallIndirect(pipelineKey string, meshProvider bind
 	return nil
 }
 
-func (r *renderer) EndGBufferPass() {
-	r.backend.EndGBufferPass()
-}
-
-func (r *renderer) EndGBufferFrame() {
-	r.backend.EndGBufferFrame()
-}
-
 func (r *renderer) BeginGBufferPass(normView, albedoView, depthView *wgpu.TextureView) {
 	r.backend.BeginGBufferPass(normView, albedoView, depthView)
 }
@@ -1342,70 +911,8 @@ func (r *renderer) RegisterGBufferPipeline(p pipeline.Pipeline) error {
 	return nil
 }
 
-func (r *renderer) CreateSSAOTextures(width, height int) (rawView *wgpu.TextureView, rawTex *wgpu.Texture, blurredView *wgpu.TextureView, blurredTex *wgpu.Texture, scratchView *wgpu.TextureView, scratchTex *wgpu.Texture, noiseView *wgpu.TextureView, noiseTex *wgpu.Texture, err error) {
+func (r *renderer) CreateSSAOTextures(width, height int) (rawView *wgpu.TextureView, rawTex *wgpu.Texture, blurredView *wgpu.TextureView, blurredTex *wgpu.Texture, scratchView *wgpu.TextureView, scratchTex *wgpu.Texture, err error) {
 	return r.backend.CreateSSAOTextures(width, height)
-}
-
-func (r *renderer) CreateProbeBakeTextures(resolution int) (colorView *wgpu.TextureView, colorTex *wgpu.Texture, depthView *wgpu.TextureView, depthTex *wgpu.Texture, err error) {
-	return r.backend.CreateProbeBakeTextures(resolution)
-}
-
-func (r *renderer) RegisterProbeBakePipeline(p pipeline.Pipeline) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	key := p.PipelineKey()
-	if _, exists := r.pipelineCache[key]; exists {
-		return nil
-	}
-
-	if err := r.backend.RegisterProbeBakePipeline(p); err != nil {
-		return err
-	}
-	r.pipelineCache[key] = p
-	return nil
-}
-
-func (r *renderer) BeginProbeBakeFrame() error {
-	return r.backend.BeginProbeBakeFrame()
-}
-
-func (r *renderer) BeginProbeBakePass(colorView, depthView *wgpu.TextureView) {
-	r.backend.BeginProbeBakePass(colorView, depthView)
-}
-
-func (r *renderer) ProbeBakeDrawCall(pipelineKey string, meshProvider bind_group_provider.BindGroupProvider, instanceCount uint32, bindGroups []bind_group_provider.BindGroupProvider) error {
-	r.mu.Lock()
-	p, exists := r.pipelineCache[pipelineKey]
-	r.mu.Unlock()
-
-	if !exists {
-		return fmt.Errorf("probe bake pipeline %q not found in cache", pipelineKey)
-	}
-
-	r.backend.ProbeBakeDrawCall(p, meshProvider, instanceCount, bindGroups)
-	return nil
-}
-
-func (r *renderer) ProbeBakeDrawCallIndirect(pipelineKey string, meshProvider bind_group_provider.BindGroupProvider, indirectBuffer *wgpu.Buffer, bindGroups []bind_group_provider.BindGroupProvider) error {
-	r.mu.Lock()
-	p, exists := r.pipelineCache[pipelineKey]
-	r.mu.Unlock()
-
-	if !exists {
-		return fmt.Errorf("probe bake pipeline %q not found in cache", pipelineKey)
-	}
-
-	r.backend.ProbeBakeDrawCallIndirect(p, meshProvider, indirectBuffer, bindGroups)
-	return nil
-}
-
-func (r *renderer) EndProbeBakePass() {
-	r.backend.EndProbeBakePass()
-}
-
-func (r *renderer) EndProbeBakeFrame() {
-	r.backend.EndProbeBakeFrame()
 }
 
 func (r *renderer) BeginHDRFrame(colorView, resolveView, depthView *wgpu.TextureView, sampleCount uint32) error {
@@ -1420,8 +927,26 @@ func (r *renderer) CreateSSRTextures(width, height int) (ssrView *wgpu.TextureVi
 	return r.backend.CreateSSRTextures(width, height)
 }
 
+func (r *renderer) CreateContactShadowTextures(width, height int) (csView *wgpu.TextureView, csTex *wgpu.Texture, err error) {
+	return r.backend.CreateContactShadowTextures(width, height)
+}
+
 func (r *renderer) CreateHiZTextures(width, height int) (hizView *wgpu.TextureView, hizTex *wgpu.Texture, mipReadViews []*wgpu.TextureView, mipStorageViews []*wgpu.TextureView, mipCount int, err error) {
 	return r.backend.CreateHiZTextures(width, height)
+}
+
+func (r *renderer) CreateBloomTextures(width, height int) (
+	downTex *wgpu.Texture,
+	downReadViews []*wgpu.TextureView,
+	downStorageViews []*wgpu.TextureView,
+	upTex *wgpu.Texture,
+	upReadViews []*wgpu.TextureView,
+	upStorageViews []*wgpu.TextureView,
+	upMip0View *wgpu.TextureView,
+	mipCount int,
+	err error,
+) {
+	return r.backend.CreateBloomTextures(width, height)
 }
 
 func (r *renderer) RegisterCompositionPipeline(p pipeline.Pipeline) error {
@@ -1440,14 +965,6 @@ func (r *renderer) RegisterCompositionPipeline(p pipeline.Pipeline) error {
 	return nil
 }
 
-func (r *renderer) BeginCompositionFrame() error {
-	return r.backend.BeginCompositionFrame()
-}
-
-func (r *renderer) BeginCompositionPass() {
-	r.backend.BeginCompositionPass()
-}
-
 func (r *renderer) CompositionDrawCall(pipelineKey string, bindGroups []bind_group_provider.BindGroupProvider) error {
 	r.mu.Lock()
 	p, exists := r.pipelineCache[pipelineKey]
@@ -1459,18 +976,6 @@ func (r *renderer) CompositionDrawCall(pipelineKey string, bindGroups []bind_gro
 
 	r.backend.CompositionDrawCall(p, bindGroups)
 	return nil
-}
-
-func (r *renderer) EndCompositionPass() {
-	r.backend.EndCompositionPass()
-}
-
-func (r *renderer) EndCompositionFrame() {
-	r.backend.EndCompositionFrame()
-}
-
-func (r *renderer) SampleCount() uint32 {
-	return r.backend.SampleCount()
 }
 
 func (r *renderer) SetRenderTargetFormat(format wgpu.TextureFormat) {

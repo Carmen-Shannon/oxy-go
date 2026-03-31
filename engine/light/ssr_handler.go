@@ -5,40 +5,6 @@ import (
 	"github.com/cogentcore/webgpu/wgpu"
 )
 
-// ssrHandlerImpl is the implementation of the SSRHandler interface.
-type ssrHandlerImpl struct {
-	enabled bool
-
-	screenWidth  int
-	screenHeight int
-
-	// Ray march quality parameters.
-	maxSteps        int
-	maxDistance     float32
-	thickness       float32
-	stride          float32
-	roughnessCutoff float32
-
-	pipelineKeys map[string]string
-	bgps         map[string]bind_group_provider.BindGroupProvider
-
-	// SSR result texture (RGBA16Float, half-resolution).
-	// RGB = reflected color, A = confidence/hit mask.
-	ssrTexture     *wgpu.Texture
-	ssrTextureView *wgpu.TextureView
-
-	// Linear sampler for the composition shader to sample the SSR result.
-	linearSampler *wgpu.Sampler
-
-	// Hi-Z depth pyramid (R32Float, full mip chain, min-depth per cell).
-	// Used by the Hi-Z SSR ray march to skip empty screen space in large steps.
-	hizTexture      *wgpu.Texture
-	hizTextureView  *wgpu.TextureView   // Full mip chain view for SSR reads.
-	hizMipCount     int                 // Number of mip levels in the Hi-Z pyramid.
-	hizMipReadViews []*wgpu.TextureView // Per-mip read views for downsample input.
-	hizStorageViews []*wgpu.TextureView // Per-mip storage views (write) for downsample output.
-}
-
 // SSRHandler defines the interface for the scene's screen-space reflections subsystem.
 //
 // The SSRHandler manages the ray march configuration, the SSR result texture, compute
@@ -62,6 +28,13 @@ type SSRHandler interface {
 	// Parameters:
 	//   - enabled: true to mark as initialized
 	SetEnabled(enabled bool)
+
+	// SetSlot selects the active texture slot. Texture and view getters and
+	// setters read and write the [slot] index of the underlying arrays.
+	//
+	// Parameters:
+	//   - slot: the slot index (0 or 1)
+	SetSlot(slot int)
 
 	// ScreenWidth returns the current screen width in pixels used for texture sizing.
 	//
@@ -260,56 +233,118 @@ type SSRHandler interface {
 	// Parameters:
 	//   - views: per-mip storage write views
 	SetHiZStorageViews(views []*wgpu.TextureView)
+
+	// HiZMaxTexture returns the R32Float MAX Hi-Z depth pyramid texture used for occlusion culling.
+	//
+	// Returns:
+	//   - *wgpu.Texture: the MAX Hi-Z texture, or nil if not initialized
+	HiZMaxTexture() *wgpu.Texture
+
+	// SetHiZMaxTexture sets the MAX Hi-Z depth pyramid texture.
+	//
+	// Parameters:
+	//   - t: the MAX Hi-Z texture
+	SetHiZMaxTexture(t *wgpu.Texture)
+
+	// HiZMaxTextureView returns the full mip chain texture view for the MAX Hi-Z pyramid.
+	//
+	// Returns:
+	//   - *wgpu.TextureView: the full mip chain view, or nil if not initialized
+	HiZMaxTextureView() *wgpu.TextureView
+
+	// SetHiZMaxTextureView sets the full mip chain texture view for the MAX Hi-Z pyramid.
+	//
+	// Parameters:
+	//   - tv: the full mip chain texture view
+	SetHiZMaxTextureView(tv *wgpu.TextureView)
+
+	// HiZMaxMipReadViews returns the per-mip-level texture read views for MAX Hi-Z downsample passes.
+	//
+	// Returns:
+	//   - []*wgpu.TextureView: per-mip read views
+	HiZMaxMipReadViews() []*wgpu.TextureView
+
+	// SetHiZMaxMipReadViews sets the per-mip-level texture read views for the MAX Hi-Z pyramid.
+	//
+	// Parameters:
+	//   - views: per-mip read views
+	SetHiZMaxMipReadViews(views []*wgpu.TextureView)
+
+	// HiZMaxStorageViews returns the per-mip-level storage texture views for MAX Hi-Z downsample passes.
+	//
+	// Returns:
+	//   - []*wgpu.TextureView: per-mip storage write views
+	HiZMaxStorageViews() []*wgpu.TextureView
+
+	// SetHiZMaxStorageViews sets the per-mip-level storage texture views for the MAX Hi-Z pyramid.
+	//
+	// Parameters:
+	//   - views: per-mip storage write views
+	SetHiZMaxStorageViews(views []*wgpu.TextureView)
 }
 
 var _ SSRHandler = &ssrHandlerImpl{}
 
-func (h *ssrHandlerImpl) Enabled() bool {
-	return h.enabled
+func (h *ssrHandlerImpl) Enabled() bool                     { return h.enabled }
+func (h *ssrHandlerImpl) SetEnabled(enabled bool)           { h.enabled = enabled }
+func (h *ssrHandlerImpl) ScreenWidth() int                  { return h.screenWidth }
+func (h *ssrHandlerImpl) ScreenHeight() int                 { return h.screenHeight }
+func (h *ssrHandlerImpl) MaxSteps() int                     { return h.maxSteps }
+func (h *ssrHandlerImpl) MaxDistance() float32              { return h.maxDistance }
+func (h *ssrHandlerImpl) Thickness() float32                { return h.thickness }
+func (h *ssrHandlerImpl) Stride() float32                   { return h.stride }
+func (h *ssrHandlerImpl) RoughnessCutoff() float32          { return h.roughnessCutoff }
+func (h *ssrHandlerImpl) PipelineKey(name string) string    { return h.pipelineKeys[name] }
+func (h *ssrHandlerImpl) PipelineKeys() map[string]string   { return h.pipelineKeys }
+func (h *ssrHandlerImpl) SetPipelineKey(name, key string)   { h.pipelineKeys[name] = key }
+func (h *ssrHandlerImpl) SetSlot(slot int)                  { h.activeSlot = slot }
+func (h *ssrHandlerImpl) SSRTexture() *wgpu.Texture         { return h.ssrTextures[h.activeSlot] }
+func (h *ssrHandlerImpl) SetSSRTexture(t *wgpu.Texture)     { h.ssrTextures[h.activeSlot] = t }
+func (h *ssrHandlerImpl) SSRTextureView() *wgpu.TextureView { return h.ssrTextureViews[h.activeSlot] }
+func (h *ssrHandlerImpl) SetSSRTextureView(tv *wgpu.TextureView) {
+	h.ssrTextureViews[h.activeSlot] = tv
 }
-
-func (h *ssrHandlerImpl) SetEnabled(enabled bool) {
-	h.enabled = enabled
+func (h *ssrHandlerImpl) LinearSampler() *wgpu.Sampler      { return h.linearSampler }
+func (h *ssrHandlerImpl) SetLinearSampler(s *wgpu.Sampler)  { h.linearSampler = s }
+func (h *ssrHandlerImpl) HiZTexture() *wgpu.Texture         { return h.hizTextures[h.activeSlot] }
+func (h *ssrHandlerImpl) SetHiZTexture(t *wgpu.Texture)     { h.hizTextures[h.activeSlot] = t }
+func (h *ssrHandlerImpl) HiZTextureView() *wgpu.TextureView { return h.hizTextureViews[h.activeSlot] }
+func (h *ssrHandlerImpl) SetHiZTextureView(tv *wgpu.TextureView) {
+	h.hizTextureViews[h.activeSlot] = tv
 }
-
-func (h *ssrHandlerImpl) ScreenWidth() int {
-	return h.screenWidth
+func (h *ssrHandlerImpl) HiZMipCount() int         { return h.hizMipCount }
+func (h *ssrHandlerImpl) SetHiZMipCount(count int) { h.hizMipCount = count }
+func (h *ssrHandlerImpl) HiZMipReadViews() []*wgpu.TextureView {
+	return h.hizMipReadViewsArr[h.activeSlot]
 }
-
-func (h *ssrHandlerImpl) ScreenHeight() int {
-	return h.screenHeight
+func (h *ssrHandlerImpl) SetHiZMipReadViews(views []*wgpu.TextureView) {
+	h.hizMipReadViewsArr[h.activeSlot] = views
 }
-
-func (h *ssrHandlerImpl) MaxSteps() int {
-	return h.maxSteps
+func (h *ssrHandlerImpl) HiZStorageViews() []*wgpu.TextureView {
+	return h.hizStorageViewsArr[h.activeSlot]
 }
-
-func (h *ssrHandlerImpl) MaxDistance() float32 {
-	return h.maxDistance
+func (h *ssrHandlerImpl) SetHiZStorageViews(views []*wgpu.TextureView) {
+	h.hizStorageViewsArr[h.activeSlot] = views
 }
-
-func (h *ssrHandlerImpl) Thickness() float32 {
-	return h.thickness
+func (h *ssrHandlerImpl) HiZMaxTexture() *wgpu.Texture     { return h.maxHizTextures[h.activeSlot] }
+func (h *ssrHandlerImpl) SetHiZMaxTexture(t *wgpu.Texture) { h.maxHizTextures[h.activeSlot] = t }
+func (h *ssrHandlerImpl) HiZMaxTextureView() *wgpu.TextureView {
+	return h.maxHizTextureViews[h.activeSlot]
 }
-
-func (h *ssrHandlerImpl) Stride() float32 {
-	return h.stride
+func (h *ssrHandlerImpl) SetHiZMaxTextureView(tv *wgpu.TextureView) {
+	h.maxHizTextureViews[h.activeSlot] = tv
 }
-
-func (h *ssrHandlerImpl) RoughnessCutoff() float32 {
-	return h.roughnessCutoff
+func (h *ssrHandlerImpl) HiZMaxMipReadViews() []*wgpu.TextureView {
+	return h.maxHizMipReadViewsArr[h.activeSlot]
 }
-
-func (h *ssrHandlerImpl) PipelineKey(name string) string {
-	return h.pipelineKeys[name]
+func (h *ssrHandlerImpl) SetHiZMaxMipReadViews(views []*wgpu.TextureView) {
+	h.maxHizMipReadViewsArr[h.activeSlot] = views
 }
-
-func (h *ssrHandlerImpl) PipelineKeys() map[string]string {
-	return h.pipelineKeys
+func (h *ssrHandlerImpl) HiZMaxStorageViews() []*wgpu.TextureView {
+	return h.maxHizStorageViewsArr[h.activeSlot]
 }
-
-func (h *ssrHandlerImpl) SetPipelineKey(name, key string) {
-	h.pipelineKeys[name] = key
+func (h *ssrHandlerImpl) SetHiZMaxStorageViews(views []*wgpu.TextureView) {
+	h.maxHizStorageViewsArr[h.activeSlot] = views
 }
 
 func (h *ssrHandlerImpl) Bgp(key string) bind_group_provider.BindGroupProvider {
@@ -324,71 +359,7 @@ func (h *ssrHandlerImpl) SetBgp(key string, bgp bind_group_provider.BindGroupPro
 	h.bgps[key] = bgp
 }
 
-func (h *ssrHandlerImpl) SSRTexture() *wgpu.Texture {
-	return h.ssrTexture
-}
-
-func (h *ssrHandlerImpl) SetSSRTexture(t *wgpu.Texture) {
-	h.ssrTexture = t
-}
-
-func (h *ssrHandlerImpl) SSRTextureView() *wgpu.TextureView {
-	return h.ssrTextureView
-}
-
-func (h *ssrHandlerImpl) SetSSRTextureView(tv *wgpu.TextureView) {
-	h.ssrTextureView = tv
-}
-
-func (h *ssrHandlerImpl) LinearSampler() *wgpu.Sampler {
-	return h.linearSampler
-}
-
-func (h *ssrHandlerImpl) SetLinearSampler(s *wgpu.Sampler) {
-	h.linearSampler = s
-}
-
 func (h *ssrHandlerImpl) Resize(width, height int) {
 	h.screenWidth = width
 	h.screenHeight = height
-}
-
-func (h *ssrHandlerImpl) HiZTexture() *wgpu.Texture {
-	return h.hizTexture
-}
-
-func (h *ssrHandlerImpl) SetHiZTexture(t *wgpu.Texture) {
-	h.hizTexture = t
-}
-
-func (h *ssrHandlerImpl) HiZTextureView() *wgpu.TextureView {
-	return h.hizTextureView
-}
-
-func (h *ssrHandlerImpl) SetHiZTextureView(tv *wgpu.TextureView) {
-	h.hizTextureView = tv
-}
-
-func (h *ssrHandlerImpl) HiZMipCount() int {
-	return h.hizMipCount
-}
-
-func (h *ssrHandlerImpl) SetHiZMipCount(count int) {
-	h.hizMipCount = count
-}
-
-func (h *ssrHandlerImpl) HiZMipReadViews() []*wgpu.TextureView {
-	return h.hizMipReadViews
-}
-
-func (h *ssrHandlerImpl) SetHiZMipReadViews(views []*wgpu.TextureView) {
-	h.hizMipReadViews = views
-}
-
-func (h *ssrHandlerImpl) HiZStorageViews() []*wgpu.TextureView {
-	return h.hizStorageViews
-}
-
-func (h *ssrHandlerImpl) SetHiZStorageViews(views []*wgpu.TextureView) {
-	h.hizStorageViews = views
 }

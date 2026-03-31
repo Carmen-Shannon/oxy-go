@@ -1,8 +1,10 @@
 package engine
 
 import (
+	"sync"
 	"time"
 
+	"github.com/Carmen-Shannon/oxy-go/engine/profiler"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	"github.com/Carmen-Shannon/oxy-go/engine/window"
 )
@@ -19,9 +21,7 @@ type EngineBuilderOption func(*engine)
 // Returns:
 //   - EngineBuilderOption: option function to apply
 func WithProfiling(enabled bool) EngineBuilderOption {
-	return func(e *engine) {
-		e.profilingEnabled = enabled
-	}
+	return func(e *engine) { e.profilingEnabled = enabled }
 }
 
 // WithTickRate sets the engine tick rate in frames per second.
@@ -51,9 +51,7 @@ func WithTickRate(fps float64) EngineBuilderOption {
 // Returns:
 //   - EngineBuilderOption: option function to apply
 func WithWindow(w window.Window) EngineBuilderOption {
-	return func(e *engine) {
-		e.window = w
-	}
+	return func(e *engine) { e.window = w }
 }
 
 // WithScene registers a scene at the given z-index key during engine construction.
@@ -66,9 +64,7 @@ func WithWindow(w window.Window) EngineBuilderOption {
 // Returns:
 //   - EngineBuilderOption: option function to apply
 func WithScene(key int, s scene.Scene) EngineBuilderOption {
-	return func(e *engine) {
-		e.scenes[key] = s
-	}
+	return func(e *engine) { e.scenes[key] = s }
 }
 
 // WithRenderFrameLimit sets an optional render frame rate cap in frames per second.
@@ -87,4 +83,35 @@ func WithRenderFrameLimit(fps float64) EngineBuilderOption {
 		}
 		e.renderFrameLimit = time.Second / time.Duration(fps)
 	}
+}
+
+// NewEngine creates a new Engine instance with the provided options.
+// Initializes message channels and profiler with sensible defaults.
+// Options are applied directly to the engine struct via the option-builder pattern.
+//
+// Parameters:
+//   - options: functional options for engine configuration (profiling, tick rate, etc.)
+//
+// Returns:
+//   - Engine: the newly created engine
+func NewEngine(options ...EngineBuilderOption) Engine {
+	e := &engine{
+		tickRateChannel:  make(chan time.Duration, 1),
+		resizeEvents:     make(chan [2]int, 1),
+		quitChannel:      make(chan struct{}),
+		scenes:           make(map[int]scene.Scene),
+		running:          false,
+		wg:               sync.WaitGroup{},
+		profiler:         profiler.NewProfiler(),
+		profilingEnabled: false,
+		engineTickRate:   time.Second / 60,
+	}
+	for _, opt := range options {
+		opt(e)
+	}
+
+	if e.window != nil {
+		e.window.SetResizeCallback(e.resizeCallback)
+	}
+	return e
 }

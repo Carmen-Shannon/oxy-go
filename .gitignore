@@ -1,5 +1,6 @@
 .github/*
 !.github/workflows/
 *.exe
-tests/mocks/
+**/mocks/
 *.out
+.vscode/

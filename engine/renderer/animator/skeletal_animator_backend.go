@@ -38,7 +38,13 @@ type skeletalAnimatorBackendImpl struct {
 	instanceData []GPUSkeletalAnimationData
 
 	dirty, boneDirty, modelDirty, needsRebuild, cullingEnabled bool
-	dirtyStart, dirtyEnd                                       uint32
+	// boneFlushRemaining and modelFlushRemaining count how many more consecutive
+	// Flush calls must upload bone/model data before the dirty flag can be cleared.
+	// Set to 2 (one per in-flight frame slot) whenever the data changes, ensuring
+	// both GPU slot buffers receive the upload before the flag is cleared.
+	boneFlushRemaining   int
+	modelFlushRemaining  int
+	dirtyStart, dirtyEnd uint32
 
 	instanceStateData []skeletalInstanceState
 
@@ -66,6 +72,16 @@ type skeletalAnimatorBackendImpl struct {
 	// Frustum culling state
 	frustumPlanes  [6]GPUFrustumPlane
 	boundingRadius float32
+	boundingMin    [3]float32
+	boundingMax    [3]float32
+
+	// Hi-Z occlusion culling state
+	screenWidth  int
+	screenHeight int
+	hiZMipCount  int
+	projX        float32
+	viewProj     [16]float32
+	hiZProvider  bind_group_provider.BindGroupProvider
 }
 
 // skeletalAnimatorBackend defines the interface for the skeletal animation backend.
@@ -201,6 +217,7 @@ func newSkeletalAnimatorBackend() AnimatorBackend {
 
 	s.computeProvider = bind_group_provider.NewBindGroupProvider("skeletal_animator_compute")
 	s.outputProvider = bind_group_provider.NewBindGroupProvider("skeletal_animator_output")
+	s.hiZProvider = bind_group_provider.NewBindGroupProvider("animator_hiz")
 	s.stagedWriteData = make([]bind_group_provider.BufferWrite, 0, 8)
 	s.initStagingPool()
 
@@ -299,6 +316,7 @@ func (s *skeletalAnimatorBackendImpl) RemoveInstance(index uint32) (uint32, bool
 			s.modelDirtyStart = index
 			s.modelDirtyEnd = index + 1
 			s.modelDirty = true
+			s.modelFlushRemaining = 2
 		} else {
 			if index < s.modelDirtyStart {
 				s.modelDirtyStart = index
@@ -306,6 +324,7 @@ func (s *skeletalAnimatorBackendImpl) RemoveInstance(index uint32) (uint32, bool
 			if index+1 > s.modelDirtyEnd {
 				s.modelDirtyEnd = index + 1
 			}
+			s.modelFlushRemaining = 2
 		}
 	}
 
@@ -434,7 +453,11 @@ func (s *skeletalAnimatorBackendImpl) Flush(instanceBinding, boneBinding, modelB
 			Data:     buf,
 		})
 
-		s.boneDirty = false
+		s.boneFlushRemaining--
+		if s.boneFlushRemaining <= 0 {
+			s.boneDirty = false
+			s.boneFlushRemaining = 0
+		}
 	}
 
 	if s.modelDirty {
@@ -451,9 +474,13 @@ func (s *skeletalAnimatorBackendImpl) Flush(instanceBinding, boneBinding, modelB
 			Data:     buf,
 		})
 
-		s.modelDirty = false
-		s.modelDirtyStart = 0
-		s.modelDirtyEnd = 0
+		s.modelFlushRemaining--
+		if s.modelFlushRemaining <= 0 {
+			s.modelDirty = false
+			s.modelFlushRemaining = 0
+			s.modelDirtyStart = 0
+			s.modelDirtyEnd = 0
+		}
 	}
 
 	return count
@@ -535,7 +562,14 @@ func (s *skeletalAnimatorBackendImpl) PrepareFrame(deltaTime float32, binding in
 		BoundingRadius:     s.boundingRadius,
 		ChannelDataOffset:  s.channelDataOffset,
 		KeyframeDataOffset: s.keyframeDataOffset,
+		ScreenWidth:        uint32(s.screenWidth),
+		ScreenHeight:       uint32(s.screenHeight),
+		HiZMipCount:        uint32(s.hiZMipCount),
+		ProjX:              s.projX,
+		ViewProj:           s.viewProj,
 		Planes:             s.frustumPlanes,
+		BoundingMin:        s.boundingMin,
+		BoundingMax:        s.boundingMax,
 	}
 
 	raw := common.SliceToBytes(s.perFrameSlice)
@@ -556,6 +590,7 @@ func (s *skeletalAnimatorBackendImpl) SetBoneCount(count uint32) {
 	s.boneCount = count
 	s.bones = make([]GPUBoneInfo, count)
 	s.boneDirty = true
+	s.boneFlushRemaining = 2
 
 	// Reallocate bone staging buffers to match new boneCount
 	boneBytes := int(count) * (&GPUBoneInfo{}).Size()
@@ -579,6 +614,7 @@ func (s *skeletalAnimatorBackendImpl) SetBone(index uint32, inverseBindMatrix [1
 		LocalRotation:     localRotation,
 	}
 	s.boneDirty = true
+	s.boneFlushRemaining = 2
 
 	// Stage full bone buffer write
 	raw := common.SliceToBytes(s.bones)
@@ -798,6 +834,9 @@ func (s *skeletalAnimatorBackendImpl) Release() {
 	if s.outputProvider != nil {
 		s.outputProvider.Release()
 	}
+	if s.hiZProvider != nil {
+		s.hiZProvider.Release()
+	}
 	s.instanceData = nil
 	s.instanceStateData = nil
 	s.perFrameSlice = nil
@@ -831,6 +870,7 @@ func (s *skeletalAnimatorBackendImpl) SetInstanceTransform(index uint32, posXYZ,
 		s.modelDirtyStart = index
 		s.modelDirtyEnd = index + 1
 		s.modelDirty = true
+		s.modelFlushRemaining = 2
 	} else {
 		if index < s.modelDirtyStart {
 			s.modelDirtyStart = index
@@ -838,6 +878,7 @@ func (s *skeletalAnimatorBackendImpl) SetInstanceTransform(index uint32, posXYZ,
 		if index+1 > s.modelDirtyEnd {
 			s.modelDirtyEnd = index + 1
 		}
+		s.modelFlushRemaining = 2
 	}
 }
 
@@ -859,6 +900,7 @@ func (s *skeletalAnimatorBackendImpl) SetInstanceData(index uint32, posXYZ, scal
 		s.modelDirtyStart = index
 		s.modelDirtyEnd = index + 1
 		s.modelDirty = true
+		s.modelFlushRemaining = 2
 	} else {
 		if index < s.modelDirtyStart {
 			s.modelDirtyStart = index
@@ -866,6 +908,7 @@ func (s *skeletalAnimatorBackendImpl) SetInstanceData(index uint32, posXYZ, scal
 		if index+1 > s.modelDirtyEnd {
 			s.modelDirtyEnd = index + 1
 		}
+		s.modelFlushRemaining = 2
 	}
 }
 
@@ -937,11 +980,13 @@ func (s *skeletalAnimatorBackendImpl) Grow(newMax uint32) {
 		s.modelDirty = true
 		s.modelDirtyStart = 0
 		s.modelDirtyEnd = s.instanceCount
+		s.modelFlushRemaining = 2
 	}
 
 	// Bone data is immutable per skeleton; mark dirty so it is re-uploaded into new buffers
 	if s.boneCount > 0 {
 		s.boneDirty = true
+		s.boneFlushRemaining = 2
 	}
 
 	// Reallocate staging pool to match new capacity
@@ -998,6 +1043,7 @@ func (s *skeletalAnimatorBackendImpl) SetInstanceRotation(index uint32, rotSpeed
 		s.modelDirtyStart = index
 		s.modelDirtyEnd = index + 1
 		s.modelDirty = true
+		s.modelFlushRemaining = 2
 	} else {
 		if index < s.modelDirtyStart {
 			s.modelDirtyStart = index
@@ -1005,6 +1051,7 @@ func (s *skeletalAnimatorBackendImpl) SetInstanceRotation(index uint32, rotSpeed
 		if index+1 > s.modelDirtyEnd {
 			s.modelDirtyEnd = index + 1
 		}
+		s.modelFlushRemaining = 2
 	}
 }
 
@@ -1019,6 +1066,13 @@ func (s *skeletalAnimatorBackendImpl) SetBoundingRadius(radius float32) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.boundingRadius = radius
+}
+
+func (s *skeletalAnimatorBackendImpl) SetBoundingBox(min, max [3]float32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.boundingMin = min
+	s.boundingMax = max
 }
 
 func (s *skeletalAnimatorBackendImpl) BoundingRadius() float32 {
@@ -1069,4 +1123,35 @@ func (s *skeletalAnimatorBackendImpl) InstanceRotation(index uint32) (rotSpeed, 
 		return
 	}
 	return s.instanceRotSpeedData[index], s.instanceRotEulerData[index]
+}
+
+func (s *skeletalAnimatorBackendImpl) SetScreenSize(width, height int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.screenWidth = width
+	s.screenHeight = height
+}
+
+func (s *skeletalAnimatorBackendImpl) SetProjectionX(projX float32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.projX = projX
+}
+
+func (s *skeletalAnimatorBackendImpl) SetHiZMipCount(count int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.hiZMipCount = count
+}
+
+func (s *skeletalAnimatorBackendImpl) SetViewProj(vp [16]float32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.viewProj = vp
+}
+
+func (s *skeletalAnimatorBackendImpl) HiZBindGroupProvider() bind_group_provider.BindGroupProvider {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.hiZProvider
 }

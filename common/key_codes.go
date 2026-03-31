@@ -19,6 +19,7 @@ const (
 	KeyT         = 84  // T key (ASCII)
 	KeyV         = 86  // V key (ASCII)
 	KeyX         = 88  // X key (ASCII)
+	KeyZ         = 90  // Z key (ASCII)
 	KeySpace     = 32  // Spacebar (ASCII)
 	KeyBackspace = 259 // Backspace key (GLFW)
 	KeyEsc       = 256 // Escape key (GLFW)

@@ -16,6 +16,7 @@ All annotations live in WGSL comment lines (prefixed with `//`) so they are invi
   - [@oxy:include](#oxyinclude)
   - [@oxy:group](#oxygroup)
   - [@oxy:provider](#oxyprovider)
+  - [@oxy:inject](#oxyinject)
 - [Struct Type Arguments](#struct-type-arguments)
 - [Address Space Arguments](#address-space-arguments)
 - [Provider Identity Arguments](#provider-identity-arguments)
@@ -152,6 +153,38 @@ An optional `binding_role` qualifier can be appended after the provider identity
 
 ---
 
+### @oxy:inject
+
+Replaces the annotation line with a WGSL `const` declaration whose value is supplied at pre-process time from the injection map passed to `Process()`. This allows Go constants to be injected into WGSL shaders without hard-coding values in shader source.
+
+**Syntax:**
+
+```wgsl
+//@oxy:inject <const_name> <wgsl_type> <injection_key>
+```
+
+**Parameters:**
+
+| Position | Name            | Description                                                                                   |
+| -------- | --------------- | --------------------------------------------------------------------------------------------- |
+| 1        | `const_name`    | The WGSL identifier for the emitted `const` declaration                                       |
+| 2        | `wgsl_type`     | One of `u32`, `f32`, or `i32`                                                                 |
+| 3        | `injection_key` | A registered injection key whose value is provided in the injection map passed to `Process()` |
+
+**Behavior:** The annotation line is replaced with `const <const_name>: <wgsl_type> = <value>;`. No `Annotation` declaration entry is produced — `@oxy:inject` is purely a source substitution.
+
+**Valid injection keys:** `max_bones`, `max_ssao_samples`, `tile_size`, `max_lights_per_tile`, `num_threads`, `slots_per_cell`, `flag_active`, `flag_static`, `flag_kinematic`, `empty_sentinel`, `body_idx_mask`, `pcf_samples`, `light_type_directional`, `light_type_point`, `light_type_spot`
+
+**Example:**
+
+```wgsl
+//@oxy:inject MAX_BONES u32 max_bones
+// Becomes:
+// const MAX_BONES: u32 = 256;
+```
+
+---
+
 ## Struct Type Arguments
 
 These are the valid `struct_type` values for `@oxy:include` and `@oxy:group` annotations. Each maps to a Go GPU type with an embedded `.wgsl` asset file.
@@ -166,9 +199,11 @@ These are the valid `struct_type` values for `@oxy:include` and `@oxy:group` ann
 | `light`                   | `Light`                 | `light.GPULight`                    | `engine/light/assets/light.wgsl`                               |
 | `light_header`            | `LightHeader`           | `light.GPULightHeader`              | `engine/light/assets/light-header.wgsl`                        |
 | `light_cull_uniforms`\*   | `LightCullUniforms`     | `light.GPULightCullUniforms`        | `engine/light/assets/light-cull-uniforms.wgsl`                 |
-| `shadow_data`             | `ShadowData`            | `light.GPUShadowData`               | `engine/light/assets/shadow-data.wgsl`                         |
 | `shadow_uniform`          | `ShadowUniform`         | `light.GPUShadowUniform`            | `engine/light/assets/shadow-uniform.wgsl`                      |
 | `tile_uniforms`           | `TileUniforms`          | `light.GPUTileUniforms`             | `engine/light/assets/tile-uniforms.wgsl`                       |
+| `csm_data`                | `CSMData`               | `light.GPUCSMData`                  | `engine/light/assets/csm-data.wgsl`                            |
+| `contact_shadow_params`\* | `ContactShadowParams`   | `light.GPUContactShadowParams`      | `engine/light/assets/contact-shadow-params.wgsl`               |
+| `light_shadow_entry`      | `LightShadowEntry`      | `light.GPULightShadowEntry`         | `engine/light/assets/light-shadow-entry.wgsl`                  |
 | `model_data`              | `ModelData`             | `model.GPUModelData`                | `engine/model/assets/model-data.wgsl`                          |
 | `instance_data`           | `InstanceData`          | `animator.GPUInstanceData`          | `engine/renderer/animator/assets/instance-data.wgsl`           |
 | `animation_data`          | `AnimationData`         | `animator.GPUAnimationData`         | `engine/renderer/animator/assets/animation-data.wgsl`          |
@@ -186,11 +221,6 @@ These are the valid `struct_type` values for `@oxy:include` and `@oxy:group` ann
 | `gbuffer_output`          | `GBufferOutput`         | `light.GPUGBufferOutput`            | `engine/light/assets/gbuffer-output.wgsl`                      |
 | `ssao_params`\*           | `SSAOParams`            | `light.GPUSSAOParams`               | `engine/light/assets/ssao-params.wgsl`                         |
 | `blur_params`\*           | `BlurParams`            | `light.GPUBlurParams`               | `engine/light/assets/blur-params.wgsl`                         |
-| `sat_params`\*            | `SATParams`             | `light.GPUSATParams`                | `engine/light/assets/sat-params.wgsl`                          |
-| `irradiance_probe`        | `IrradianceProbe`       | `light.GPUIrradianceProbe`          | `engine/light/assets/irradiance-probe.wgsl`                    |
-| `probe_grid_params`       | `ProbeGridParams`       | `light.GPUProbeGridParams`          | `engine/light/assets/probe-grid-params.wgsl`                   |
-| `probe_bake_camera`\*     | `ProbeBakeCamera`       | `light.GPUProbeBakeCamera`          | `engine/light/assets/probe-bake-camera.wgsl`                   |
-| `sh_project_params`\*     | `SHProjectParams`       | `light.GPUSHProjectParams`          | `engine/light/assets/sh-project-params.wgsl`                   |
 | `composition_params`\*    | `CompositionParams`     | `light.GPUCompositionParams`        | `engine/light/assets/composition-params.wgsl`                  |
 | `ssr_params`\*            | `SSRParams`             | `light.GPUSSRParams`                | `engine/light/assets/ssr-params.wgsl`                          |
 
@@ -214,24 +244,24 @@ These are the valid `address_space` values for `@oxy:group` annotations.
 
 These are the valid `provider_identity` values for `@oxy:provider` annotations. Each maps to a specific Scene-level resource provider that the Scene's draw call and compute setup logic uses to wire BindGroupProviders.
 
-| Argument Key       | Description                                        | Typical Bindings                                         |
-| ------------------ | -------------------------------------------------- | -------------------------------------------------------- |
-| `camera`           | Camera uniform provider                            | `CameraUniform`                                          |
-| `material`         | Material textures, samplers, and uniforms          | `texture_2d`, `sampler`, material params                 |
-| `lights`           | Light storage buffer provider                      | `LightHeader`, `array<Light>`                            |
-| `shadow`           | Shadow map texture, sampler, and uniform           | `texture_depth_2d`, `sampler_comparison`, `ShadowData`   |
-| `tiles`            | Forward+ tile culling data                         | `array<u32>` counts/indices                              |
-| `effect`           | Visual effect/overlay parameters                   | `OverlayParams`, `EffectParams`                          |
-| `animator`         | Skinned vertex shader instance buffer              | `array<vec4<f32>>` bone/transform data                   |
-| `animator_output`  | Compute shader output transforms buffer            | `array<f32>` (shared with vertex shader instance buffer) |
-| `animator_packed`  | Packed animation data (clips, channels, keyframes) | `array<u32>` flat packed buffer                          |
-| `animator_scratch` | Scratch bone matrix workspace for blending         | `array<mat4x4<f32>>`                                     |
-| `ssao`             | SSAO blurred occlusion texture + sampler (lit pass) | `texture_2d<f32>`, `sampler`                             |
-| `probes`           | Irradiance probe grid storage + params (lit pass)   | `array<IrradianceProbe>`, `ProbeGridParams`              |
-| `composition`      | Composition HDR + SSR textures + sampler + params   | `texture_2d<f32>`, `sampler`, `CompositionParams`        |
-| `ssr`              | SSR compute I/O (G-Buffer + HDR + output + params)  | `texture_2d<f32>`, `texture_storage_2d`, `SSRParams`     |
-| `hiz_init`         | Hi-Z init (G-Buffer depth → Hi-Z mip 0 copy)       | `texture_2d<f32>`, `texture_storage_2d`                  |
-| `hiz_down`         | Hi-Z downsample (mip N-1 → mip N min-downsample)   | `texture_2d<f32>`, `texture_storage_2d`                  |
+| Argument Key       | Description                                           | Typical Bindings                                         |
+| ------------------ | ----------------------------------------------------- | -------------------------------------------------------- |
+| `camera`           | Camera uniform provider                               | `CameraUniform`                                          |
+| `material`         | Material textures, samplers, and uniforms             | `texture_2d`, `sampler`, material params                 |
+| `lights`           | Light storage buffer provider                         | `LightHeader`, `array<Light>`                            |
+| `shadow`           | Shadow map texture and comparison sampler             | `texture_depth_2d_array`, `sampler_comparison`           |
+| `tiles`            | Forward+ tile culling data                            | `array<u32>` counts/indices                              |
+| `effect`           | Visual effect/overlay parameters                      | `OverlayParams`, `EffectParams`                          |
+| `animator`         | Skinned vertex shader instance buffer                 | `array<vec4<f32>>` bone/transform data                   |
+| `animator_output`  | Compute shader output transforms buffer               | `array<f32>` (shared with vertex shader instance buffer) |
+| `animator_packed`  | Packed animation data (clips, channels, keyframes)    | `array<u32>` flat packed buffer                          |
+| `animator_scratch` | Scratch bone matrix workspace for blending            | `array<mat4x4<f32>>`                                     |
+| `ssao`             | SSAO blurred occlusion texture + sampler (lit pass)   | `texture_2d<f32>`, `sampler`                             |
+| `contact_shadows`  | Contact shadow occlusion texture + sampler (lit pass) | `texture_2d<f32>`, `sampler`                             |
+| `composition`      | Composition HDR + SSR textures + sampler + params     | `texture_2d<f32>`, `sampler`, `CompositionParams`        |
+| `ssr`              | SSR compute I/O (G-Buffer + HDR + output + params)    | `texture_2d<f32>`, `texture_storage_2d`, `SSRParams`     |
+| `hiz_init`         | Hi-Z init (G-Buffer depth → Hi-Z mip 0 copy)          | `texture_2d<f32>`, `texture_storage_2d`                  |
+| `hiz_down`         | Hi-Z downsample (mip N-1 → mip N min-downsample)      | `texture_2d<f32>`, `texture_storage_2d`                  |
 
 ---
 
@@ -239,27 +269,31 @@ These are the valid `provider_identity` values for `@oxy:provider` annotations. 
 
 These are the valid `binding_role` values for the optional fourth argument of `@oxy:provider` annotations. They qualify individual bindings within a material provider group, telling the loader which texture or sampler role each binding fulfils.
 
-| Argument Key                 | Description                                           |
-| ---------------------------- | ----------------------------------------------------- |
-| `diffuse_texture`            | Diffuse / base-color `texture_2d<f32>` binding        |
-| `diffuse_sampler`            | Sampler paired with the diffuse texture               |
-| `normal_texture`             | Tangent-space normal map `texture_2d<f32>` binding    |
-| `normal_sampler`             | Sampler paired with the normal map                    |
-| `metallic_roughness_texture` | Combined metallic-roughness `texture_2d<f32>` binding |
-| `metallic_roughness_sampler` | Sampler paired with the metallic-roughness texture    |
-| `ssao_texture`               | SSAO blurred occlusion `texture_2d<f32>` binding      |
-| `ssao_sampler`               | Sampler paired with the SSAO occlusion texture        |
-| `gbuffer_normal`             | G-Buffer world-normal `texture_2d<f32>` binding       |
-| `gbuffer_depth`              | G-Buffer depth `texture_2d<f32>` binding              |
-| `hdr_texture`                | HDR lit result `texture_2d<f32>` binding               |
-| `ssr_output`                 | SSR compute output `texture_storage_2d` binding        |
-| `ssr_texture`                | SSR result `texture_2d<f32>` binding (composition)     |
-| `composition_sampler`        | Linear sampler for composition pass                    |
-| `hiz_out`                    | Hi-Z output `texture_storage_2d` binding               |
-| `hiz_in`                     | Hi-Z input `texture_2d<f32>` binding (previous mip)    |
-| `hiz_texture`                | Full Hi-Z depth pyramid `texture_2d<f32>` binding      |
+| Argument Key                 | Description                                              |
+| ---------------------------- | -------------------------------------------------------- |
+| `diffuse_texture`            | Diffuse / base-color `texture_2d<f32>` binding           |
+| `diffuse_sampler`            | Sampler paired with the diffuse texture                  |
+| `normal_texture`             | Tangent-space normal map `texture_2d<f32>` binding       |
+| `normal_sampler`             | Sampler paired with the normal map                       |
+| `metallic_roughness_texture` | Combined metallic-roughness `texture_2d<f32>` binding    |
+| `metallic_roughness_sampler` | Sampler paired with the metallic-roughness texture       |
+| `ssao_texture`               | SSAO blurred occlusion `texture_2d<f32>` binding         |
+| `ssao_sampler`               | Sampler paired with the SSAO occlusion texture           |
+| `gbuffer_normal`             | G-Buffer world-normal `texture_2d<f32>` binding          |
+| `gbuffer_depth`              | G-Buffer depth `texture_2d<f32>` binding                 |
+| `hdr_texture`                | HDR lit result `texture_2d<f32>` binding                 |
+| `ssr_output`                 | SSR compute output `texture_storage_2d` binding          |
+| `ssr_texture`                | SSR result `texture_2d<f32>` binding (composition)       |
+| `composition_sampler`        | Linear sampler for composition pass                      |
+| `hiz_out`                    | Hi-Z output `texture_storage_2d` binding                 |
+| `hiz_in`                     | Hi-Z input `texture_2d<f32>` binding (previous mip)      |
+| `hiz_texture`                | Full Hi-Z depth pyramid `texture_2d<f32>` binding        |
+| `spot_shadow_texture`        | Spot/point light shadow atlas depth texture binding      |
+| `contact_shadow_texture`     | Contact shadow occlusion `texture_2d<f32>` binding       |
+| `contact_shadow_sampler`     | Sampler paired with the contact shadow occlusion texture |
+| `material_params`            | Per-material scalar parameters uniform binding           |
 
-**Usage:** Material binding roles are only valid when the provider identity is `material`. The remaining roles listed above (`ssao_*`, `gbuffer_*`, `hdr_*`, `ssr_*`, `composition_*`, `hiz_*`) are used by the GI subsystem providers (`ssao`, `composition`, `ssr`, `hiz_init`, `hiz_down`). Each binding in the material group should have its own `@oxy:provider` annotation with a role:
+**Usage:** Binding roles qualify the semantic purpose of an individual binding within any multi-binding `@oxy:provider` group — not just `material` providers. The remaining roles listed above (`ssao_*`, `gbuffer_*`, `hdr_*`, `ssr_*`, `composition_*`, `hiz_*`) are used by the GI subsystem providers (`ssao`, `composition`, `ssr`, `hiz_init`, `hiz_down`). Each binding in the material group should have its own `@oxy:provider` annotation with a role:
 
 ```wgsl
 //@oxy:provider 2 0 material diffuse_texture
@@ -310,7 +344,8 @@ The loader reads these roles from `Shader.Declarations()` to resolve per-binding
 │  PreProcessor.Process()                         │
 │  ├─ @oxy:include → inject struct source         │
 │  ├─ @oxy:group  → emit declaration + record     │
-│  └─ @oxy:provider → consume line + record       │
+│  ├─ @oxy:provider → consume line + record       │
+│  └─ @oxy:inject → emit const from value map     │
 └──────────────────────┬──────────────────────────┘
                        │
           ┌────────────┴────────────┐
@@ -340,7 +375,7 @@ The loader reads these roles from `Shader.Declarations()` to resolve per-binding
 ```
 
 1. **Shader Load** — `NewShader()` reads the `.wgsl` file, runs the PreProcessor, then passes the processed source to the WGSL parser for layout extraction.
-2. **Pre-Processing** — Annotations are parsed line-by-line. `@oxy:include` injects struct source. `@oxy:group` emits a `@group/@binding` declaration and records it. `@oxy:provider` only records.
+2. **Pre-Processing** — Annotations are parsed line-by-line. `@oxy:include` injects struct source. `@oxy:group` emits a `@group/@binding` declaration and records it. `@oxy:provider` only records. `@oxy:inject` emits a `const` declaration from the injection value map.
 3. **WGSL Parsing** — The processed source (now valid WGSL) is parsed to extract `BindGroupLayoutDescriptors`, `BindGroupVarNames`, vertex layouts, workgroup sizes, and entry points.
 4. **Scene Wiring** — Scene methods iterate `Shader.Declarations()` to semantically match each group/binding to the correct `BindGroupProvider` based on the annotation's type argument or provider identity — no string matching on variable names required.
 5. **Loader Wiring** — The Loader's `initMaterialGPU` also iterates `Declarations()` to find material provider annotations with binding roles, resolving per-binding texture and sampler assignments declaratively instead of searching variable names.
@@ -415,7 +450,7 @@ To register a new GPU struct for use with `@oxy:include` and `@oxy:group` annota
 1. **Create the GPU struct** in the appropriate package (e.g. `engine/physics/gpu_types.go`) with `Size() int` and `Marshal() []byte` methods.
 2. **Create the `.wgsl` asset file** in the package's `assets/` directory with the WGSL struct definition. Embed it via `//go:embed` and export the source string.
 3. **Add the argument constant** in `engine/renderer/shader/annotations.go`:
-   - Export a new `AnnotationArg` constant (e.g. `AnnotationArgPhysicsBody AnnotationArg = "physics_body"`).
+   - Add a new `AnnotationArg` constant (exported if the key must be referenced outside the `shader` package, unexported for engine-internal types — e.g. `AnnotationArgPhysicsBody AnnotationArg = "physics_body"`).
    - Append the key to the `validStructTypes` slice.
 4. **Register the struct source** in `engine/renderer/shader/pre_processor.go`'s `structRegistry` map, mapping the key to the embedded WGSL source string.
 5. **Use the annotation** in your `.wgsl` shader files with `@oxy:include <key>` or `@oxy:group ... <key>`.

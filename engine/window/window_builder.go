@@ -1,8 +1,10 @@
 package window
 
+import "fmt"
+
 // WindowBuilderOption is a functional option for configuring an engineWindow.
 // Use the With* functions to create options.
-type WindowBuilderOption func(w *engineWindow)
+type WindowBuilderOption func(w *window)
 
 // WithTitle sets the window title displayed in the title bar.
 //
@@ -12,7 +14,7 @@ type WindowBuilderOption func(w *engineWindow)
 // Returns:
 //   - WindowBuilderOption: option function to apply
 func WithTitle(title string) WindowBuilderOption {
-	return func(w *engineWindow) {
+	return func(w *window) {
 		w.title = title
 	}
 }
@@ -25,7 +27,7 @@ func WithTitle(title string) WindowBuilderOption {
 // Returns:
 //   - WindowBuilderOption: option function to apply
 func WithMaxWidth(maxWidth int) WindowBuilderOption {
-	return func(w *engineWindow) {
+	return func(w *window) {
 		w.maxWidth = maxWidth
 	}
 }
@@ -38,7 +40,7 @@ func WithMaxWidth(maxWidth int) WindowBuilderOption {
 // Returns:
 //   - WindowBuilderOption: option function to apply
 func WithMaxHeight(maxHeight int) WindowBuilderOption {
-	return func(w *engineWindow) {
+	return func(w *window) {
 		w.maxHeight = maxHeight
 	}
 }
@@ -51,7 +53,7 @@ func WithMaxHeight(maxHeight int) WindowBuilderOption {
 // Returns:
 //   - WindowBuilderOption: option function to apply
 func WithMinWidth(minWidth int) WindowBuilderOption {
-	return func(w *engineWindow) {
+	return func(w *window) {
 		w.minWidth = minWidth
 	}
 }
@@ -64,7 +66,7 @@ func WithMinWidth(minWidth int) WindowBuilderOption {
 // Returns:
 //   - WindowBuilderOption: option function to apply
 func WithMinHeight(minHeight int) WindowBuilderOption {
-	return func(w *engineWindow) {
+	return func(w *window) {
 		w.minHeight = minHeight
 	}
 }
@@ -77,7 +79,7 @@ func WithMinHeight(minHeight int) WindowBuilderOption {
 // Returns:
 //   - WindowBuilderOption: option function to apply
 func WithWidth(width int) WindowBuilderOption {
-	return func(w *engineWindow) {
+	return func(w *window) {
 		w.width = width
 	}
 }
@@ -90,7 +92,37 @@ func WithWidth(width int) WindowBuilderOption {
 // Returns:
 //   - WindowBuilderOption: option function to apply
 func WithHeight(height int) WindowBuilderOption {
-	return func(w *engineWindow) {
+	return func(w *window) {
 		w.height = height
 	}
+}
+
+// NewWindow creates a new Window with the specified options.
+// Applies default values first, then each option in order.
+//
+// Parameters:
+//   - options: functional options to configure the window
+//
+// Returns:
+//   - Window: the configured window (not yet spawned)
+func NewWindow(options ...WindowBuilderOption) Window {
+	w := &window{
+		title:     "Default Window Title",
+		maxWidth:  1600,
+		maxHeight: 1200,
+		minWidth:  600,
+		minHeight: 200,
+		width:     1280,
+		height:    720,
+	}
+	for _, opt := range options {
+		opt(w)
+	}
+	backend, err := newPlatformWindow(w)
+	if err != nil {
+		panic(fmt.Sprintf("failed to create platform window: %v", err))
+	}
+	w.backend = backend
+	w.Delegate = w
+	return w
 }

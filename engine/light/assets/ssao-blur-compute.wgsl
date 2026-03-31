@@ -6,7 +6,7 @@
 // occlusion from bleeding across geometric boundaries.
 //
 // Dispatch twice per frame: once horizontal (direction = (1,0)), once
-// vertical (direction = (0,1)), matching the VSM blur architecture.
+// vertical (direction = (0,1)), matching the separable blur architecture.
 //
 // Dispatch: ceil(width/16) × ceil(height/16) × 1
 

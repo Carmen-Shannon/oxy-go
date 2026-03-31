@@ -28,8 +28,9 @@ type simpleAnimatorBackendImpl struct {
 	// the last Flush. dirtyBitset provides O(1) dedup so the same index isn't enqueued twice.
 	// This replaces the old contiguous dirty range (dirtyStart/dirtyEnd) to avoid uploading
 	// large untouched spans when only a few scattered instances change.
-	dirtyIndices []uint32
-	dirtyBitset  []uint64 // 1 bit per instance index; word = index/64, bit = index%64
+	dirtyIndices   []uint32
+	dirtyBitset    []uint64 // 1 bit per instance index; word = index/64, bit = index%64
+	flushCountdown int      // counts down from 2 so both frame-in-flight slots receive each upload
 
 	// perFrameSlice is a reusable slice for staging per-instance culling data each frame, to avoid heap allocations.
 	perFrameSlice []GPUGlobalData
@@ -45,7 +46,17 @@ type simpleAnimatorBackendImpl struct {
 	// Frustum culling state
 	frustumPlanes  [6]GPUFrustumPlane
 	boundingRadius float32
+	boundingMin    [3]float32
+	boundingMax    [3]float32
 	cullingEnabled bool
+
+	// Hi-Z occlusion culling state
+	screenWidth  int
+	screenHeight int
+	hiZMipCount  int
+	projX        float32
+	viewProj     [16]float32
+	hiZProvider  bind_group_provider.BindGroupProvider
 }
 
 // simpleAnimatorBackend defines the interface for the simple instanced animation backend.
@@ -187,11 +198,51 @@ type simpleAnimatorBackend interface {
 	//   - radius: the bounding sphere radius
 	SetBoundingRadius(radius float32)
 
+	// SetBoundingBox sets the model-space AABB corners for GPU-side Hi-Z occlusion culling.
+	//
+	// Parameters:
+	//   - min: model-space minimum corner [3]float32
+	//   - max: model-space maximum corner [3]float32
+	SetBoundingBox(min, max [3]float32)
+
 	// BoundingRadius returns the current bounding sphere radius used for frustum culling.
 	//
 	// Returns:
 	//   - float32: the bounding sphere radius
 	BoundingRadius() float32
+
+	// SetScreenSize sets the screen dimensions used for Hi-Z screen-space projection.
+	//
+	// Parameters:
+	//   - width: the screen width in pixels
+	//   - height: the screen height in pixels
+	SetScreenSize(width, height int)
+
+	// SetProjectionX sets the projection matrix X component (column 0, row 0) used for
+	// converting world-space bounding spheres to screen space for Hi-Z occlusion.
+	//
+	// Parameters:
+	//   - projX: the [0][0] element of the projection matrix
+	SetProjectionX(projX float32)
+
+	// SetHiZMipCount sets the number of mip levels in the Hi-Z depth pyramid.
+	//
+	// Parameters:
+	//   - count: the number of mip levels
+	SetHiZMipCount(count int)
+
+	// SetViewProj sets the current view-projection matrix for Hi-Z world-space projection.
+	//
+	// Parameters:
+	//   - vp: the view-projection matrix as a column-major [16]float32
+	SetViewProj(vp [16]float32)
+
+	// HiZBindGroupProvider returns the BindGroupProvider for the Hi-Z occlusion texture
+	// at @group(1) in the compute shader.
+	//
+	// Returns:
+	//   - bind_group_provider.BindGroupProvider: the Hi-Z bind group provider, or nil
+	HiZBindGroupProvider() bind_group_provider.BindGroupProvider
 
 	// IndirectBuffer returns the GPU buffer used for DrawIndexedIndirect arguments.
 	// Returns nil when culling is not enabled or GPU resources are not initialized.
@@ -251,31 +302,6 @@ type simpleAnimatorBackend interface {
 	// TODO: experimental method for managing the Animator's instance size.
 	// ClearNeedsRebuild resets the rebuild flag after GPU buffers have been successfully recreated.
 	ClearNeedsRebuild()
-
-	// --- No-op stubs for skeletalAnimatorBackend interface compliance ---
-
-	// no-op
-	SetBoneCount(count uint32)
-	// no-op
-	SetBone(index uint32, inverseBindMatrix [16]float32, localTranslation [3]float32, localRotation [4]float32, localScale [3]float32, parentIndex int32, binding int)
-	// no-op
-	AddClip(duration, ticksPerSecond float32, channels []uint32, keyframeTimes []float32, keyframeTranslations [][3]float32, keyframeRotations [][4]float32, keyframeScales [][3]float32, binding int) uint32
-	// no-op
-	PlayAnimation(instanceIndex, clipIndex uint32, loop bool)
-	// no-op
-	BlendToAnimation(instanceIndex, targetClipIndex uint32, blendDuration float32)
-	// no-op
-	SetAnimationTime(instanceIndex uint32, time float32)
-	// no-op
-	SetAnimationSpeed(instanceIndex uint32, speed float32)
-	// no-op
-	IsBlending(instanceIndex uint32) bool
-	// no-op
-	BlendProgress(instanceIndex uint32) float32
-	// no-op
-	CancelBlend(instanceIndex uint32)
-	// no-op
-	BoneCount() uint32
 }
 
 // compile-time check to ensure simpleAnimatorBackendImpl implements AnimatorBackend interface.
@@ -295,6 +321,7 @@ func newSimpleAnimatorBackend() simpleAnimatorBackend {
 	s.perFrameSlice = make([]GPUGlobalData, 1)
 	s.computeProvider = bind_group_provider.NewBindGroupProvider("animator_compute")
 	s.outputProvider = bind_group_provider.NewBindGroupProvider("animator_output")
+	s.hiZProvider = bind_group_provider.NewBindGroupProvider("animator_hiz")
 	s.stagedWriteData = make([]bind_group_provider.BufferWrite, 0, 2)
 	s.dirtyIndices = make([]uint32, 0, s.maxInstances)
 	s.dirtyBitset = make([]uint64, (s.maxInstances+63)/64)
@@ -475,6 +502,7 @@ func (s *simpleAnimatorBackendImpl) SetMaxInstances(maxInstances uint32) {
 	s.instanceCount = 0
 	s.dirtyIndices = s.dirtyIndices[:0]
 	s.dirtyBitset = make([]uint64, (maxInstances+63)/64)
+	s.flushCountdown = 0
 	s.initStagingPool()
 }
 
@@ -508,10 +536,17 @@ func (s *simpleAnimatorBackendImpl) Flush(instanceBinding, _, _ int) uint32 {
 	}
 	s.flushRange(runStart, runEnd, instSize, instanceBinding)
 
-	// Clear dirty state: reset indices slice and zero the bitset
-	s.dirtyIndices = s.dirtyIndices[:0]
-	for i := range s.dirtyBitset {
-		s.dirtyBitset[i] = 0
+	// Decrement the dual-slot countdown. The dirty indices are retained until
+	// both frame-in-flight slots have received the upload; only then is the
+	// tracking state cleared.
+	if s.flushCountdown > 0 {
+		s.flushCountdown--
+	}
+	if s.flushCountdown == 0 {
+		s.dirtyIndices = s.dirtyIndices[:0]
+		for i := range s.dirtyBitset {
+			s.dirtyBitset[i] = 0
+		}
 	}
 
 	return count
@@ -524,11 +559,50 @@ func (s *simpleAnimatorBackendImpl) PrepareFrame(deltaTime float32, binding int)
 		return
 	}
 
+	// Advance CPU-side rotation for all rotating instances and mark them dirty so
+	// Flush uploads the current rotation to the active frame slot this frame.
+	const twoPi = float32(6.283185307)
+	for i := uint32(0); i < s.instanceCount; i++ {
+		d := &s.instanceData[i]
+		if d.RotSpeed[0] == 0 && d.RotSpeed[1] == 0 && d.RotSpeed[2] == 0 {
+			continue
+		}
+		d.Rot[0] += d.RotSpeed[0] * deltaTime
+		d.Rot[1] += d.RotSpeed[1] * deltaTime
+		d.Rot[2] += d.RotSpeed[2] * deltaTime
+		for d.Rot[0] >= twoPi {
+			d.Rot[0] -= twoPi
+		}
+		for d.Rot[0] < 0 {
+			d.Rot[0] += twoPi
+		}
+		for d.Rot[1] >= twoPi {
+			d.Rot[1] -= twoPi
+		}
+		for d.Rot[1] < 0 {
+			d.Rot[1] += twoPi
+		}
+		for d.Rot[2] >= twoPi {
+			d.Rot[2] -= twoPi
+		}
+		for d.Rot[2] < 0 {
+			d.Rot[2] += twoPi
+		}
+		s.enqueueDirty(i)
+	}
+
 	s.perFrameSlice[0] = GPUGlobalData{
 		InstanceCount:  s.instanceCount,
 		DeltaTime:      deltaTime,
 		BoundingRadius: s.boundingRadius,
+		ScreenWidth:    uint32(s.screenWidth),
+		ScreenHeight:   uint32(s.screenHeight),
+		HiZMipCount:    uint32(s.hiZMipCount),
+		ProjX:          s.projX,
 		Planes:         s.frustumPlanes,
+		ViewProj:       s.viewProj,
+		BoundingMin:    s.boundingMin,
+		BoundingMax:    s.boundingMax,
 	}
 
 	raw := common.SliceToBytes(s.perFrameSlice)
@@ -553,6 +627,9 @@ func (s *simpleAnimatorBackendImpl) enqueueDirty(index uint32) {
 	}
 	s.dirtyBitset[word] |= bit
 	s.dirtyIndices = append(s.dirtyIndices, index)
+	if s.flushCountdown < 2 {
+		s.flushCountdown = 2
+	}
 }
 
 // flushRange stages a contiguous run of dirty instance data [start, end) as a single
@@ -595,6 +672,9 @@ func (s *simpleAnimatorBackendImpl) Release() {
 	}
 	if s.outputProvider != nil {
 		s.outputProvider.Release()
+	}
+	if s.hiZProvider != nil {
+		s.hiZProvider.Release()
 	}
 	s.instanceData = nil
 	s.perFrameSlice = nil
@@ -660,23 +740,36 @@ func (s *simpleAnimatorBackendImpl) ClearNeedsRebuild() {
 	s.needsRebuild = false
 }
 
-// --- No-op stubs for skeletalAnimatorBackend interface compliance ---
+func (s *simpleAnimatorBackendImpl) SetScreenSize(width, height int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.screenWidth = width
+	s.screenHeight = height
+}
 
-func (s *simpleAnimatorBackendImpl) SetBoneCount(count uint32) {}
-func (s *simpleAnimatorBackendImpl) SetBone(index uint32, inverseBindMatrix [16]float32, localTranslation [3]float32, localRotation [4]float32, localScale [3]float32, parentIndex int32, binding int) {
+func (s *simpleAnimatorBackendImpl) SetProjectionX(projX float32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.projX = projX
 }
-func (s *simpleAnimatorBackendImpl) AddClip(duration, ticksPerSecond float32, channels []uint32, keyframeTimes []float32, keyframeTranslations [][3]float32, keyframeRotations [][4]float32, keyframeScales [][3]float32, binding int) uint32 {
-	return 0
+
+func (s *simpleAnimatorBackendImpl) SetHiZMipCount(count int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.hiZMipCount = count
 }
-func (s *simpleAnimatorBackendImpl) PlayAnimation(instanceIndex, clipIndex uint32, loop bool) {}
-func (s *simpleAnimatorBackendImpl) BlendToAnimation(instanceIndex, targetClipIndex uint32, blendDuration float32) {
+
+func (s *simpleAnimatorBackendImpl) SetViewProj(vp [16]float32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.viewProj = vp
 }
-func (s *simpleAnimatorBackendImpl) SetAnimationTime(instanceIndex uint32, time float32)   {}
-func (s *simpleAnimatorBackendImpl) SetAnimationSpeed(instanceIndex uint32, speed float32) {}
-func (s *simpleAnimatorBackendImpl) IsBlending(instanceIndex uint32) bool                  { return false }
-func (s *simpleAnimatorBackendImpl) BlendProgress(instanceIndex uint32) float32            { return 0 }
-func (s *simpleAnimatorBackendImpl) CancelBlend(instanceIndex uint32)                      {}
-func (s *simpleAnimatorBackendImpl) BoneCount() uint32                                     { return 0 }
+
+func (s *simpleAnimatorBackendImpl) HiZBindGroupProvider() bind_group_provider.BindGroupProvider {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.hiZProvider
+}
 
 func (s *simpleAnimatorBackendImpl) SetFrustumPlanes(planes [6]GPUFrustumPlane) {
 	s.mu.Lock()
@@ -689,6 +782,13 @@ func (s *simpleAnimatorBackendImpl) SetBoundingRadius(radius float32) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.boundingRadius = radius
+}
+
+func (s *simpleAnimatorBackendImpl) SetBoundingBox(min, max [3]float32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.boundingMin = min
+	s.boundingMax = max
 }
 
 func (s *simpleAnimatorBackendImpl) BoundingRadius() float32 {
