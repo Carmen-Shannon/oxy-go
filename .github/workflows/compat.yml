@@ -58,6 +58,17 @@ jobs:
       - name: Install Go dependencies
         run: go mod download
 
+      - name: Install Mesa software Vulkan
+        shell: bash
+        run: |
+          MESA_VERSION="25.2.7"
+          curl.exe -L --retry 5 "https://github.com/pal1000/mesa-dist-win/releases/download/${MESA_VERSION}/mesa3d-${MESA_VERSION}-release-msvc.7z" -o mesa.7z
+          mkdir -p mesa
+          7z.exe e mesa.7z -omesa x64/vulkan_lvp.dll x64/lvp_icd.x86_64.json
+          MESA_DIR="$(cygpath --windows "$(pwd)/mesa")"
+          echo "VK_DRIVER_FILES=${MESA_DIR}\\lvp_icd.x86_64.json" >> "$GITHUB_ENV"
+          echo "GALLIUM_DRIVER=llvmpipe" >> "$GITHUB_ENV"
+
       - name: Install mockery
         run: go install github.com/vektra/mockery/v2@v2.53.5
 

@@ -168,6 +168,47 @@ Then view the per-function coverage report:
 go tool cover -func="coverage.out"
 ```
 
+### Integration Test Prerequisites
+
+The renderer integration tests (`engine/renderer/wgpu_renderer_backend_test.go`) create a real GLFW window and request a software GPU adapter. A software Vulkan ICD must be present on the system for these tests to run — without it the suite panics at adapter creation.
+
+**Windows**
+
+Install Mesa llvmpipe from [pal1000/mesa-dist-win](https://github.com/pal1000/mesa-dist-win). Requires 7-Zip — install it first via Chocolatey if not present, then download and extract:
+
+- `choco install 7zip -y`
+
+```powershell
+$ver = "25.2.7" ; curl.exe -L "https://github.com/pal1000/mesa-dist-win/releases/download/$ver/mesa3d-$ver-release-msvc.7z" -o mesa.7z ; 7z.exe e mesa.7z -omesa x64/vulkan_lvp.dll x64/lvp_icd.x86_64.json
+```
+
+Then set the following as permanent user environment variables (replace `<path-to-mesa>` with the full path to the extracted `mesa\` folder):
+
+```powershell
+[System.Environment]::SetEnvironmentVariable("VK_DRIVER_FILES", "<path-to-mesa>\lvp_icd.x86_64.json", "User") ; [System.Environment]::SetEnvironmentVariable("GALLIUM_DRIVER", "llvmpipe", "User")
+```
+
+Restart your terminal after setting these variables.
+
+**Linux**
+
+Install the required packages and set the ICD path:
+
+```bash
+sudo apt-get install -y libvulkan1 mesa-vulkan-drivers xvfb
+export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+```
+
+Run tests with a virtual display so GLFW can create a window:
+
+```bash
+xvfb-run go test ./...
+```
+
+**macOS**
+
+No additional setup required. Metal is available on all macOS runners and developer machines.
+
 ### Generating Mocks
 
 Test mocks are generated with [vektra/mockery](https://github.com/vektra/mockery) (v2.53.5+). The configuration lives in [.mockery.yaml](.mockery.yaml) at the project root.

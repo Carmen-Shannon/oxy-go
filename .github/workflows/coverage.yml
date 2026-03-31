@@ -34,7 +34,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             xorg-dev \
-            libgl1-mesa-dev
+            libgl1-mesa-dev \
+            libvulkan1 \
+            mesa-vulkan-drivers \
+            xvfb
 
       - name: Install mockery
         run: go install github.com/vektra/mockery/v2@v2.53.5
@@ -43,10 +46,12 @@ jobs:
         run: mockery
 
       - name: Run tests with coverage
+        env:
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
         run: |
           PKGS=$(go list ./common/... ./engine/... | grep -v '/mocks$' | paste -sd,)
           TESTS=$(go list ./common/... ./engine/... | grep -v '/mocks$')
-          go test -coverprofile="coverage.out" -coverpkg="${PKGS}" ${TESTS}
+          xvfb-run go test -coverprofile="coverage.out" -coverpkg="${PKGS}" ${TESTS}
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
