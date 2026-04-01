@@ -29,6 +29,13 @@ jobs:
       - name: Install Go dependencies
         run: go mod download
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+          xorg-dev \
+          libgl1-mesa-dev
+
       - name: Install mockery
         run: go install github.com/vektra/mockery/v2@v2.53.5
 
