@@ -1,0 +1,71 @@
+# Compatibility Workflow
+#
+# Verifies that the library compiles and all tests pass on macOS and Windows.
+# No coverage is collected; this check exists solely to confirm cross-platform
+# build and test compatibility.
+
+name: Compatibility
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: macOS
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install Go dependencies
+        run: go mod download
+
+      - name: Install mockery
+        run: go install github.com/vektra/mockery/v2@v2.53.5
+
+      - name: Generate mocks
+        run: mockery
+
+      - name: Run tests
+        shell: bash
+        run: |
+          TESTS=$(go list ./common/... ./engine/... | grep -v '/mocks$')
+          go test -count=1 ${TESTS}
+
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install Go dependencies
+        run: go mod download
+
+      - name: Install mockery
+        run: go install github.com/vektra/mockery/v2@v2.53.5
+
+      - name: Generate mocks
+        run: mockery
+
+      - name: Run tests
+        shell: bash
+        run: |
+          TESTS=$(go list ./common/... ./engine/... | grep -v '/mocks$')
+          go test -count=1 ${TESTS}
