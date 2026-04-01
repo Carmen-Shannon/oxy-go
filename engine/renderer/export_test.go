@@ -37,3 +37,6 @@ func RendererPendingMSAA(r Renderer) *MSAASampleCount {
 func RendererForceFallbackAdapter(r Renderer) bool {
 	return r.(*renderer).forceFallbackAdapter
 }
+
+// MergeBindGroupLayouts exposes the unexported mergeBindGroupLayouts function for testing.
+var MergeBindGroupLayouts = mergeBindGroupLayouts

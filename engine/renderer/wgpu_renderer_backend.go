@@ -1074,7 +1074,7 @@ func (b *wgpuRendererBackendImpl) DispatchComputeBatch(dispatches []ComputeDispa
 	pass := b.computeFrameEncoder.BeginComputePass(nil)
 	var lastKey string
 	for _, d := range dispatches {
-		if d.Pipeline == nil || len(d.Providers) == 0 {
+		if len(d.Providers) == 0 {
 			continue
 		}
 		if d.Pipeline.PipelineKey() != lastKey {
