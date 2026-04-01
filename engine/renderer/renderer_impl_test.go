@@ -455,6 +455,27 @@ func (suite *rendererImplTest) TestEndShadowFrame() {
 	})
 }
 
+func (suite *rendererImplTest) TestBeginShadowAtlasPass() {
+	suite.Run("should delegate to the backend", func() {
+		suite.backendMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
+		suite.r.BeginShadowAtlasPass(nil)
+	})
+}
+
+func (suite *rendererImplTest) TestSetShadowViewport() {
+	suite.Run("should delegate to the backend", func() {
+		suite.backendMock.EXPECT().SetShadowViewport(uint32(0), uint32(0), uint32(512), uint32(512)).Return().Once()
+		suite.r.SetShadowViewport(0, 0, 512, 512)
+	})
+}
+
+func (suite *rendererImplTest) TestEndShadowAtlasPass() {
+	suite.Run("should delegate to the backend", func() {
+		suite.backendMock.EXPECT().EndShadowAtlasPass().Return().Once()
+		suite.r.EndShadowAtlasPass()
+	})
+}
+
 func (suite *rendererImplTest) TestEndGBufferPass() {
 	suite.Run("should call EndGBufferPass on the backend", func() {
 		suite.backendMock.EXPECT().EndGBufferPass().Return().Once()
