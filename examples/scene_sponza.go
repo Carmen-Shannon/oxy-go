@@ -36,7 +36,7 @@ func main() {
 		renderer.BackendTypeWGPU,
 		eng.Window(),
 		renderer.WithPresentMode(renderer.PresentModeUncapped),
-		renderer.WithMSAA(renderer.MSAAOff),
+		renderer.WithMSAA(renderer.MSAA4x),
 		renderer.WithGPUSerializedProfiling(false),
 	)
 
@@ -66,8 +66,8 @@ func main() {
 				light.WithPCFRadius(1.0),
 				light.WithShadowNearFar(0.05, 1000),
 				light.WithShadowNormalBiasScale(1.0),
-				light.WithShadowMapResolution(4096),
-				light.WithShadowInnerRadius(50),
+				light.WithShadowMapResolution(1024),
+				light.WithShadowInnerRadius(5),
 			)),
 			light.WithGBufferHandler(light.NewGBufferHandler()),
 			light.WithSSAOHandler(light.NewSSAOHandler(

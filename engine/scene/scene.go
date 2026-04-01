@@ -1053,12 +1053,13 @@ func (s *scene) PrepareShadows() {
 	// ── CSM cascade data (only when a directional shadow light exists) ──
 	var cascadeCount int
 	var res int
+	var csmData *light.GPUCSMData
 	if shadowLight != nil {
 		res = sh.ShadowMapResolution()
 		cascadeCount = sh.CascadeCount()
 		innerRadius := sh.ShadowInnerRadius()
 
-		csmData := &light.GPUCSMData{
+		csmData = &light.GPUCSMData{
 			TexelSize:         [2]float32{1.0 / float32(res), 1.0 / float32(res)},
 			Bias:              shadowLight.ShadowBias(),
 			InnerRadius:       innerRadius,
@@ -1287,6 +1288,8 @@ func (s *scene) PrepareShadows() {
 				i == 0,
 			)
 
+			cascadeFrustum := common.ExtractFrustumFromMatrix(csmData.Cascades[i].LightVP[:])
+
 			for _, anim := range s.animatorPool {
 				for _, a := range anim {
 					if a.InstanceCount() == 0 {
@@ -1304,6 +1307,19 @@ func (s *scene) PrepareShadows() {
 					cullMode := mdl.ShadowCullMode()
 					pipeKey := s.shadowPipelineKey(mdl.Skinned(), cullMode)
 					if pipeKey == "" {
+						continue
+					}
+
+					mdlMin, mdlMax := mdl.BoundingMin(), mdl.BoundingMax()
+					visible := false
+					for _, entry := range shadowTransforms[a] {
+						wMin, wMax := worldAABB(mdlMin, mdlMax, entry.pos, entry.scale)
+						if cascadeFrustum.IntersectAABB(wMin, wMax) {
+							visible = true
+							break
+						}
+					}
+					if !visible {
 						continue
 					}
 

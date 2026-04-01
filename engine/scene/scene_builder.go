@@ -238,5 +238,14 @@ func NewScene(name string, cam camera.Camera, r renderer.Renderer, options ...Sc
 		}
 		bgp.SetSlot(0)
 	}
+
+	// Create a 1×1 Hi-Z fallback texture so animators added before lighting
+	// is initialized (or in unlit scenes) always have a valid view bound at
+	// @group(1) in the occlusion-culling compute shader.
+	if hizView, hizTex, _, _, _, err := r.CreateHiZTextures(1, 1); err == nil {
+		s.hizFallbackTexture = hizTex
+		s.hizFallbackView = hizView
+	}
+
 	return s
 }
