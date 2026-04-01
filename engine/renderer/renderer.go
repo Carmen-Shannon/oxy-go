@@ -332,9 +332,6 @@ type Renderer interface {
 	//   - error: an error if the pipeline is not found
 	ShadowDrawCallIndirect(pipelineKey string, meshProvider bind_group_provider.BindGroupProvider, indirectBuffer *wgpu.Buffer, bindGroups []bind_group_provider.BindGroupProvider) error
 
-	// EndShadowPass ends the current shadow depth render pass.
-	EndShadowPass()
-
 	// EndShadowFrame finishes the shadow command encoder and submits to the GPU queue.
 	EndShadowFrame()
 
@@ -352,8 +349,22 @@ type Renderer interface {
 	// RegisterShadowDepthPipeline creates a depth-only render pipeline for shadow maps.
 	RegisterShadowDepthPipeline(p pipeline.Pipeline) error
 
-	// BeginShadowDepthPass starts a depth-only shadow render pass at the given viewport.
-	BeginShadowDepthPass(depthView *wgpu.TextureView, x, y, width, height uint32, clear bool)
+	// BeginShadowAtlasPass opens a single depth-only render pass targeting the full
+	// atlas texture, clearing depth to 1.0 via LoadOpClear. All tiles for this atlas
+	// share one render pass encoder. Must be called after BeginShadowFrame and before
+	// any SetShadowViewport or ShadowDrawCall* calls for this atlas.
+	// Close the pass with EndShadowAtlasPass when all tiles are complete.
+	BeginShadowAtlasPass(depthView *wgpu.TextureView)
+
+	// SetShadowViewport sets the viewport and scissor rect on the currently-open
+	// shadow atlas render pass, constraining rasterization to the specified tile region.
+	// Must be called before issuing ShadowDrawCall*/ShadowDrawCallIndirect for each tile.
+	// Parameters x, y are the tile origin in texels; width, height are the tile dimensions.
+	SetShadowViewport(x, y, width, height uint32)
+
+	// EndShadowAtlasPass closes the shadow atlas render pass opened by BeginShadowAtlasPass.
+	// Must be called after all tiles for this atlas have been drawn.
+	EndShadowAtlasPass()
 
 	// BeginGBufferFrame creates a command encoder for batching G-Buffer geometry
 	// pre-pass draw calls. Must be paired with EndGBufferFrame.
@@ -661,7 +672,6 @@ func (r *renderer) Present()                                            { r.back
 func (r *renderer) BeginGeometryFrame() error                           { return r.backend.BeginGeometryFrame() }
 func (r *renderer) EndGeometryFrame()                                   { r.backend.EndGeometryFrame() }
 func (r *renderer) BeginShadowFrame() error                             { return r.backend.BeginShadowFrame() }
-func (r *renderer) EndShadowPass()                                      { r.backend.EndShadowPass() }
 func (r *renderer) EndShadowFrame()                                     { r.backend.EndShadowFrame() }
 func (r *renderer) EndGBufferPass()                                     { r.backend.EndGBufferPass() }
 func (r *renderer) EndGBufferFrame()                                    { r.backend.EndGBufferFrame() }
@@ -855,8 +865,16 @@ func (r *renderer) RegisterShadowDepthPipeline(p pipeline.Pipeline) error {
 	return nil
 }
 
-func (r *renderer) BeginShadowDepthPass(depthView *wgpu.TextureView, x, y, width, height uint32, clear bool) {
-	r.backend.BeginShadowDepthPass(depthView, x, y, width, height, clear)
+func (r *renderer) BeginShadowAtlasPass(depthView *wgpu.TextureView) {
+	r.backend.BeginShadowAtlasPass(depthView)
+}
+
+func (r *renderer) SetShadowViewport(x, y, width, height uint32) {
+	r.backend.SetShadowViewport(x, y, width, height)
+}
+
+func (r *renderer) EndShadowAtlasPass() {
+	r.backend.EndShadowAtlasPass()
 }
 
 func (r *renderer) BeginGBufferFrame() error { return r.backend.BeginGBufferFrame() }

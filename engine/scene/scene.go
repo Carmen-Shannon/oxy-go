@@ -1271,22 +1271,135 @@ func (s *scene) PrepareShadows() {
 		}
 	}
 
-	atlasCleared := false
+	// Point light VP pre-computation: compute face VPs, build shadow entries, write uniforms,
+	// and store frustums for the atlas render phase.
+	pointFaceFrustums := make(map[light.Light][6]common.Frustum)
+	pointSlotBase := make(map[light.Light]int)
+	pointSlotIdx := slotIdx
+	for _, l := range s.lightHandler.Lights() {
+		if pointSlotIdx+5 >= maxSlots {
+			break
+		}
+		if !l.Enabled() || !l.CastsShadows() || l.Type() != light.LightTypePoint {
+			continue
+		}
+
+		pos := l.Position()
+		rng := l.Range()
+		near := float32(math.Max(1.0, float64(rng)*0.005))
+		far := rng
+
+		var proj [16]float32
+		common.Perspective(proj[:], math.Pi/2.0, 1.0, near, far)
+
+		type cubeFace struct {
+			dir [3]float32
+			up  [3]float32
+		}
+		faces := [6]cubeFace{
+			{dir: [3]float32{1, 0, 0}, up: [3]float32{0, -1, 0}},
+			{dir: [3]float32{-1, 0, 0}, up: [3]float32{0, -1, 0}},
+			{dir: [3]float32{0, 1, 0}, up: [3]float32{0, 0, 1}},
+			{dir: [3]float32{0, -1, 0}, up: [3]float32{0, 0, -1}},
+			{dir: [3]float32{0, 0, 1}, up: [3]float32{0, -1, 0}},
+			{dir: [3]float32{0, 0, -1}, up: [3]float32{0, -1, 0}},
+		}
+
+		s.lightShadowMap[l] = uint32(len(s.lightShadowEntries))
+		newSlot := s.lightShadowMap[l]
+		if prev, ok := s.lightPrevSlotMap[l]; ok && prev != newSlot {
+			sh.ForceMarkDirty(l)
+		}
+		s.lightPrevSlotMap[l] = newSlot
+
+		cols := sh.LightShadowAtlasCols()
+		rows := maxSlots / cols
+
+		var ptWrites []bind_group_provider.BufferWrite
+		var ff [6]common.Frustum
+		for fi := 0; fi < 6; fi++ {
+			target := [3]float32{
+				pos[0] + faces[fi].dir[0],
+				pos[1] + faces[fi].dir[1],
+				pos[2] + faces[fi].dir[2],
+			}
+			var view, vp [16]float32
+			common.LookAt(view[:], pos[0], pos[1], pos[2], target[0], target[1], target[2], faces[fi].up[0], faces[fi].up[1], faces[fi].up[2])
+			common.Mul4(vp[:], proj[:], view[:])
+			ff[fi] = common.ExtractFrustumFromMatrix(vp[:])
+
+			si := pointSlotIdx + fi
+			col := si % cols
+			row := si / cols
+			atlasRect := [4]float32{
+				float32(col) / float32(cols),
+				float32(row) / float32(rows),
+				1.0 / float32(cols),
+				1.0 / float32(rows),
+			}
+
+			entry := light.GPULightShadowEntry{
+				LightVP:    vp,
+				AtlasRect:  atlasRect,
+				Bias:       l.ShadowBias(),
+				Near:       near,
+				Far:        far,
+				ShadowType: light.ShadowTypeCubeFace,
+			}
+			s.lightShadowEntries = append(s.lightShadowEntries, entry)
+
+			bgpKey := fmt.Sprintf("spot_shadow_%d", si)
+			bgp := sh.Bgp(bgpKey)
+			uniform := light.GPUShadowUniform{LightVP: vp}
+			ptWrites = append(ptWrites, bind_group_provider.BufferWrite{
+				Provider: bgp,
+				Binding:  0,
+				Offset:   0,
+				Data:     uniform.Marshal(),
+			})
+		}
+		s.r.WriteBuffers(ptWrites)
+
+		pointFaceFrustums[l] = ff
+		pointSlotBase[l] = pointSlotIdx
+		pointSlotIdx += 6
+	}
+
+	// Determine whether any light will actually render to the spot/point atlas.
+	hasAtlasWork := false
+	for _, l := range s.lightHandler.Lights() {
+		if !l.Enabled() || !l.CastsShadows() {
+			continue
+		}
+		if l.Type() == light.LightTypeSpot {
+			if _, ok := s.lightShadowMap[l]; ok {
+				hasAtlasWork = true
+				break
+			}
+		}
+		if l.Type() == light.LightTypePoint {
+			if _, ok := pointFaceFrustums[l]; ok {
+				pos := l.Position()
+				if !hasCameraFrustum || cameraFrustum.IntersectSphere(pos, l.Range()) {
+					hasAtlasWork = true
+					break
+				}
+			}
+		}
+	}
+
 	if err := s.r.BeginShadowFrame(); err != nil {
 		return
 	}
 
-	// CSM cascade depth passes.
+	// CSM cascade depth passes — single atlas pass, per-cascade viewport switch.
 	if shadowLight != nil {
+		s.r.BeginShadowAtlasPass(sh.CSMAtlasTextureView())
 		for i := 0; i < cascadeCount; i++ {
 			bgpKey := fmt.Sprintf("csm_data_%d", i)
 			cascadeBGP := sh.Bgp(bgpKey)
 			x := uint32(i * res)
-			s.r.BeginShadowDepthPass(
-				sh.CSMAtlasTextureView(),
-				x, 0, uint32(res), uint32(res),
-				i == 0,
-			)
+			s.r.SetShadowViewport(x, 0, uint32(res), uint32(res))
 
 			cascadeFrustum := common.ExtractFrustumFromMatrix(csmData.Cascades[i].LightVP[:])
 
@@ -1333,209 +1446,125 @@ func (s *scene) PrepareShadows() {
 					}
 				}
 			}
-
-			s.r.EndShadowPass()
 		}
+		s.r.EndShadowAtlasPass()
 	}
 
-	// Spot and point shadow depth passes — only re-render dirty lights.
-	// Clean lights retain their cached atlas tile content from prior frames.
-	for _, l := range s.lightHandler.Lights() {
-		if !l.Enabled() || !l.CastsShadows() || l.Type() != light.LightTypeSpot {
-			continue
-		}
-		slotI, ok := s.lightShadowMap[l]
-		if !ok {
-			continue
-		}
+	// Spot and point shadow depth passes — single atlas pass, per-tile viewport switch.
+	if hasAtlasWork {
+		s.r.BeginShadowAtlasPass(sh.LightShadowAtlasView())
 
-		i := int(slotI)
-		bgpKey := fmt.Sprintf("spot_shadow_%d", i)
-		spotBGP := sh.Bgp(bgpKey)
-		cols := sh.LightShadowAtlasCols()
-		col := uint32(i % cols)
-		row := uint32(i / cols)
-		x := col * uint32(tileSize)
-		y := row * uint32(tileSize)
-		s.r.BeginShadowDepthPass(
-			sh.LightShadowAtlasView(),
-			x, y, uint32(tileSize), uint32(tileSize),
-			!atlasCleared,
-		)
-		atlasCleared = true
+		// Spot lights.
+		for _, l := range s.lightHandler.Lights() {
+			if !l.Enabled() || !l.CastsShadows() || l.Type() != light.LightTypeSpot {
+				continue
+			}
+			slotI, ok := s.lightShadowMap[l]
+			if !ok {
+				continue
+			}
 
-		spotFrustum := spotFrustums[l]
-		lPos := l.Position()
-		lRange := l.Range()
-		for _, anim := range s.animatorPool {
-			for _, a := range anim {
-				if a.InstanceCount() == 0 {
-					continue
-				}
-				mdl := a.Model()
-				if mdl == nil || !mdl.CastsShadows() {
-					continue
-				}
-				meshProvider := mdl.MeshProvider()
-				if meshProvider == nil {
-					continue
-				}
+			i := int(slotI)
+			bgpKey := fmt.Sprintf("spot_shadow_%d", i)
+			spotBGP := sh.Bgp(bgpKey)
+			cols := sh.LightShadowAtlasCols()
+			col := uint32(i % cols)
+			row := uint32(i / cols)
+			x := col * uint32(tileSize)
+			y := row * uint32(tileSize)
+			s.r.SetShadowViewport(x, y, uint32(tileSize), uint32(tileSize))
 
-				cullMode := mdl.ShadowCullMode()
-				pipeKey := s.shadowPipelineKey(mdl.Skinned(), cullMode)
-				if pipeKey == "" {
-					continue
-				}
-
-				// Sphere rejection + frustum cull using pre-built transform cache.
-				mdlMin, mdlMax := mdl.BoundingMin(), mdl.BoundingMax()
-				boundR := mdl.BoundingRadius()
-				visible := false
-				for _, entry := range shadowTransforms[a] {
-					iPos := entry.pos
-					iScale := entry.scale
-					dx := iPos[0] - lPos[0]
-					dy := iPos[1] - lPos[1]
-					dz := iPos[2] - lPos[2]
-					dist := float32(math.Sqrt(float64(dx*dx + dy*dy + dz*dz)))
-					maxS := iScale[0]
-					if iScale[1] > maxS {
-						maxS = iScale[1]
-					}
-					if iScale[2] > maxS {
-						maxS = iScale[2]
-					}
-					if dist > lRange+boundR*maxS {
+			spotFrustum := spotFrustums[l]
+			lPos := l.Position()
+			lRange := l.Range()
+			for _, anim := range s.animatorPool {
+				for _, a := range anim {
+					if a.InstanceCount() == 0 {
 						continue
 					}
-					wMin, wMax := worldAABB(mdlMin, mdlMax, iPos, iScale)
-					if spotFrustum.IntersectAABB(wMin, wMax) {
-						visible = true
-						break
+					mdl := a.Model()
+					if mdl == nil || !mdl.CastsShadows() {
+						continue
+					}
+					meshProvider := mdl.MeshProvider()
+					if meshProvider == nil {
+						continue
+					}
+
+					cullMode := mdl.ShadowCullMode()
+					pipeKey := s.shadowPipelineKey(mdl.Skinned(), cullMode)
+					if pipeKey == "" {
+						continue
+					}
+
+					mdlMin, mdlMax := mdl.BoundingMin(), mdl.BoundingMax()
+					boundR := mdl.BoundingRadius()
+					visible := false
+					for _, entry := range shadowTransforms[a] {
+						iPos := entry.pos
+						iScale := entry.scale
+						dx := iPos[0] - lPos[0]
+						dy := iPos[1] - lPos[1]
+						dz := iPos[2] - lPos[2]
+						dist := float32(math.Sqrt(float64(dx*dx + dy*dy + dz*dz)))
+						maxS := iScale[0]
+						if iScale[1] > maxS {
+							maxS = iScale[1]
+						}
+						if iScale[2] > maxS {
+							maxS = iScale[2]
+						}
+						if dist > lRange+boundR*maxS {
+							continue
+						}
+						wMin, wMax := worldAABB(mdlMin, mdlMax, iPos, iScale)
+						if spotFrustum.IntersectAABB(wMin, wMax) {
+							visible = true
+							break
+						}
+					}
+					if !visible {
+						continue
+					}
+
+					shadowBindGroups := []bind_group_provider.BindGroupProvider{
+						spotBGP,
+						a.OutputBindGroupProvider(),
+					}
+
+					if buf, ok := s.shadowIndirectBuffers[a]; ok && buf != nil {
+						_ = s.r.ShadowDrawCallIndirect(pipeKey, meshProvider, buf, shadowBindGroups)
 					}
 				}
-				if !visible {
-					continue
-				}
-
-				shadowBindGroups := []bind_group_provider.BindGroupProvider{
-					spotBGP,
-					a.OutputBindGroupProvider(),
-				}
-
-				if buf, ok := s.shadowIndirectBuffers[a]; ok && buf != nil {
-					_ = s.r.ShadowDrawCallIndirect(pipeKey, meshProvider, buf, shadowBindGroups)
-				}
 			}
 		}
 
-		s.r.EndShadowPass()
-	}
-
-	// Unified point light loop: VP computation, buffer writes, dirty check, and render.
-	// All six cube-face passes for each light are handled in a single iteration,
-	// eliminating the cross-loop dirty-flag dependency of the prior two-loop design.
-	for _, l := range s.lightHandler.Lights() {
-		if slotIdx+5 >= maxSlots {
-			break
-		}
-		if !l.Enabled() || !l.CastsShadows() || l.Type() != light.LightTypePoint {
-			continue
-		}
-
-		pos := l.Position()
-		rng := l.Range()
-		near := float32(math.Max(1.0, float64(rng)*0.005))
-		far := rng
-
-		var proj [16]float32
-		common.Perspective(proj[:], math.Pi/2.0, 1.0, near, far)
-
-		type cubeFace struct {
-			dir [3]float32
-			up  [3]float32
-		}
-		faces := [6]cubeFace{
-			{dir: [3]float32{1, 0, 0}, up: [3]float32{0, -1, 0}},
-			{dir: [3]float32{-1, 0, 0}, up: [3]float32{0, -1, 0}},
-			{dir: [3]float32{0, 1, 0}, up: [3]float32{0, 0, 1}},
-			{dir: [3]float32{0, -1, 0}, up: [3]float32{0, 0, -1}},
-			{dir: [3]float32{0, 0, 1}, up: [3]float32{0, -1, 0}},
-			{dir: [3]float32{0, 0, -1}, up: [3]float32{0, -1, 0}},
-		}
-
-		s.lightShadowMap[l] = uint32(len(s.lightShadowEntries))
-		newSlot := s.lightShadowMap[l]
-		if prev, ok := s.lightPrevSlotMap[l]; ok && prev != newSlot {
-			sh.ForceMarkDirty(l)
-		}
-		s.lightPrevSlotMap[l] = newSlot
-
-		cols := sh.LightShadowAtlasCols()
-		rows := maxSlots / cols
-
-		var ptWrites []bind_group_provider.BufferWrite
-		var faceFrustums [6]common.Frustum
-		for fi := 0; fi < 6; fi++ {
-			target := [3]float32{
-				pos[0] + faces[fi].dir[0],
-				pos[1] + faces[fi].dir[1],
-				pos[2] + faces[fi].dir[2],
+		// Point lights.
+		for _, l := range s.lightHandler.Lights() {
+			ff, exists := pointFaceFrustums[l]
+			if !exists {
+				continue
 			}
-			var view, vp [16]float32
-			common.LookAt(view[:], pos[0], pos[1], pos[2], target[0], target[1], target[2], faces[fi].up[0], faces[fi].up[1], faces[fi].up[2])
-			common.Mul4(vp[:], proj[:], view[:])
-			faceFrustums[fi] = common.ExtractFrustumFromMatrix(vp[:])
+			base := pointSlotBase[l]
+			pos := l.Position()
+			rng := l.Range()
 
-			si := slotIdx + fi
-			col := si % cols
-			row := si / cols
-			atlasRect := [4]float32{
-				float32(col) / float32(cols),
-				float32(row) / float32(rows),
-				1.0 / float32(cols),
-				1.0 / float32(rows),
+			lightVisible := !hasCameraFrustum || cameraFrustum.IntersectSphere(pos, l.Range())
+			if !lightVisible {
+				continue
 			}
 
-			entry := light.GPULightShadowEntry{
-				LightVP:    vp,
-				AtlasRect:  atlasRect,
-				Bias:       l.ShadowBias(),
-				Near:       near,
-				Far:        far,
-				ShadowType: light.ShadowTypeCubeFace,
-			}
-			s.lightShadowEntries = append(s.lightShadowEntries, entry)
-
-			bgpKey := fmt.Sprintf("spot_shadow_%d", si)
-			bgp := sh.Bgp(bgpKey)
-			uniform := light.GPUShadowUniform{LightVP: vp}
-			ptWrites = append(ptWrites, bind_group_provider.BufferWrite{
-				Provider: bgp,
-				Binding:  0,
-				Offset:   0,
-				Data:     uniform.Marshal(),
-			})
-		}
-		s.r.WriteBuffers(ptWrites)
-
-		lightVisible := !hasCameraFrustum || cameraFrustum.IntersectSphere(pos, l.Range())
-		if lightVisible {
+			cols := sh.LightShadowAtlasCols()
 			for fi := 0; fi < 6; fi++ {
-				faceFrustum := faceFrustums[fi]
-				si := slotIdx + fi
+				faceFrustum := ff[fi]
+				si := base + fi
 				bgpKey := fmt.Sprintf("spot_shadow_%d", si)
 				spotBGP := sh.Bgp(bgpKey)
 				col := uint32(si % cols)
 				row := uint32(si / cols)
 				x := col * uint32(tileSize)
 				y := row * uint32(tileSize)
-				s.r.BeginShadowDepthPass(
-					sh.LightShadowAtlasView(),
-					x, y, uint32(tileSize), uint32(tileSize),
-					!atlasCleared,
-				)
-				atlasCleared = true
+				s.r.SetShadowViewport(x, y, uint32(tileSize), uint32(tileSize))
 
 				for _, anim := range s.animatorPool {
 					for _, a := range anim {
@@ -1557,7 +1586,6 @@ func (s *scene) PrepareShadows() {
 							continue
 						}
 
-						// Sphere rejection + frustum cull using pre-built transform cache.
 						mdlMin, mdlMax := mdl.BoundingMin(), mdl.BoundingMax()
 						boundR := mdl.BoundingRadius()
 						visible := false
@@ -1598,15 +1626,13 @@ func (s *scene) PrepareShadows() {
 						}
 					}
 				}
-
-				s.r.EndShadowPass()
 			}
 		}
-		slotIdx += 6
+
+		s.r.EndShadowAtlasPass()
 	}
 
-	// Write the complete shadow entry data (spot + point) to csm_shadow_lit
-	// binding 4 now that all entries have been populated by both loops.
+	// Write the complete shadow entry data (spot + point) to csm_shadow_lit binding 4.
 	if csmBGP := sh.Bgp("csm_shadow_lit"); csmBGP != nil && csmBGP.Buffer(4) != nil && len(s.lightShadowEntries) > 0 {
 		entryData := make([]byte, 0, len(s.lightShadowEntries)*96)
 		for _, e := range s.lightShadowEntries {

@@ -350,9 +350,6 @@ type wgpuRendererBackend interface {
 	//   - bindGroups: bind group providers for the shadow pass
 	ShadowDrawCallIndirect(p pipeline.Pipeline, meshProvider bind_group_provider.BindGroupProvider, indirectBuffer *wgpu.Buffer, bindGroups []bind_group_provider.BindGroupProvider)
 
-	// EndShadowPass ends the current shadow depth render pass.
-	EndShadowPass()
-
 	// EndShadowFrame finishes the shadow command encoder and submits to the GPU queue.
 	// When a geometry frame is active, this is a no-op (the geometry frame handles submission).
 	EndShadowFrame()
@@ -399,16 +396,17 @@ type wgpuRendererBackend interface {
 	//   - error: an error if pipeline creation fails
 	RegisterShadowDepthPipeline(p pipeline.Pipeline) error
 
-	// BeginShadowDepthPass starts a depth-only render pass targeting the shadow atlas at the
-	// specified viewport. Used for per-cascade shadow rendering. Must be called between
-	// BeginShadowFrame and EndShadowFrame.
-	//
-	// Parameters:
-	//   - depthView: the shadow depth atlas texture view
-	//   - x, y: viewport offset in texels
-	//   - width, height: viewport size in texels
-	//   - clear: if true, clears the depth to 1.0; if false, loads existing content
-	BeginShadowDepthPass(depthView *wgpu.TextureView, x, y, width, height uint32, clear bool)
+	// BeginShadowAtlasPass opens a single depth-only render pass targeting the full
+	// atlas texture, clearing depth to 1.0 via LoadOpClear. All tiles for this atlas
+	// share one render pass encoder.
+	BeginShadowAtlasPass(depthView *wgpu.TextureView)
+
+	// SetShadowViewport sets the viewport and scissor rect on the currently-open
+	// shadow atlas render pass, constraining rasterization to the specified tile region.
+	SetShadowViewport(x, y, width, height uint32)
+
+	// EndShadowAtlasPass closes the shadow atlas render pass opened by BeginShadowAtlasPass.
+	EndShadowAtlasPass()
 
 	// BeginGBufferFrame creates a command encoder for batching G-Buffer geometry
 	// pre-pass draw calls into a single GPU submission. Must be paired with
@@ -1833,18 +1831,6 @@ func (b *wgpuRendererBackendImpl) ShadowDrawCallIndirect(
 	b.shadowPass.DrawIndexedIndirect(indirectBuffer, 0)
 }
 
-func (b *wgpuRendererBackendImpl) EndShadowPass() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if b.shadowPass == nil {
-		return
-	}
-
-	b.shadowPass.End()
-	b.shadowPass = nil
-}
-
 func (b *wgpuRendererBackendImpl) EndShadowFrame() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -2038,7 +2024,7 @@ func (b *wgpuRendererBackendImpl) RegisterShadowDepthPipeline(p pipeline.Pipelin
 	return nil
 }
 
-func (b *wgpuRendererBackendImpl) BeginShadowDepthPass(depthView *wgpu.TextureView, x, y, width, height uint32, clear bool) {
+func (b *wgpuRendererBackendImpl) BeginShadowAtlasPass(depthView *wgpu.TextureView) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -2046,22 +2032,37 @@ func (b *wgpuRendererBackendImpl) BeginShadowDepthPass(depthView *wgpu.TextureVi
 		return
 	}
 
-	depthLoadOp := wgpu.LoadOpLoad
-	if clear {
-		depthLoadOp = wgpu.LoadOpClear
-	}
-
 	pass := b.shadowFrameEncoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
 		DepthStencilAttachment: &wgpu.RenderPassDepthStencilAttachment{
 			View:            depthView,
-			DepthLoadOp:     depthLoadOp,
+			DepthLoadOp:     wgpu.LoadOpClear,
 			DepthStoreOp:    wgpu.StoreOpStore,
 			DepthClearValue: 1.0,
 		},
 	})
-	pass.SetViewport(float32(x), float32(y), float32(width), float32(height), 0.0, 1.0)
-	pass.SetScissorRect(x, y, width, height)
 	b.shadowPass = pass
+}
+
+func (b *wgpuRendererBackendImpl) SetShadowViewport(x, y, width, height uint32) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.shadowPass == nil {
+		return
+	}
+	b.shadowPass.SetViewport(float32(x), float32(y), float32(width), float32(height), 0.0, 1.0)
+	b.shadowPass.SetScissorRect(x, y, width, height)
+}
+
+func (b *wgpuRendererBackendImpl) EndShadowAtlasPass() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.shadowPass == nil {
+		return
+	}
+	b.shadowPass.End()
+	b.shadowPass = nil
 }
 
 func (b *wgpuRendererBackendImpl) BeginGBufferFrame() error {

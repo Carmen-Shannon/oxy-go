@@ -67,7 +67,7 @@ func main() {
 				light.WithShadowNearFar(0.05, 1000),
 				light.WithShadowNormalBiasScale(1.0),
 				light.WithShadowMapResolution(1024),
-				light.WithShadowInnerRadius(5),
+				light.WithShadowInnerRadius(50),
 			)),
 			light.WithGBufferHandler(light.NewGBufferHandler()),
 			light.WithSSAOHandler(light.NewSSAOHandler(

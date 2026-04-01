@@ -448,13 +448,6 @@ func (suite *rendererImplTest) TestBeginShadowFrame() {
 	})
 }
 
-func (suite *rendererImplTest) TestEndShadowPass() {
-	suite.Run("should call EndShadowPass on the backend", func() {
-		suite.backendMock.EXPECT().EndShadowPass().Return().Once()
-		suite.r.EndShadowPass()
-	})
-}
-
 func (suite *rendererImplTest) TestEndShadowFrame() {
 	suite.Run("should call EndShadowFrame on the backend", func() {
 		suite.backendMock.EXPECT().EndShadowFrame().Return().Once()
@@ -634,13 +627,6 @@ func (suite *rendererImplTest) TestWriteTexture() {
 	suite.Run("should delegate to the backend", func() {
 		suite.backendMock.EXPECT().WriteTexture(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.r.WriteTexture(nil, nil, 0, 0, 0)
-	})
-}
-
-func (suite *rendererImplTest) TestBeginShadowDepthPass() {
-	suite.Run("should delegate to the backend", func() {
-		suite.backendMock.EXPECT().BeginShadowDepthPass(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
-		suite.r.BeginShadowDepthPass(nil, 0, 0, 512, 512, true)
 	})
 }
 
