@@ -1,7 +1,7 @@
 # Coverage Badge Workflow
 #
 # Runs all tests with coverage for the common and engine packages (and all
-# sub-packages) on Linux, then uploads the report to Codecov.
+# sub-packages), then uploads the report to Codecov.
 
 name: Coverage
 
@@ -33,8 +33,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            xorg-dev \
-            libgl1-mesa-dev
+          xorg-dev \
+          libgl1-mesa-dev
 
       - name: Install mockery
         run: go install github.com/vektra/mockery/v2@v2.53.5
