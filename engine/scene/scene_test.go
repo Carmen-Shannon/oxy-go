@@ -41,6 +41,7 @@ func (suite *sceneTest) SetupSubTest() {
 	suite.cameraMock.EXPECT().BindGroupProvider().Return(nil).Maybe()
 	suite.rendererMock = renderer_mocks.NewMockRenderer(suite.T())
 	suite.rendererMock.EXPECT().SetInjections(mock.Anything).Return().Maybe()
+	suite.rendererMock.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0, nil).Maybe()
 	suite.scene = scene.NewScene("test", suite.cameraMock, suite.rendererMock)
 }
 
@@ -89,6 +90,7 @@ func (suite *sceneTest) TestActive() {
 		cam.EXPECT().BindGroupProvider().Return(nil).Maybe()
 		r := renderer_mocks.NewMockRenderer(suite.T())
 		r.EXPECT().SetInjections(mock.Anything).Return().Maybe()
+		r.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0, nil).Maybe()
 		s := scene.NewScene("active-test", cam, r, scene.WithActive(true))
 		suite.True(s.Active())
 	})
@@ -154,6 +156,7 @@ func (suite *sceneTest) TestCullingDisabled() {
 		cam.EXPECT().BindGroupProvider().Return(nil).Maybe()
 		r := renderer_mocks.NewMockRenderer(suite.T())
 		r.EXPECT().SetInjections(mock.Anything).Return().Maybe()
+		r.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0, nil).Maybe()
 		s := scene.NewScene("cull-test", cam, r, scene.WithCullingDisabled(true))
 		suite.True(s.CullingDisabled())
 	})

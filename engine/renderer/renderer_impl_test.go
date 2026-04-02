@@ -448,17 +448,31 @@ func (suite *rendererImplTest) TestBeginShadowFrame() {
 	})
 }
 
-func (suite *rendererImplTest) TestEndShadowPass() {
-	suite.Run("should call EndShadowPass on the backend", func() {
-		suite.backendMock.EXPECT().EndShadowPass().Return().Once()
-		suite.r.EndShadowPass()
-	})
-}
-
 func (suite *rendererImplTest) TestEndShadowFrame() {
 	suite.Run("should call EndShadowFrame on the backend", func() {
 		suite.backendMock.EXPECT().EndShadowFrame().Return().Once()
 		suite.r.EndShadowFrame()
+	})
+}
+
+func (suite *rendererImplTest) TestBeginShadowAtlasPass() {
+	suite.Run("should delegate to the backend", func() {
+		suite.backendMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
+		suite.r.BeginShadowAtlasPass(nil)
+	})
+}
+
+func (suite *rendererImplTest) TestSetShadowViewport() {
+	suite.Run("should delegate to the backend", func() {
+		suite.backendMock.EXPECT().SetShadowViewport(uint32(0), uint32(0), uint32(512), uint32(512)).Return().Once()
+		suite.r.SetShadowViewport(0, 0, 512, 512)
+	})
+}
+
+func (suite *rendererImplTest) TestEndShadowAtlasPass() {
+	suite.Run("should delegate to the backend", func() {
+		suite.backendMock.EXPECT().EndShadowAtlasPass().Return().Once()
+		suite.r.EndShadowAtlasPass()
 	})
 }
 
@@ -637,13 +651,6 @@ func (suite *rendererImplTest) TestWriteTexture() {
 	})
 }
 
-func (suite *rendererImplTest) TestBeginShadowDepthPass() {
-	suite.Run("should delegate to the backend", func() {
-		suite.backendMock.EXPECT().BeginShadowDepthPass(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
-		suite.r.BeginShadowDepthPass(nil, 0, 0, 512, 512, true)
-	})
-}
-
 func (suite *rendererImplTest) TestCreateShadowDepthTexture() {
 	suite.Run("should delegate to the backend and return results", func() {
 		suite.backendMock.EXPECT().CreateShadowDepthTexture(mock.Anything, mock.Anything).Return(nil, nil, nil).Once()
@@ -739,6 +746,22 @@ func (suite *rendererImplTest) TestCreateContactShadowTextures() {
 		suite.NoError(err)
 		suite.Nil(csView)
 		suite.Nil(csTex)
+	})
+}
+
+func (suite *rendererImplTest) TestCreateBloomTextures() {
+	suite.Run("should delegate to the backend and return results", func() {
+		suite.backendMock.EXPECT().CreateBloomTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, nil, nil, nil, 0, nil).Once()
+		downTex, downReadViews, downStorageViews, upTex, upReadViews, upStorageViews, upMip0View, mipCount, err := suite.r.CreateBloomTextures(1920, 1080)
+		suite.NoError(err)
+		suite.Nil(downTex)
+		suite.Nil(downReadViews)
+		suite.Nil(downStorageViews)
+		suite.Nil(upTex)
+		suite.Nil(upReadViews)
+		suite.Nil(upStorageViews)
+		suite.Nil(upMip0View)
+		suite.Equal(0, mipCount)
 	})
 }
 
