@@ -386,6 +386,11 @@ const (
 	// Go source: engine/light/shadow_handler.go (or configurable via builder).
 	annotationArgInjectPCFSamples AnnotationArg = "pcf_samples"
 
+	// annotationArgInjectPCFSamplesSpot injects the number of Poisson-disk PCF shadow samples
+	// used specifically for spot light shadow sampling.
+	// Go source: engine/light/shadow_handler.go (or configurable via builder).
+	annotationArgInjectPCFSamplesSpot AnnotationArg = "pcf_samples_spot"
+
 	// annotationArgInjectLightTypeDirectional injects the integer constant identifying
 	// directional lights in the GPU Light struct's type field.
 	// Go source: engine/light/light.go — LightTypeDirectional iota value.
@@ -493,6 +498,7 @@ var validInjectionKeys = []AnnotationArg{
 	annotationArgInjectEmptySentinel,
 	annotationArgInjectBodyIdxMask,
 	annotationArgInjectPCFSamples,
+	annotationArgInjectPCFSamplesSpot,
 	annotationArgInjectLightTypeDirectional,
 	annotationArgInjectLightTypePoint,
 	annotationArgInjectLightTypeSpot,

@@ -134,6 +134,7 @@ func (suite *sceneImplTest) TestBuildInjectionMap() {
 		suite.Contains(suite.scene.injections, "num_threads")
 		suite.Contains(suite.scene.injections, "max_ssao_samples")
 		suite.Contains(suite.scene.injections, "pcf_samples")
+		suite.Contains(suite.scene.injections, "pcf_samples_spot")
 		_, hasSlots := suite.scene.injections["slots_per_cell"]
 		suite.False(hasSlots)
 		_, hasBodyIdx := suite.scene.injections["body_idx_mask"]
@@ -8192,6 +8193,7 @@ func (suite *sceneImplTest) TestInitLighting() {
 		shMock.EXPECT().CSMAtlasTextureView().Return(nil).Maybe()
 		shMock.EXPECT().ComparisonSampler().Return(nil).Maybe()
 		shMock.EXPECT().PCFSamples().Return(uint32(16)).Maybe()
+		shMock.EXPECT().PCFSamplesSpot().Return(uint32(8)).Maybe()
 		shMock.EXPECT().LightShadowAtlasView().Return(nil).Maybe()
 		shMock.EXPECT().LightShadowAtlasSlots().Return(6).Maybe()
 

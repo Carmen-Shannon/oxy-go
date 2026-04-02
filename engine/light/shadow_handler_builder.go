@@ -77,6 +77,20 @@ func WithPCFSamples(samples uint32) ShadowHandlerOption {
 	}
 }
 
+// WithPCFSamplesSpot sets the Poisson disk tap count used for PCF shadow
+// filtering of spot and point lights. Defaults to 8.
+//
+// Parameters:
+//   - samples: the number of PCF samples for spot/point lights
+//
+// Returns:
+//   - ShadowHandlerOption: a function that applies the spot PCF samples option
+func WithPCFSamplesSpot(samples uint32) ShadowHandlerOption {
+	return func(h *shadowHandlerImpl) {
+		h.pcfSamplesSpot = samples
+	}
+}
+
 // WithShadowInnerRadius sets the world-space radius of the high-fidelity inner
 // shadow cascade. The inner cascade is a camera-centered sphere that maintains
 // constant texel density regardless of zoom level. Fragments beyond this radius
@@ -124,6 +138,7 @@ func NewShadowHandler(opts ...ShadowHandlerOption) ShadowHandler {
 		shadowMapResolution:   2048,
 		pcfRadius:             1.0,
 		pcfSamples:            16,
+		pcfSamplesSpot:        8,
 		shadowInnerRadius:     100.0,
 		lightShadowTileSize:   512,
 		pipelineKeys:          make(map[string]string),

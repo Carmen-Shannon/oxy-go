@@ -194,6 +194,7 @@ func NewScene(name string, cam camera.Camera, r renderer.Renderer, options ...Sc
 		registry:               make(map[uint64]game_object.GameObject),
 		instanceLookup:         make(map[animator.Animator]map[uint32]uint64),
 		shadowIndirectBuffers:  make(map[animator.Animator]*wgpu.Buffer),
+		animIndirectBinding:    make(map[animator.Animator]int),
 		nextID:                 1,
 		computeWorkers:         max(runtime.NumCPU()-1, 1),
 		maxBonesGPU:            64,

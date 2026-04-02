@@ -28,8 +28,7 @@ func (suite *shadowHandlerTest) TestNewShadowHandler() {
 			light.WithShadowNormalBiasScale(2.0),
 			light.WithShadowMapResolution(4096),
 			light.WithPCFRadius(2.0),
-			light.WithPCFSamples(32),
-			light.WithShadowInnerRadius(50.0),
+			light.WithPCFSamples(32), light.WithPCFSamplesSpot(4), light.WithShadowInnerRadius(50.0),
 			light.WithLightShadowTileSize(512),
 		)
 		suite.NotNil(h)
@@ -69,6 +68,12 @@ func (suite *shadowHandlerTest) TestPCFRadius() {
 func (suite *shadowHandlerTest) TestPCFSamples() {
 	suite.Run("should return 16 by default", func() {
 		suite.Equal(uint32(16), suite.handler.PCFSamples())
+	})
+}
+
+func (suite *shadowHandlerTest) TestPCFSamplesSpot() {
+	suite.Run("should return 8 by default", func() {
+		suite.Equal(uint32(8), suite.handler.PCFSamplesSpot())
 	})
 }
 

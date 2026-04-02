@@ -64,6 +64,13 @@ type ShadowHandler interface {
 	//   - uint32: the PCF sample count
 	PCFSamples() uint32
 
+	// PCFSamplesSpot returns the Poisson disk tap count used for PCF shadow
+	// filtering of spot and point lights.
+	//
+	// Returns:
+	//   - uint32: the spot/point PCF sample count
+	PCFSamplesSpot() uint32
+
 	// ComparisonSampler returns the comparison sampler used for depth shadow
 	// map lookups in the lit fragment shader.
 	//
@@ -264,6 +271,7 @@ func (h *shadowHandlerImpl) ShadowNormalBiasScale() float32              { retur
 func (h *shadowHandlerImpl) ShadowMapResolution() int                    { return h.shadowMapResolution }
 func (h *shadowHandlerImpl) PCFRadius() float32                          { return h.pcfRadius }
 func (h *shadowHandlerImpl) PCFSamples() uint32                          { return h.pcfSamples }
+func (h *shadowHandlerImpl) PCFSamplesSpot() uint32                      { return h.pcfSamplesSpot }
 func (h *shadowHandlerImpl) ComparisonSampler() *wgpu.Sampler            { return h.comparisonSampler }
 func (h *shadowHandlerImpl) SetComparisonSampler(s *wgpu.Sampler)        { h.comparisonSampler = s }
 func (h *shadowHandlerImpl) CascadeCount() int                           { return 2 }

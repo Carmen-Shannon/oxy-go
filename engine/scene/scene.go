@@ -468,28 +468,9 @@ func (s *scene) PrepareGBuffer() {
 
 			// Use indirect draw when GPU frustum culling is active.
 			if a.CullingEnabled() {
-				if key := mdl.ComputePipelineKey(); key != "" {
-					if rp := s.r.Pipeline(key); rp != nil {
-						if cs := rp.Shader(shader.ShaderTypeCompute); cs != nil {
-							indirectBinding := 0
-							for _, decl := range cs.Declarations() {
-								if decl.Type == shader.AnnotationTypeBindingGroup && decl.Binding != nil {
-									typeArg := string(decl.Args[2])
-									if stripped, ok := strings.CutPrefix(typeArg, "array<"); ok {
-										typeArg = strings.TrimSuffix(stripped, ">")
-									}
-									if shader.AnnotationArg(typeArg) == shader.AnnotationArgIndirectArgs {
-										indirectBinding = *decl.Binding
-										break
-									}
-								}
-							}
-							if indBuf := a.IndirectBuffer(indirectBinding); indBuf != nil {
-								_ = s.r.GBufferDrawCallIndirect(pipeKey, meshProvider, indBuf, gbufferBindGroups)
-								continue
-							}
-						}
-					}
+				if indBuf := a.IndirectBuffer(s.animIndirectBinding[a]); indBuf != nil {
+					_ = s.r.GBufferDrawCallIndirect(pipeKey, meshProvider, indBuf, gbufferBindGroups)
+					continue
 				}
 			}
 
@@ -1557,6 +1538,49 @@ func (s *scene) PrepareShadows() {
 			cols := sh.LightShadowAtlasCols()
 			for fi := 0; fi < 6; fi++ {
 				faceFrustum := ff[fi]
+
+				faceHasGeometry := false
+			outerScan:
+				for _, anim := range s.animatorPool {
+					for _, a := range anim {
+						if a.InstanceCount() == 0 {
+							continue
+						}
+						mdl := a.Model()
+						if mdl == nil || !mdl.CastsShadows() {
+							continue
+						}
+						mdlMin, mdlMax := mdl.BoundingMin(), mdl.BoundingMax()
+						boundR := mdl.BoundingRadius()
+						for _, entry := range shadowTransforms[a] {
+							iPos := entry.pos
+							iScale := entry.scale
+							dx := iPos[0] - pos[0]
+							dy := iPos[1] - pos[1]
+							dz := iPos[2] - pos[2]
+							dist := float32(math.Sqrt(float64(dx*dx + dy*dy + dz*dz)))
+							maxS := iScale[0]
+							if iScale[1] > maxS {
+								maxS = iScale[1]
+							}
+							if iScale[2] > maxS {
+								maxS = iScale[2]
+							}
+							if dist > rng+boundR*maxS {
+								continue
+							}
+							wMin, wMax := worldAABB(mdlMin, mdlMax, iPos, iScale)
+							if faceFrustum.IntersectAABB(wMin, wMax) {
+								faceHasGeometry = true
+								break outerScan
+							}
+						}
+					}
+				}
+				if !faceHasGeometry {
+					continue
+				}
+
 				si := base + fi
 				bgpKey := fmt.Sprintf("spot_shadow_%d", si)
 				spotBGP := sh.Bgp(bgpKey)
@@ -2099,34 +2123,7 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 			if a.CullingEnabled() {
 				if m := a.Model(); m != nil {
 					if mp := m.MeshProvider(); mp != nil {
-						pipeKey := m.ComputePipelineKey()
-						if pipeKey == "" {
-							continue
-						}
-						pipe := s.r.Pipeline(pipeKey)
-						if pipe == nil {
-							continue
-						}
-						shdr := pipe.Shader(shader.ShaderTypeCompute)
-						if shdr == nil {
-							continue
-						}
-
-						indirectBinding := 0
-						for _, decl := range shdr.Declarations() {
-							if decl.Type != shader.AnnotationTypeBindingGroup || decl.Binding == nil {
-								continue
-							}
-							typeArg := string(decl.Args[2])
-							if stripped, ok := strings.CutPrefix(typeArg, "array<"); ok {
-								typeArg = strings.TrimSuffix(stripped, ">")
-							}
-							if shader.AnnotationArg(typeArg) == shader.AnnotationArgIndirectArgs {
-								indirectBinding = *decl.Binding
-								break
-							}
-						}
-						a.ResetIndirectArgs(uint32(mp.IndexCount()), indirectBinding)
+						a.ResetIndirectArgs(uint32(mp.IndexCount()), s.animIndirectBinding[a])
 					}
 				}
 			}
@@ -2556,28 +2553,7 @@ func (s *scene) DrawCalls() error {
 				// Use indirect draw when GPU frustum culling is active — the compute shader writes
 				// the visible instance count into the indirect args buffer, avoiding CPU readback.
 				if a.CullingEnabled() {
-					var indirectBinding int
-					if key := mdl.ComputePipelineKey(); key != "" {
-						rp := s.r.Pipeline(key)
-						if rp == nil {
-							continue
-						}
-						if cs := rp.Shader(shader.ShaderTypeCompute); cs != nil {
-							for _, d := range cs.Declarations() {
-								if d.Type == shader.AnnotationTypeBindingGroup && d.Binding != nil {
-									arg := string(d.Args[2])
-									if stripped, ok := strings.CutPrefix(arg, "array<"); ok {
-										arg = strings.TrimSuffix(stripped, ">")
-									}
-									if shader.AnnotationArg(arg) == shader.AnnotationArgIndirectArgs {
-										indirectBinding = *d.Binding
-										break
-									}
-								}
-							}
-						}
-					}
-					if indBuf := a.IndirectBuffer(indirectBinding); indBuf != nil {
+					if indBuf := a.IndirectBuffer(s.animIndirectBinding[a]); indBuf != nil {
 						if err := s.r.DrawCallIndirect(pipelineKey, meshProvider, indBuf, bindGroups); err != nil {
 							return fmt.Errorf("indirect draw call failed for animator in scene %q: %w", s.name, err)
 						}

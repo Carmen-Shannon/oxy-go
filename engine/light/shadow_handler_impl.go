@@ -44,8 +44,9 @@ type shadowHandlerImpl struct {
 	shadowMapResolution   int
 
 	// PCF quality parameters.
-	pcfRadius  float32
-	pcfSamples uint32
+	pcfRadius      float32
+	pcfSamples     uint32
+	pcfSamplesSpot uint32
 
 	// Comparison sampler for depth shadow maps.
 	comparisonSampler *wgpu.Sampler
