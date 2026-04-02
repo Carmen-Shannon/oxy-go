@@ -749,6 +749,22 @@ func (suite *rendererImplTest) TestCreateContactShadowTextures() {
 	})
 }
 
+func (suite *rendererImplTest) TestCreateBloomTextures() {
+	suite.Run("should delegate to the backend and return results", func() {
+		suite.backendMock.EXPECT().CreateBloomTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, nil, nil, nil, 0, nil).Once()
+		downTex, downReadViews, downStorageViews, upTex, upReadViews, upStorageViews, upMip0View, mipCount, err := suite.r.CreateBloomTextures(1920, 1080)
+		suite.NoError(err)
+		suite.Nil(downTex)
+		suite.Nil(downReadViews)
+		suite.Nil(downStorageViews)
+		suite.Nil(upTex)
+		suite.Nil(upReadViews)
+		suite.Nil(upStorageViews)
+		suite.Nil(upMip0View)
+		suite.Equal(0, mipCount)
+	})
+}
+
 func (suite *rendererImplTest) TestCreateHiZTextures() {
 	suite.Run("should delegate to the backend and return results", func() {
 		suite.backendMock.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0, nil).Once()

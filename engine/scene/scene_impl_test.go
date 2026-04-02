@@ -2288,6 +2288,202 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
+
+	suite.Run("spot render loop: skips spot light not in lightShadowMap", func() {
+		suite.scene.lightHandler.SetEnabled(true)
+		sh := suite.scene.lightHandler.ShadowHandler()
+		sh.SetLightShadowAtlasSlots(1)
+		sh.SetLightShadowAtlasCols(1)
+
+		sl1 := light_mocks.NewMockLight(suite.T())
+		sl1.EXPECT().Enabled().Return(true).Maybe()
+		sl1.EXPECT().CastsShadows().Return(true).Maybe()
+		sl1.EXPECT().Type().Return(light.LightTypeSpot).Maybe()
+		sl1.EXPECT().Position().Return([3]float32{0, 5, 0}).Maybe()
+		sl1.EXPECT().Direction().Return([3]float32{0, -1, 0}).Maybe()
+		sl1.EXPECT().Range().Return(float32(10)).Maybe()
+		sl1.EXPECT().OuterCone().Return(float32(0.5)).Maybe()
+		sl1.EXPECT().ShadowBias().Return(float32(0.005)).Maybe()
+		sl1.EXPECT().InnerCone().Return(float32(0)).Maybe()
+		suite.scene.lightHandler.AddLight(sl1)
+
+		sl2 := light_mocks.NewMockLight(suite.T())
+		sl2.EXPECT().Enabled().Return(true).Maybe()
+		sl2.EXPECT().CastsShadows().Return(true).Maybe()
+		sl2.EXPECT().Type().Return(light.LightTypeSpot).Maybe()
+		suite.scene.lightHandler.AddLight(sl2)
+
+		mapKey := model_mocks.NewMockModel(suite.T())
+		mockAnim := animator_mocks.NewMockAnimator(suite.T())
+		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().InstanceCount().Return(uint32(0)).Times(3)
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
+
+		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
+		suite.rendererMock.EXPECT().EndShadowFrame().Return().Once()
+
+		suite.NotPanics(func() { suite.scene.PrepareShadows() })
+	})
+
+	suite.Run("spot depth pass: scale Y and Z dominate maxS calculation", func() {
+		suite.scene.lightHandler.SetEnabled(true)
+		sh := suite.scene.lightHandler.ShadowHandler()
+		sh.SetLightShadowAtlasSlots(1)
+		sh.SetLightShadowAtlasCols(1)
+		sh.SetPipelineKey("shadow_static_back", "shadow_static_back")
+
+		sl := light_mocks.NewMockLight(suite.T())
+		sl.EXPECT().Enabled().Return(true).Maybe()
+		sl.EXPECT().CastsShadows().Return(true).Maybe()
+		sl.EXPECT().Type().Return(light.LightTypeSpot).Maybe()
+		sl.EXPECT().Position().Return([3]float32{0, 5, 0}).Maybe()
+		sl.EXPECT().Direction().Return([3]float32{0, -1, 0}).Maybe()
+		sl.EXPECT().Range().Return(float32(10)).Maybe()
+		sl.EXPECT().OuterCone().Return(float32(0.5)).Maybe()
+		sl.EXPECT().ShadowBias().Return(float32(0.005)).Maybe()
+		sl.EXPECT().InnerCone().Return(float32(0)).Maybe()
+		suite.scene.lightHandler.AddLight(sl)
+
+		mockBuf := &wgpu.Buffer{}
+		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		outputBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().CastsShadows().Return(true).Times(3)
+		mockModel.EXPECT().MeshProvider().Return(meshBGP).Once()
+		mockModel.EXPECT().Skinned().Return(false).Once()
+		mockModel.EXPECT().ShadowCullMode().Return(model.ShadowCullModeBack).Once()
+		mockModel.EXPECT().IndexCount().Return(6).Once()
+		mockModel.EXPECT().BoundingMin().Return([3]float32{-1000, -1000, -1000}).Once()
+		mockModel.EXPECT().BoundingMax().Return([3]float32{1000, 1000, 1000}).Once()
+		mockModel.EXPECT().BoundingRadius().Return(float32(1000)).Once()
+		mapKey := model_mocks.NewMockModel(suite.T())
+		mockAnim := animator_mocks.NewMockAnimator(suite.T())
+		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
+		mockAnim.EXPECT().Model().Return(mockModel).Times(3)
+		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{}, [3]float32{1, 3, 5}).Once()
+		mockAnim.EXPECT().OutputBindGroupProvider().Return(outputBGP).Once()
+		suite.scene.shadowIndirectBuffers = map[animator.Animator]*wgpu.Buffer{mockAnim: mockBuf}
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
+
+		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
+		suite.rendererMock.EXPECT().WriteRawBuffer(mockBuf, uint64(0), mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().ShadowDrawCallIndirect(mock.Anything, mock.Anything, mockBuf, mock.Anything).Return(nil).Once()
+		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
+		suite.rendererMock.EXPECT().EndShadowFrame().Return().Once()
+
+		suite.NotPanics(func() { suite.scene.PrepareShadows() })
+	})
+
+	suite.Run("point cube face depth pass: scale Y and Z dominate maxS calculation", func() {
+		suite.scene.lightHandler.SetEnabled(true)
+		sh := suite.scene.lightHandler.ShadowHandler()
+		sh.SetLightShadowAtlasSlots(6)
+		sh.SetLightShadowAtlasCols(6)
+		sh.SetPipelineKey("shadow_static_back", "shadow_static_back")
+
+		pl := light_mocks.NewMockLight(suite.T())
+		pl.EXPECT().Enabled().Return(true).Maybe()
+		pl.EXPECT().CastsShadows().Return(true).Maybe()
+		pl.EXPECT().Type().Return(light.LightTypePoint).Maybe()
+		pl.EXPECT().Position().Return([3]float32{0, 5, 0}).Maybe()
+		pl.EXPECT().Range().Return(float32(20)).Maybe()
+		pl.EXPECT().ShadowBias().Return(float32(0.005)).Maybe()
+		pl.EXPECT().InnerCone().Return(float32(0)).Maybe()
+		pl.EXPECT().OuterCone().Return(float32(0)).Maybe()
+		pl.EXPECT().Direction().Return([3]float32{}).Maybe()
+		suite.scene.lightHandler.AddLight(pl)
+
+		mockBuf := &wgpu.Buffer{}
+		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		outputBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().CastsShadows().Return(true).Times(8)
+		mockModel.EXPECT().MeshProvider().Return(meshBGP).Times(6)
+		mockModel.EXPECT().Skinned().Return(false).Times(6)
+		mockModel.EXPECT().ShadowCullMode().Return(model.ShadowCullModeBack).Times(6)
+		mockModel.EXPECT().IndexCount().Return(6).Once()
+		mockModel.EXPECT().BoundingMin().Return([3]float32{-1000, -1000, -1000}).Times(6)
+		mockModel.EXPECT().BoundingMax().Return([3]float32{1000, 1000, 1000}).Times(6)
+		mockModel.EXPECT().BoundingRadius().Return(float32(1000)).Times(6)
+		mapKey := model_mocks.NewMockModel(suite.T())
+		mockAnim := animator_mocks.NewMockAnimator(suite.T())
+		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(9)
+		mockAnim.EXPECT().Model().Return(mockModel).Times(8)
+		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{}, [3]float32{1, 3, 5}).Once()
+		mockAnim.EXPECT().OutputBindGroupProvider().Return(outputBGP).Times(6)
+		suite.scene.shadowIndirectBuffers = map[animator.Animator]*wgpu.Buffer{mockAnim: mockBuf}
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
+
+		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
+		suite.rendererMock.EXPECT().WriteRawBuffer(mockBuf, uint64(0), mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Times(6)
+		suite.rendererMock.EXPECT().ShadowDrawCallIndirect(mock.Anything, mock.Anything, mockBuf, mock.Anything).Return(nil).Times(6)
+		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
+		suite.rendererMock.EXPECT().EndShadowFrame().Return().Once()
+
+		suite.NotPanics(func() { suite.scene.PrepareShadows() })
+	})
+
+	suite.Run("spot depth pass: instance within range but outside frustum visible=false continue", func() {
+		suite.scene.lightHandler.SetEnabled(true)
+		sh := suite.scene.lightHandler.ShadowHandler()
+		sh.SetLightShadowAtlasSlots(1)
+		sh.SetLightShadowAtlasCols(1)
+		sh.SetPipelineKey("shadow_static_back", "shadow_static_back")
+
+		sl := light_mocks.NewMockLight(suite.T())
+		sl.EXPECT().Enabled().Return(true).Maybe()
+		sl.EXPECT().CastsShadows().Return(true).Maybe()
+		sl.EXPECT().Type().Return(light.LightTypeSpot).Maybe()
+		sl.EXPECT().Position().Return([3]float32{0, 5, 0}).Maybe()
+		sl.EXPECT().Direction().Return([3]float32{0, -1, 0}).Maybe()
+		sl.EXPECT().Range().Return(float32(50)).Maybe()
+		sl.EXPECT().OuterCone().Return(float32(0.99)).Maybe()
+		sl.EXPECT().ShadowBias().Return(float32(0.005)).Maybe()
+		sl.EXPECT().InnerCone().Return(float32(0)).Maybe()
+		suite.scene.lightHandler.AddLight(sl)
+
+		mockBuf := &wgpu.Buffer{}
+		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().CastsShadows().Return(true).Times(3)
+		mockModel.EXPECT().MeshProvider().Return(meshBGP).Once()
+		mockModel.EXPECT().Skinned().Return(false).Once()
+		mockModel.EXPECT().ShadowCullMode().Return(model.ShadowCullModeBack).Once()
+		mockModel.EXPECT().IndexCount().Return(6).Once()
+		mockModel.EXPECT().BoundingMin().Return([3]float32{-0.5, -0.5, -0.5}).Once()
+		mockModel.EXPECT().BoundingMax().Return([3]float32{0.5, 0.5, 0.5}).Once()
+		mockModel.EXPECT().BoundingRadius().Return(float32(0.5)).Once()
+		mapKey := model_mocks.NewMockModel(suite.T())
+		mockAnim := animator_mocks.NewMockAnimator(suite.T())
+		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
+		mockAnim.EXPECT().Model().Return(mockModel).Times(3)
+		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{20, 0, 0}, [3]float32{1, 1, 1}).Once()
+		suite.scene.shadowIndirectBuffers = map[animator.Animator]*wgpu.Buffer{mockAnim: mockBuf}
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
+
+		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
+		suite.rendererMock.EXPECT().WriteRawBuffer(mockBuf, uint64(0), mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
+		suite.rendererMock.EXPECT().EndShadowFrame().Return().Once()
+
+		suite.NotPanics(func() { suite.scene.PrepareShadows() })
+	})
 }
 
 func (suite *sceneImplTest) TestPrepareLightCulling() {
