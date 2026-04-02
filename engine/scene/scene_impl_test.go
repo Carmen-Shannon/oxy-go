@@ -68,6 +68,7 @@ func (suite *sceneImplTest) SetupSubTest() {
 		maxBonesGPU:            64,
 		drawGroupProvidersPool: make(map[int]bind_group_provider.BindGroupProvider),
 		shadowIndirectBuffers:  make(map[animator.Animator]*wgpu.Buffer),
+		animIndirectBinding:    make(map[animator.Animator]int),
 	}
 }
 
@@ -509,11 +510,11 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		mockModel.EXPECT().MeshProvider().Return(meshBGP).Once()
 		mockModel.EXPECT().Skinned().Return(false).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{mockMat}).Once()
-		mockModel.EXPECT().ComputePipelineKey().Return("").Once()
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		mockAnim.EXPECT().Model().Return(mockModel).Once()
 		mockAnim.EXPECT().CullingEnabled().Return(true).Once()
+		mockAnim.EXPECT().IndirectBuffer(0).Return(nil).Once()
 		mockAnim.EXPECT().OutputBindGroupProvider().Return(outputBGP).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
@@ -528,7 +529,6 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		suite.rendererMock.EXPECT().BeginGBufferPass(mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferPass().Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferFrame().Return().Once()
-		suite.rendererMock.EXPECT().Pipeline("compute-key").Return(nil).Once()
 		suite.rendererMock.EXPECT().GBufferDrawCall(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
 		camMock := camera_mocks.NewMockCamera(suite.T())
@@ -545,11 +545,11 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		mockModel.EXPECT().MeshProvider().Return(meshBGP).Once()
 		mockModel.EXPECT().Skinned().Return(false).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{mockMat}).Once()
-		mockModel.EXPECT().ComputePipelineKey().Return("compute-key").Once()
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		mockAnim.EXPECT().Model().Return(mockModel).Once()
 		mockAnim.EXPECT().CullingEnabled().Return(true).Once()
+		mockAnim.EXPECT().IndirectBuffer(0).Return(nil).Once()
 		mockAnim.EXPECT().OutputBindGroupProvider().Return(outputBGP).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
@@ -566,10 +566,6 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		suite.rendererMock.EXPECT().EndGBufferFrame().Return().Once()
 		suite.rendererMock.EXPECT().GBufferDrawCall(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
-		mockPipeline := pipeline_mocks.NewMockPipeline(suite.T())
-		mockPipeline.EXPECT().Shader(shader.ShaderTypeCompute).Return(nil).Once()
-		suite.rendererMock.EXPECT().Pipeline("compute-key").Return(mockPipeline).Once()
-
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		camMock.EXPECT().BindGroupProvider().Return(camBGP).Once()
@@ -584,11 +580,11 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		mockModel.EXPECT().MeshProvider().Return(meshBGP).Once()
 		mockModel.EXPECT().Skinned().Return(false).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{mockMat}).Once()
-		mockModel.EXPECT().ComputePipelineKey().Return("compute-key").Once()
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		mockAnim.EXPECT().Model().Return(mockModel).Once()
 		mockAnim.EXPECT().CullingEnabled().Return(true).Once()
+		mockAnim.EXPECT().IndirectBuffer(0).Return(nil).Once()
 		mockAnim.EXPECT().OutputBindGroupProvider().Return(outputBGP).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
@@ -605,16 +601,6 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		suite.rendererMock.EXPECT().EndGBufferFrame().Return().Once()
 		suite.rendererMock.EXPECT().GBufferDrawCall(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
-		suite.scene.buildInjectionMap()
-		realShader := shader.NewShader("_gbuf_test_compute", shader.ShaderTypeCompute,
-			"engine/renderer/animator/assets/simple-compute.wgsl",
-			shader.WithInjections(suite.scene.injections),
-		)
-		realPipeline := pipeline.NewPipeline("compute-key", pipeline.PipelineTypeCompute,
-			pipeline.WithComputeShader(realShader),
-		)
-		suite.rendererMock.EXPECT().Pipeline("compute-key").Return(realPipeline).Once()
-
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		camMock.EXPECT().BindGroupProvider().Return(camBGP).Once()
@@ -629,7 +615,6 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		mockModel.EXPECT().MeshProvider().Return(meshBGP).Once()
 		mockModel.EXPECT().Skinned().Return(false).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{mockMat}).Once()
-		mockModel.EXPECT().ComputePipelineKey().Return("compute-key").Once()
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		mockAnim.EXPECT().Model().Return(mockModel).Once()
@@ -638,6 +623,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		mockAnim.EXPECT().IndirectBuffer(3).Return(nil).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
+		suite.scene.animIndirectBinding = map[animator.Animator]int{mockAnim: 3}
 
 		suite.NotPanics(func() { suite.scene.PrepareGBuffer() })
 	})
@@ -651,16 +637,6 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		suite.rendererMock.EXPECT().EndGBufferFrame().Return().Once()
 		suite.rendererMock.EXPECT().GBufferDrawCallIndirect(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
-		suite.scene.buildInjectionMap()
-		realShader := shader.NewShader("_gbuf_test_compute2", shader.ShaderTypeCompute,
-			"engine/renderer/animator/assets/simple-compute.wgsl",
-			shader.WithInjections(suite.scene.injections),
-		)
-		realPipeline := pipeline.NewPipeline("compute-key2", pipeline.PipelineTypeCompute,
-			pipeline.WithComputeShader(realShader),
-		)
-		suite.rendererMock.EXPECT().Pipeline("compute-key2").Return(realPipeline).Once()
-
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		camMock.EXPECT().BindGroupProvider().Return(camBGP).Once()
@@ -675,7 +651,6 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		mockModel.EXPECT().MeshProvider().Return(meshBGP).Once()
 		mockModel.EXPECT().Skinned().Return(false).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{mockMat}).Once()
-		mockModel.EXPECT().ComputePipelineKey().Return("compute-key2").Once()
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		mockAnim.EXPECT().Model().Return(mockModel).Once()
@@ -685,6 +660,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		mockAnim.EXPECT().IndirectBuffer(3).Return(indBuf).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
+		suite.scene.animIndirectBinding = map[animator.Animator]int{mockAnim: 3}
 
 		suite.NotPanics(func() { suite.scene.PrepareGBuffer() })
 	})
@@ -698,23 +674,6 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		suite.rendererMock.EXPECT().EndGBufferFrame().Return().Once()
 		suite.rendererMock.EXPECT().GBufferDrawCallIndirect(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
-		const wgslArrayIndirect = `// Test fixture: minimal compute shader with array<indirect_args> binding.
-//@oxy:include indirect_args
-//@oxy:group 0 3 storage_read_write indirect_buf array<indirect_args>
-
-@compute @workgroup_size(64)
-fn main() {}`
-		wgslPath := filepath.Join(suite.T().TempDir(), "test-compute-array-indirect.wgsl")
-		suite.Require().NoError(os.WriteFile(wgslPath, []byte(wgslArrayIndirect), 0644))
-
-		realShader := shader.NewShader("_gbuf_test_compute_array", shader.ShaderTypeCompute,
-			wgslPath,
-		)
-		realPipeline := pipeline.NewPipeline("compute-key-array", pipeline.PipelineTypeCompute,
-			pipeline.WithComputeShader(realShader),
-		)
-		suite.rendererMock.EXPECT().Pipeline("compute-key-array").Return(realPipeline).Once()
-
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		camMock.EXPECT().BindGroupProvider().Return(camBGP).Once()
@@ -729,7 +688,6 @@ fn main() {}`
 		mockModel.EXPECT().MeshProvider().Return(meshBGP).Once()
 		mockModel.EXPECT().Skinned().Return(false).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{mockMat}).Once()
-		mockModel.EXPECT().ComputePipelineKey().Return("compute-key-array").Once()
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		mockAnim.EXPECT().Model().Return(mockModel).Once()
@@ -739,6 +697,7 @@ fn main() {}`
 		mockAnim.EXPECT().IndirectBuffer(3).Return(indBuf).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
+		suite.scene.animIndirectBinding = map[animator.Animator]int{mockAnim: 3}
 
 		suite.NotPanics(func() { suite.scene.PrepareGBuffer() })
 	})
@@ -1674,7 +1633,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
-		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Times(6)
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
 		suite.rendererMock.EXPECT().EndShadowFrame().Return().Once()
 
@@ -1704,7 +1662,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		outputBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		mockModel := model_mocks.NewMockModel(suite.T())
-		mockModel.EXPECT().CastsShadows().Return(true).Times(8)
+		mockModel.EXPECT().CastsShadows().Return(true).Times(14)
 		mockModel.EXPECT().MeshProvider().Return(meshBGP).Times(6)
 		mockModel.EXPECT().Skinned().Return(false).Times(6)
 		mockModel.EXPECT().ShadowCullMode().Return(model.ShadowCullModeBack).Times(6)
@@ -1712,12 +1670,12 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
-		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(9)
-		mockAnim.EXPECT().Model().Return(mockModel).Times(8)
+		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(15)
+		mockAnim.EXPECT().Model().Return(mockModel).Times(14)
 		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{}, [3]float32{1, 1, 1}).Once()
-		mockModel.EXPECT().BoundingMin().Return([3]float32{-1000, -1000, -1000}).Times(6)
-		mockModel.EXPECT().BoundingMax().Return([3]float32{1000, 1000, 1000}).Times(6)
-		mockModel.EXPECT().BoundingRadius().Return(float32(1000)).Times(6)
+		mockModel.EXPECT().BoundingMin().Return([3]float32{-1000, -1000, -1000}).Times(12)
+		mockModel.EXPECT().BoundingMax().Return([3]float32{1000, 1000, 1000}).Times(12)
+		mockModel.EXPECT().BoundingRadius().Return(float32(1000)).Times(12)
 		mockAnim.EXPECT().OutputBindGroupProvider().Return(outputBGP).Times(6)
 		suite.scene.shadowIndirectBuffers = map[animator.Animator]*wgpu.Buffer{mockAnim: mockBuf}
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
@@ -1764,7 +1722,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
-		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Times(6)
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
 		suite.rendererMock.EXPECT().EndShadowFrame().Return().Once()
 
@@ -1854,7 +1811,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
-		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Times(6)
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
 		suite.rendererMock.EXPECT().EndShadowFrame().Return().Once()
 
@@ -1889,7 +1845,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
-		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Times(6)
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
 		suite.rendererMock.EXPECT().EndShadowFrame().Return().Once()
 
@@ -1915,13 +1870,16 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.scene.lightHandler.AddLight(pl)
 
 		mockModel := model_mocks.NewMockModel(suite.T())
-		mockModel.EXPECT().CastsShadows().Return(true).Times(8)
+		mockModel.EXPECT().CastsShadows().Return(true).Times(14)
 		mockModel.EXPECT().MeshProvider().Return(nil).Times(6)
+		mockModel.EXPECT().BoundingMin().Return([3]float32{-1000, -1000, -1000}).Times(6)
+		mockModel.EXPECT().BoundingMax().Return([3]float32{1000, 1000, 1000}).Times(6)
+		mockModel.EXPECT().BoundingRadius().Return(float32(1000)).Times(6)
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
-		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(8)
-		mockAnim.EXPECT().Model().Return(mockModel).Times(8)
+		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(14)
+		mockAnim.EXPECT().Model().Return(mockModel).Times(14)
 		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{}, [3]float32{1, 1, 1}).Once()
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
 
@@ -1955,15 +1913,18 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 
 		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		mockModel := model_mocks.NewMockModel(suite.T())
-		mockModel.EXPECT().CastsShadows().Return(true).Times(8)
+		mockModel.EXPECT().CastsShadows().Return(true).Times(14)
 		mockModel.EXPECT().MeshProvider().Return(meshBGP).Times(6)
 		mockModel.EXPECT().Skinned().Return(false).Times(6)
 		mockModel.EXPECT().ShadowCullMode().Return(model.ShadowCullModeBack).Times(6)
+		mockModel.EXPECT().BoundingMin().Return([3]float32{-1000, -1000, -1000}).Times(6)
+		mockModel.EXPECT().BoundingMax().Return([3]float32{1000, 1000, 1000}).Times(6)
+		mockModel.EXPECT().BoundingRadius().Return(float32(1000)).Times(6)
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
-		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(8)
-		mockAnim.EXPECT().Model().Return(mockModel).Times(8)
+		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(14)
+		mockAnim.EXPECT().Model().Return(mockModel).Times(14)
 		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{}, [3]float32{1, 1, 1}).Once()
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
 
@@ -2253,7 +2214,6 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
-		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Times(6)
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
 		suite.rendererMock.EXPECT().EndShadowFrame().Return().Once()
 
@@ -2406,19 +2366,19 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		outputBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		mockModel := model_mocks.NewMockModel(suite.T())
-		mockModel.EXPECT().CastsShadows().Return(true).Times(8)
+		mockModel.EXPECT().CastsShadows().Return(true).Times(14)
 		mockModel.EXPECT().MeshProvider().Return(meshBGP).Times(6)
 		mockModel.EXPECT().Skinned().Return(false).Times(6)
 		mockModel.EXPECT().ShadowCullMode().Return(model.ShadowCullModeBack).Times(6)
 		mockModel.EXPECT().IndexCount().Return(6).Once()
-		mockModel.EXPECT().BoundingMin().Return([3]float32{-1000, -1000, -1000}).Times(6)
-		mockModel.EXPECT().BoundingMax().Return([3]float32{1000, 1000, 1000}).Times(6)
-		mockModel.EXPECT().BoundingRadius().Return(float32(1000)).Times(6)
+		mockModel.EXPECT().BoundingMin().Return([3]float32{-1000, -1000, -1000}).Times(12)
+		mockModel.EXPECT().BoundingMax().Return([3]float32{1000, 1000, 1000}).Times(12)
+		mockModel.EXPECT().BoundingRadius().Return(float32(1000)).Times(12)
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
-		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(9)
-		mockAnim.EXPECT().Model().Return(mockModel).Times(8)
+		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(15)
+		mockAnim.EXPECT().Model().Return(mockModel).Times(14)
 		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{}, [3]float32{1, 3, 5}).Once()
 		mockAnim.EXPECT().OutputBindGroupProvider().Return(outputBGP).Times(6)
 		suite.scene.shadowIndirectBuffers = map[animator.Animator]*wgpu.Buffer{mockAnim: mockBuf}
@@ -3373,13 +3333,16 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.scene.writePool = []bind_group_provider.BufferWrite{}
 		mockMeshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		mockModel := model_mocks.NewMockModel(suite.T())
-		mockModel.EXPECT().ComputePipelineKey().Return("k14").Times(3)
+		mockModel.EXPECT().ComputePipelineKey().Return("k14").Times(2)
 		mockModel.EXPECT().MeshProvider().Return(mockMeshBGP).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
 		animMock.EXPECT().Model().Return(mockModel).Times(3)
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
-		suite.rendererMock.EXPECT().Pipeline("k14").Return(nil).Times(3)
+		animMock.EXPECT().ResetIndirectArgs(mock.Anything, mock.Anything).Return().Once()
+		animMock.EXPECT().StagedWriteData().Return(nil).Once()
+		suite.rendererMock.EXPECT().Pipeline("k14").Return(nil).Times(2)
+		mockMeshBGP.EXPECT().IndexCount().Return(0).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
@@ -3394,16 +3357,19 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.scene.cam = camMock
 		suite.scene.writePool = []bind_group_provider.BufferWrite{}
 		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
-		mockPipe.EXPECT().Shader(shader.ShaderTypeCompute).Return(nil).Times(3)
+		mockPipe.EXPECT().Shader(shader.ShaderTypeCompute).Return(nil).Times(2)
 		mockMeshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		mockModel := model_mocks.NewMockModel(suite.T())
-		mockModel.EXPECT().ComputePipelineKey().Return("k15").Times(3)
+		mockModel.EXPECT().ComputePipelineKey().Return("k15").Times(2)
 		mockModel.EXPECT().MeshProvider().Return(mockMeshBGP).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
 		animMock.EXPECT().Model().Return(mockModel).Times(3)
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
-		suite.rendererMock.EXPECT().Pipeline("k15").Return(mockPipe).Times(3)
+		animMock.EXPECT().ResetIndirectArgs(mock.Anything, mock.Anything).Return().Once()
+		animMock.EXPECT().StagedWriteData().Return(nil).Once()
+		suite.rendererMock.EXPECT().Pipeline("k15").Return(mockPipe).Times(2)
+		mockMeshBGP.EXPECT().IndexCount().Return(0).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
@@ -3474,7 +3440,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.scene.cam = camMock
 		suite.scene.writePool = []bind_group_provider.BufferWrite{}
 		mockModel := model_mocks.NewMockModel(suite.T())
-		mockModel.EXPECT().ComputePipelineKey().Return("pc17-key").Times(3)
+		mockModel.EXPECT().ComputePipelineKey().Return("pc17-key").Times(2)
 		mockModel.EXPECT().MeshProvider().Return(meshBGPMock).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(5)
@@ -3490,7 +3456,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		animMock.EXPECT().ResetIndirectArgs(mock.Anything, mock.Anything).Return().Once()
 		animMock.EXPECT().StagedWriteData().Return(nil).Once()
 		animMock.EXPECT().ComputeBindGroupProvider().Return(computeBGP).Once()
-		suite.rendererMock.EXPECT().Pipeline("pc17-key").Return(realPipe).Times(3)
+		suite.rendererMock.EXPECT().Pipeline("pc17-key").Return(realPipe).Times(2)
 		animMock.EXPECT().HiZBindGroupProvider().Return(nil).Once()
 		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.MatchedBy(func(d []renderer.ComputeDispatch) bool {
 			return len(d) == 1 && d[0].PipelineKey == "pc17-key" && d[0].Providers[0].Provider == computeBGP
@@ -3549,12 +3515,15 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.scene.writePool = []bind_group_provider.BufferWrite{}
 		meshBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		mockModel := model_mocks.NewMockModel(suite.T())
-		mockModel.EXPECT().ComputePipelineKey().Return("").Times(3)
+		mockModel.EXPECT().ComputePipelineKey().Return("").Times(2)
 		mockModel.EXPECT().MeshProvider().Return(meshBGPMock).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
 		animMock.EXPECT().Model().Return(mockModel).Times(3)
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
+		animMock.EXPECT().ResetIndirectArgs(mock.Anything, mock.Anything).Return().Once()
+		animMock.EXPECT().StagedWriteData().Return(nil).Once()
+		meshBGPMock.EXPECT().IndexCount().Return(0).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
@@ -3570,13 +3539,16 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.scene.writePool = []bind_group_provider.BufferWrite{}
 		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		mockModel := model_mocks.NewMockModel(suite.T())
-		mockModel.EXPECT().ComputePipelineKey().Return("k21").Times(3)
+		mockModel.EXPECT().ComputePipelineKey().Return("k21").Times(2)
 		mockModel.EXPECT().MeshProvider().Return(meshBGP).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
 		animMock.EXPECT().Model().Return(mockModel).Times(3)
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
-		suite.rendererMock.EXPECT().Pipeline("k21").Return(nil).Times(3)
+		animMock.EXPECT().ResetIndirectArgs(mock.Anything, mock.Anything).Return().Once()
+		animMock.EXPECT().StagedWriteData().Return(nil).Once()
+		suite.rendererMock.EXPECT().Pipeline("k21").Return(nil).Times(2)
+		meshBGP.EXPECT().IndexCount().Return(0).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
@@ -3591,16 +3563,19 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.scene.cam = camMock
 		suite.scene.writePool = []bind_group_provider.BufferWrite{}
 		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
-		mockPipe.EXPECT().Shader(shader.ShaderTypeCompute).Return(nil).Times(3)
+		mockPipe.EXPECT().Shader(shader.ShaderTypeCompute).Return(nil).Times(2)
 		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		mockModel := model_mocks.NewMockModel(suite.T())
-		mockModel.EXPECT().ComputePipelineKey().Return("k22").Times(3)
+		mockModel.EXPECT().ComputePipelineKey().Return("k22").Times(2)
 		mockModel.EXPECT().MeshProvider().Return(meshBGP).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
 		animMock.EXPECT().Model().Return(mockModel).Times(3)
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
-		suite.rendererMock.EXPECT().Pipeline("k22").Return(mockPipe).Times(3)
+		animMock.EXPECT().ResetIndirectArgs(mock.Anything, mock.Anything).Return().Once()
+		animMock.EXPECT().StagedWriteData().Return(nil).Once()
+		suite.rendererMock.EXPECT().Pipeline("k22").Return(mockPipe).Times(2)
+		meshBGP.EXPECT().IndexCount().Return(0).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
@@ -3628,7 +3603,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.scene.cam = camMock
 		suite.scene.writePool = []bind_group_provider.BufferWrite{}
 		mockModel := model_mocks.NewMockModel(suite.T())
-		mockModel.EXPECT().ComputePipelineKey().Return("k23").Times(3)
+		mockModel.EXPECT().ComputePipelineKey().Return("k23").Times(2)
 		mockModel.EXPECT().MeshProvider().Return(meshBGP).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(5)
@@ -3646,7 +3621,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 			{Provider: computeBGP, Binding: 0, Data: []byte{1}},
 		}).Once()
 		animMock.EXPECT().ComputeBindGroupProvider().Return(computeBGP).Once()
-		suite.rendererMock.EXPECT().Pipeline("k23").Return(realPipe).Times(3)
+		suite.rendererMock.EXPECT().Pipeline("k23").Return(realPipe).Times(2)
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
 		animMock.EXPECT().HiZBindGroupProvider().Return(nil).Once()
 		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.MatchedBy(func(d []renderer.ComputeDispatch) bool {
@@ -4553,7 +4528,6 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockModel := model_mocks.NewMockModel(suite.T())
 		mockModel.EXPECT().MeshProvider().Return(meshBGP).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Once()
-		mockModel.EXPECT().ComputePipelineKey().Return("").Once()
 		renderShdrMock := shader_mocks.NewMockShader(suite.T())
 		renderShdrMock.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
@@ -4579,18 +4553,18 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockModel := model_mocks.NewMockModel(suite.T())
 		mockModel.EXPECT().MeshProvider().Return(meshBGP).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Once()
-		mockModel.EXPECT().ComputePipelineKey().Return("ck13").Once()
 		renderShdrMock := shader_mocks.NewMockShader(suite.T())
 		renderShdrMock.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(renderShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
-		animMock.EXPECT().InstanceCount().Return(uint32(1)).Once()
+		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
+		animMock.EXPECT().IndirectBuffer(0).Return(nil).Once()
 		suite.rendererMock.EXPECT().Pipeline("k13").Return(mockPipe).Once()
-		suite.rendererMock.EXPECT().Pipeline("ck13").Return(nil).Once()
+		suite.rendererMock.EXPECT().DrawCall("k13", meshBGP, uint32(1), mock.Anything).Return(nil).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
 		suite.NoError(suite.scene.DrawCalls())
@@ -4604,23 +4578,17 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockModel := model_mocks.NewMockModel(suite.T())
 		mockModel.EXPECT().MeshProvider().Return(meshBGP).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Once()
-		mockModel.EXPECT().ComputePipelineKey().Return("ck14").Once()
 		renderShdrMock := shader_mocks.NewMockShader(suite.T())
 		renderShdrMock.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(renderShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
-		mockCSShdr := shader_mocks.NewMockShader(suite.T())
-		mockCSShdr.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
-		mockComputePipe := pipeline_mocks.NewMockPipeline(suite.T())
-		mockComputePipe.EXPECT().Shader(shader.ShaderTypeCompute).Return(mockCSShdr).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
 		animMock.EXPECT().IndirectBuffer(0).Return(nil).Once()
 		suite.rendererMock.EXPECT().Pipeline("k14").Return(mockPipe).Once()
-		suite.rendererMock.EXPECT().Pipeline("ck14").Return(mockComputePipe).Once()
 		suite.rendererMock.EXPECT().DrawCall("k14", meshBGP, uint32(1), mock.Anything).Return(nil).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
@@ -4635,23 +4603,17 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockModel := model_mocks.NewMockModel(suite.T())
 		mockModel.EXPECT().MeshProvider().Return(meshBGP).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Once()
-		mockModel.EXPECT().ComputePipelineKey().Return("ck15").Once()
 		renderShdrMock := shader_mocks.NewMockShader(suite.T())
 		renderShdrMock.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(renderShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
-		mockCSShdr := shader_mocks.NewMockShader(suite.T())
-		mockCSShdr.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
-		mockComputePipe := pipeline_mocks.NewMockPipeline(suite.T())
-		mockComputePipe.EXPECT().Shader(shader.ShaderTypeCompute).Return(mockCSShdr).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
 		animMock.EXPECT().IndirectBuffer(0).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().Pipeline("k15").Return(mockPipe).Once()
-		suite.rendererMock.EXPECT().Pipeline("ck15").Return(mockComputePipe).Once()
 		suite.rendererMock.EXPECT().DrawCallIndirect("k15", meshBGP, mock.Anything, mock.Anything).Return(nil).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
@@ -4666,23 +4628,17 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockModel := model_mocks.NewMockModel(suite.T())
 		mockModel.EXPECT().MeshProvider().Return(meshBGP).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Once()
-		mockModel.EXPECT().ComputePipelineKey().Return("ck16").Once()
 		renderShdrMock := shader_mocks.NewMockShader(suite.T())
 		renderShdrMock.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(renderShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
-		mockCSShdr := shader_mocks.NewMockShader(suite.T())
-		mockCSShdr.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
-		mockComputePipe := pipeline_mocks.NewMockPipeline(suite.T())
-		mockComputePipe.EXPECT().Shader(shader.ShaderTypeCompute).Return(mockCSShdr).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
 		animMock.EXPECT().IndirectBuffer(0).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().Pipeline("k16").Return(mockPipe).Once()
-		suite.rendererMock.EXPECT().Pipeline("ck16").Return(mockComputePipe).Once()
 		suite.rendererMock.EXPECT().DrawCallIndirect("k16", meshBGP, mock.Anything, mock.Anything).Return(errors.New("indirect fail")).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
@@ -5513,112 +5469,76 @@ func (suite *sceneImplTest) TestDrawCalls() {
 
 	suite.Run("culling cs.Declarations IndirectArgs non-array binding sets indirectBinding", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
-		csBinding := 3
-		csDecl := shader.Annotation{
-			Type:    shader.AnnotationTypeBindingGroup,
-			Binding: &csBinding,
-			Args:    []shader.AnnotationArg{"", "", shader.AnnotationArgIndirectArgs},
-		}
 		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		matMock := material_mocks.NewMockMaterial(suite.T())
 		matMock.EXPECT().PipelineKey().Return("k41").Once()
 		mockModel := model_mocks.NewMockModel(suite.T())
 		mockModel.EXPECT().MeshProvider().Return(meshBGP).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Once()
-		mockModel.EXPECT().ComputePipelineKey().Return("ck41").Once()
 		vertShdrMock := shader_mocks.NewMockShader(suite.T())
 		vertShdrMock.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		mockRenderPipe := pipeline_mocks.NewMockPipeline(suite.T())
 		mockRenderPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockRenderPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
-		mockCS := shader_mocks.NewMockShader(suite.T())
-		mockCS.EXPECT().Declarations().Return([]shader.Annotation{csDecl}).Once()
-		mockCPipe := pipeline_mocks.NewMockPipeline(suite.T())
-		mockCPipe.EXPECT().Shader(shader.ShaderTypeCompute).Return(mockCS).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
-		animMock.EXPECT().IndirectBuffer(3).Return(nil).Once()
+		animMock.EXPECT().IndirectBuffer(0).Return(nil).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
 		suite.rendererMock.EXPECT().Pipeline("k41").Return(mockRenderPipe).Once()
-		suite.rendererMock.EXPECT().Pipeline("ck41").Return(mockCPipe).Once()
 		suite.rendererMock.EXPECT().DrawCall("k41", meshBGP, uint32(1), mock.Anything).Return(nil).Once()
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
 	suite.Run("culling cs.Declarations IndirectArgs array-wrapped binding sets indirectBinding", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
-		csBinding := 3
-		csDecl := shader.Annotation{
-			Type:    shader.AnnotationTypeBindingGroup,
-			Binding: &csBinding,
-			Args:    []shader.AnnotationArg{"", "", shader.AnnotationArg("array<" + string(shader.AnnotationArgIndirectArgs) + ">")},
-		}
 		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		matMock := material_mocks.NewMockMaterial(suite.T())
 		matMock.EXPECT().PipelineKey().Return("k42").Once()
 		mockModel := model_mocks.NewMockModel(suite.T())
 		mockModel.EXPECT().MeshProvider().Return(meshBGP).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Once()
-		mockModel.EXPECT().ComputePipelineKey().Return("ck42").Once()
 		vertShdrMock := shader_mocks.NewMockShader(suite.T())
 		vertShdrMock.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		mockRenderPipe := pipeline_mocks.NewMockPipeline(suite.T())
 		mockRenderPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockRenderPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
-		mockCS := shader_mocks.NewMockShader(suite.T())
-		mockCS.EXPECT().Declarations().Return([]shader.Annotation{csDecl}).Once()
-		mockCPipe := pipeline_mocks.NewMockPipeline(suite.T())
-		mockCPipe.EXPECT().Shader(shader.ShaderTypeCompute).Return(mockCS).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
-		animMock.EXPECT().IndirectBuffer(3).Return(nil).Once()
+		animMock.EXPECT().IndirectBuffer(0).Return(nil).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
 		suite.rendererMock.EXPECT().Pipeline("k42").Return(mockRenderPipe).Once()
-		suite.rendererMock.EXPECT().Pipeline("ck42").Return(mockCPipe).Once()
 		suite.rendererMock.EXPECT().DrawCall("k42", meshBGP, uint32(1), mock.Anything).Return(nil).Once()
 		suite.NoError(suite.scene.DrawCalls())
 	})
 
 	suite.Run("culling cs.Declarations IndirectArgs non-nil buffer calls DrawCallIndirect with discovered binding", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
-		csBinding := 3
-		csDecl := shader.Annotation{
-			Type:    shader.AnnotationTypeBindingGroup,
-			Binding: &csBinding,
-			Args:    []shader.AnnotationArg{"", "", shader.AnnotationArgIndirectArgs},
-		}
 		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		matMock := material_mocks.NewMockMaterial(suite.T())
 		matMock.EXPECT().PipelineKey().Return("k43").Once()
 		mockModel := model_mocks.NewMockModel(suite.T())
 		mockModel.EXPECT().MeshProvider().Return(meshBGP).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Once()
-		mockModel.EXPECT().ComputePipelineKey().Return("ck43").Once()
 		vertShdrMock := shader_mocks.NewMockShader(suite.T())
 		vertShdrMock.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		mockRenderPipe := pipeline_mocks.NewMockPipeline(suite.T())
 		mockRenderPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockRenderPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
-		mockCS := shader_mocks.NewMockShader(suite.T())
-		mockCS.EXPECT().Declarations().Return([]shader.Annotation{csDecl}).Once()
-		mockCPipe := pipeline_mocks.NewMockPipeline(suite.T())
-		mockCPipe.EXPECT().Shader(shader.ShaderTypeCompute).Return(mockCS).Once()
 		indBuf := &wgpu.Buffer{}
 		animMock := animator_mocks.NewMockAnimator(suite.T())
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
-		animMock.EXPECT().IndirectBuffer(3).Return(indBuf).Once()
+		animMock.EXPECT().IndirectBuffer(0).Return(indBuf).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
 		suite.rendererMock.EXPECT().Pipeline("k43").Return(mockRenderPipe).Once()
-		suite.rendererMock.EXPECT().Pipeline("ck43").Return(mockCPipe).Once()
 		suite.rendererMock.EXPECT().DrawCallIndirect("k43", meshBGP, mock.Anything, mock.Anything).Return(nil).Once()
 		suite.NoError(suite.scene.DrawCalls())
 	})
