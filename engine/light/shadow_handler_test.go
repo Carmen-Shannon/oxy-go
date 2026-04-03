@@ -279,6 +279,13 @@ func (suite *shadowHandlerTest) TestMarkAllDirty() {
 	})
 }
 
+func (suite *shadowHandlerTest) TestWithPCFSamplesSpotSetsValue() {
+	suite.Run("should set PCFSamplesSpot to the given value", func() {
+		h := light.NewShadowHandler(light.WithPCFSamplesSpot(4))
+		suite.Equal(uint32(4), h.PCFSamplesSpot())
+	})
+}
+
 func (suite *shadowHandlerTest) TestCommitSnapshot() {
 	suite.Run("commit stores snapshot and clears dirty flag", func() {
 		l := light.NewLight(light.LightTypePoint)
