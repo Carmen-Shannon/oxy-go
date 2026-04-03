@@ -12101,3 +12101,131 @@ func (suite *sceneImplTest) TestResizePostProcessingGBufferEnabled() {
 		suite.NotPanics(func() { suite.scene.resizePostProcessing(800, 600) })
 	})
 }
+
+// TestPrepareShadowsFrustumInvisible covers scene.go line 1535: the continue fired when
+// a point light's sphere is outside the camera frustum inside an already-open atlas pass.
+// The atlas pass is opened by the spot light whose slot makes hasAtlasWork true.
+func (suite *sceneImplTest) TestPrepareShadowsFrustumInvisible() {
+	suite.Run("point cube face: frustum-invisible light skips during open atlas pass", func() {
+		suite.scene.lightHandler.SetEnabled(true)
+		sh := suite.scene.lightHandler.ShadowHandler()
+		sh.SetLightShadowAtlasSlots(7)
+		sh.SetLightShadowAtlasCols(7)
+
+		sl := light_mocks.NewMockLight(suite.T())
+		sl.EXPECT().Enabled().Return(true).Maybe()
+		sl.EXPECT().CastsShadows().Return(true).Maybe()
+		sl.EXPECT().Type().Return(light.LightTypeSpot).Maybe()
+		sl.EXPECT().Position().Return([3]float32{0, 0, 0}).Maybe()
+		sl.EXPECT().Direction().Return([3]float32{0, -1, 0}).Maybe()
+		sl.EXPECT().Range().Return(float32(10)).Maybe()
+		sl.EXPECT().OuterCone().Return(float32(0.5)).Maybe()
+		sl.EXPECT().ShadowBias().Return(float32(0.005)).Maybe()
+		sl.EXPECT().InnerCone().Return(float32(0)).Maybe()
+		suite.scene.lightHandler.AddLight(sl)
+
+		pl := light_mocks.NewMockLight(suite.T())
+		pl.EXPECT().Enabled().Return(true).Maybe()
+		pl.EXPECT().CastsShadows().Return(true).Maybe()
+		pl.EXPECT().Type().Return(light.LightTypePoint).Maybe()
+		pl.EXPECT().Position().Return([3]float32{999, 999, 999}).Maybe()
+		pl.EXPECT().Range().Return(float32(1)).Maybe()
+		pl.EXPECT().ShadowBias().Return(float32(0.005)).Maybe()
+		pl.EXPECT().InnerCone().Return(float32(0)).Maybe()
+		pl.EXPECT().OuterCone().Return(float32(0)).Maybe()
+		pl.EXPECT().Direction().Return([3]float32{}).Maybe()
+		suite.scene.lightHandler.AddLight(pl)
+
+		var view, proj, vp [16]float32
+		common.LookAt(view[:], 0, 0, 0, 0, 0, -1, 0, 1, 0)
+		common.Perspective(proj[:], float32(math.Pi/2), 1.0, 0.1, 100.0)
+		common.Mul4(vp[:], proj[:], view[:])
+		camMock := camera_mocks.NewMockCamera(suite.T())
+		camMock.EXPECT().ViewProjectionMatrix().Return(vp).Once()
+		suite.scene.cam = camMock
+
+		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
+		suite.rendererMock.EXPECT().EndShadowFrame().Return().Once()
+
+		suite.NotPanics(func() { suite.scene.PrepareShadows() })
+	})
+}
+
+// TestPrepareShadowsOuterScanRangeExceed covers scene.go lines 1569-1570: the continue
+// fired when an instance's distance from the point light exceeds rng+boundR*maxS in the
+// outerScan geometry-discovery loop.
+func (suite *sceneImplTest) TestPrepareShadowsOuterScanRangeExceed() {
+	suite.Run("point cube face: instance beyond light range triggers range-check continue", func() {
+		suite.scene.lightHandler.SetEnabled(true)
+		sh := suite.scene.lightHandler.ShadowHandler()
+		sh.SetLightShadowAtlasSlots(6)
+		sh.SetLightShadowAtlasCols(6)
+		suite.scene.cullingDisabled = true
+
+		pl := light_mocks.NewMockLight(suite.T())
+		pl.EXPECT().Enabled().Return(true).Maybe()
+		pl.EXPECT().CastsShadows().Return(true).Maybe()
+		pl.EXPECT().Type().Return(light.LightTypePoint).Maybe()
+		pl.EXPECT().Position().Return([3]float32{0, 0, 0}).Maybe()
+		pl.EXPECT().Range().Return(float32(10)).Maybe()
+		pl.EXPECT().ShadowBias().Return(float32(0.005)).Maybe()
+		pl.EXPECT().InnerCone().Return(float32(0)).Maybe()
+		pl.EXPECT().OuterCone().Return(float32(0)).Maybe()
+		pl.EXPECT().Direction().Return([3]float32{}).Maybe()
+		suite.scene.lightHandler.AddLight(pl)
+
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().CastsShadows().Return(true).Maybe()
+		mockModel.EXPECT().BoundingMin().Return([3]float32{-1, -1, -1}).Maybe()
+		mockModel.EXPECT().BoundingMax().Return([3]float32{1, 1, 1}).Maybe()
+		mockModel.EXPECT().BoundingRadius().Return(float32(1)).Maybe()
+
+		mockAnim := animator_mocks.NewMockAnimator(suite.T())
+		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Maybe()
+		mockAnim.EXPECT().Model().Return(mockModel).Maybe()
+		// Instance is ~173 units from the light; rng+boundR*maxS = 10+1*1 = 11, so 173 > 11.
+		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{100, 100, 100}, [3]float32{1, 1, 1}).Maybe()
+
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
+
+		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
+		suite.rendererMock.EXPECT().EndShadowFrame().Return().Once()
+
+		suite.NotPanics(func() { suite.scene.PrepareShadows() })
+	})
+}
+
+// TestCreateAnimatorShadowBufferPanicOnFail covers scene_impl.go lines 2649-2650:
+// the panic fired when s.r.CreateBuffer("shadow_indirect") returns a non-nil error.
+func (suite *sceneImplTest) TestCreateAnimatorShadowBufferPanicOnFail() {
+	suite.Run("should panic when shadow indirect buffer creation fails", func() {
+		mdl := model_mocks.NewMockModel(suite.T())
+		cs := shader_mocks.NewMockShader(suite.T())
+		vs := shader_mocks.NewMockShader(suite.T())
+		fs := shader_mocks.NewMockShader(suite.T())
+		_ = fs
+
+		mdl.EXPECT().Skinned().Return(false).Maybe()
+		mdl.EXPECT().BoundingRadius().Return(float32(1.0)).Once()
+		mdl.EXPECT().BoundingMin().Return([3]float32{}).Once()
+		mdl.EXPECT().BoundingMax().Return([3]float32{}).Once()
+		mdl.EXPECT().MeshProvider().Return(nil).Once()
+		mdl.EXPECT().Name().Return("m").Maybe()
+		cs.EXPECT().Declarations().Return([]shader.Annotation{}).Maybe()
+		cs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
+		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
+		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(nil, errors.New("fail")).Once()
+
+		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
+	})
+}
