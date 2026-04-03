@@ -108,6 +108,7 @@ type scene struct {
 	// animator. Written by the CPU pre-pass in PrepareShadows and consumed by every shadow
 	// depth pass for that animator without going through the compute culling path.
 	shadowIndirectBuffers map[animator.Animator]*wgpu.Buffer
+	animIndirectBinding   map[animator.Animator]int
 
 	injections map[string]string
 
@@ -157,6 +158,7 @@ func (s *scene) buildInjectionMap() {
 		m["num_threads"] = fmt.Sprintf("%du", ts*ts)
 		m["max_ssao_samples"] = fmt.Sprintf("%du", s.lightHandler.SSAOHandler().MaxSamples())
 		m["pcf_samples"] = fmt.Sprintf("%du", s.lightHandler.ShadowHandler().PCFSamples())
+		m["pcf_samples_spot"] = fmt.Sprintf("%du", s.lightHandler.ShadowHandler().PCFSamplesSpot())
 	}
 	if s.physicsHandler != nil {
 		m["slots_per_cell"] = fmt.Sprintf("%du", s.physicsHandler.SlotsPerCell())
@@ -2648,6 +2650,18 @@ func (s *scene) createAnimator(mdl model.Model, computeShader, vertexShader, fra
 		panic(fmt.Sprintf("scene: failed to create shadow indirect buffer for model %q: %v", mdl.Name(), err))
 	}
 	s.shadowIndirectBuffers[anim] = shadowBuf
+	for _, decl := range computeShader.Declarations() {
+		if decl.Type == shader.AnnotationTypeBindingGroup && decl.Binding != nil {
+			typeArg := string(decl.Args[2])
+			if stripped, ok := strings.CutPrefix(typeArg, "array<"); ok {
+				typeArg = strings.TrimSuffix(stripped, ">")
+			}
+			if shader.AnnotationArg(typeArg) == shader.AnnotationArgIndirectArgs {
+				s.animIndirectBinding[anim] = *decl.Binding
+				break
+			}
+		}
+	}
 
 	// Register compute pipeline
 	cp := pipeline.NewPipeline(computeShader.Key(), pipeline.PipelineTypeCompute, pipeline.WithComputeShader(computeShader))
@@ -3167,6 +3181,7 @@ func (s *scene) pruneAnimator(a animator.Animator) {
 		buf.Release()
 	}
 	delete(s.shadowIndirectBuffers, a)
+	delete(s.animIndirectBinding, a)
 
 	// Release animator GPU resources (compute + output BGPs, both slots).
 	a.Release()

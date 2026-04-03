@@ -197,11 +197,8 @@ func (e *engine) handleRender() {
 						for _, s := range activeScenes {
 							s.PrepareLightCulling()
 						}
-						frameRenderer.EndComputeFrame()
 						stopPrepareLightCulling()
-					}
 
-					if err := frameRenderer.BeginComputeFrame(); err == nil {
 						stopPrepareSSAO := func() {}
 						if e.profilingEnabled && e.profiler != nil {
 							stopPrepareSSAO = e.profiler.Section("PrepareSSAO")
@@ -209,11 +206,8 @@ func (e *engine) handleRender() {
 						for _, s := range activeScenes {
 							s.PrepareSSAO()
 						}
-						frameRenderer.EndComputeFrame()
 						stopPrepareSSAO()
-					}
 
-					if err := frameRenderer.BeginComputeFrame(); err == nil {
 						stopPrepareContactShadows := func() {}
 						if e.profilingEnabled && e.profiler != nil {
 							stopPrepareContactShadows = e.profiler.Section("PrepareContactShadows")
@@ -221,8 +215,9 @@ func (e *engine) handleRender() {
 						for _, s := range activeScenes {
 							s.PrepareContactShadows()
 						}
-						frameRenderer.EndComputeFrame()
 						stopPrepareContactShadows()
+
+						frameRenderer.EndComputeFrame()
 					}
 
 					if err := activeScenes[0].BeginHDRFrame(); err == nil {
@@ -244,11 +239,8 @@ func (e *engine) handleRender() {
 							for _, s := range activeScenes {
 								s.PrepareSSR()
 							}
-							frameRenderer.EndComputeFrame()
 							stopPrepareSSR()
-						}
 
-						if err := frameRenderer.BeginComputeFrame(); err == nil {
 							stopPrepareLuminance := func() {}
 							if e.profilingEnabled && e.profiler != nil {
 								stopPrepareLuminance = e.profiler.Section("PrepareLuminance")
@@ -256,18 +248,19 @@ func (e *engine) handleRender() {
 							for _, s := range activeScenes {
 								s.PrepareLuminance(dt)
 							}
-							frameRenderer.EndComputeFrame()
 							stopPrepareLuminance()
-						}
 
-						stopPrepareBloom := func() {}
-						if e.profilingEnabled && e.profiler != nil {
-							stopPrepareBloom = e.profiler.Section("PrepareBloom")
+							stopPrepareBloom := func() {}
+							if e.profilingEnabled && e.profiler != nil {
+								stopPrepareBloom = e.profiler.Section("PrepareBloom")
+							}
+							for _, s := range activeScenes {
+								s.PrepareBloom()
+							}
+							stopPrepareBloom()
+
+							frameRenderer.EndComputeFrame()
 						}
-						for _, s := range activeScenes {
-							s.PrepareBloom()
-						}
-						stopPrepareBloom()
 
 						stopAcquireFrame := func() {}
 						if e.profilingEnabled && e.profiler != nil {

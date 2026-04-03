@@ -36,8 +36,8 @@ func main() {
 		renderer.BackendTypeWGPU,
 		eng.Window(),
 		renderer.WithPresentMode(renderer.PresentModeUncapped),
-		renderer.WithMSAA(renderer.MSAA4x),
-		renderer.WithGPUSerializedProfiling(false),
+		renderer.WithMSAA(renderer.MSAAOff),
+		renderer.WithGPUSerializedProfiling(true),
 	)
 
 	// ── Camera ──────────────────────────────────────────────────────────
@@ -66,12 +66,12 @@ func main() {
 				light.WithPCFRadius(1.0),
 				light.WithShadowNearFar(0.05, 1000),
 				light.WithShadowNormalBiasScale(1.0),
-				light.WithShadowMapResolution(1024),
+				light.WithShadowMapResolution(2048),
 				light.WithShadowInnerRadius(50),
 			)),
 			light.WithGBufferHandler(light.NewGBufferHandler()),
 			light.WithSSAOHandler(light.NewSSAOHandler(
-				light.WithSSAOSampleCount(16),
+				light.WithSSAOSampleCount(8),
 				light.WithSSAOScreenRadius(24.0),
 				light.WithSSAOBias(0.025),
 				light.WithSSAOPower(2.0),

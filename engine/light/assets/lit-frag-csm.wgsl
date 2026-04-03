@@ -109,6 +109,7 @@ fn spot_falloff(cos_angle: f32, inner_cone: f32, outer_cone: f32) -> f32 {
 
 // PCF Poisson disk offsets — 16-tap with good distribution for shadow PCF.
 //@oxy:inject PCF_SAMPLES u32 pcf_samples
+//@oxy:inject PCF_SAMPLES_SPOT u32 pcf_samples_spot
 var<private> POISSON_DISK: array<vec2<f32>, 16> = array<vec2<f32>, 16>(
     vec2<f32>(-0.94201624, -0.39906216),
     vec2<f32>( 0.94558609, -0.76890725),
@@ -236,7 +237,7 @@ fn sample_shadow_spot(frag_pos: vec3<f32>, entry: LightShadowEntry, normal: vec3
     // PCF in tile-local UV space, then convert each sample to atlas UV.
     let pcf_scale = texel_size * 1.5;
     var shadow = 0.0;
-    for (var i = 0u; i < PCF_SAMPLES; i = i + 1u) {
+    for (var i = 0u; i < PCF_SAMPLES_SPOT; i = i + 1u) {
         let offset = POISSON_DISK[i] * pcf_scale;
         let sample_local = local_uv + offset;
         let atlas_uv = vec2<f32>(
@@ -249,7 +250,7 @@ fn sample_shadow_spot(frag_pos: vec3<f32>, entry: LightShadowEntry, normal: vec3
             ref_depth,
         );
     }
-    shadow /= f32(PCF_SAMPLES);
+    shadow /= f32(PCF_SAMPLES_SPOT);
 
     return shadow;
 }
@@ -412,6 +413,7 @@ fn fs_main(in: FragmentInput) -> @location(0) vec4<f32> {
         let light = lights[light_idx];
 
         var contribution = evaluate_light(light, in.world_position, normal, view_dir, roughness, metallic, albedo);
+        if (all(contribution < vec3<f32>(0.001))) { continue; }
 
         if light.light_type == LIGHT_TYPE_DIRECTIONAL && light.casts_shadows == 1u {
             contribution *= sample_shadow_csm(in.world_position, normal, light.direction, cam_depth);
