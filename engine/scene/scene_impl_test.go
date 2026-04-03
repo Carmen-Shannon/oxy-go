@@ -12229,3 +12229,216 @@ func (suite *sceneImplTest) TestCreateAnimatorShadowBufferPanicOnFail() {
 		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
 	})
 }
+
+func (suite *sceneImplTest) TestInitBloomPanicArms() {
+	suite.Run("should panic when InitTextureView fails and bloom is disabled", func() {
+		chMock := light_mocks.NewMockCompositionHandler(suite.T())
+		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		chMock.EXPECT().BloomEnabled().Return(false).Once()
+		suite.rendererMock.EXPECT().InitTextureView(compBGPMock, 6, mock.Anything).Return(errors.New("fail")).Once()
+		suite.Panics(func() { suite.scene.initBloom(chMock, compBGPMock, 800, 600) })
+	})
+
+	suite.Run("should panic when CreateBloomTextures fails", func() {
+		chMock := light_mocks.NewMockCompositionHandler(suite.T())
+		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		chMock.EXPECT().BloomEnabled().Return(true).Once()
+		suite.rendererMock.EXPECT().CreateBloomTextures(400, 300).Return(
+			nil, nil, nil, nil, nil, nil, nil, 0, errors.New("fail"),
+		).Once()
+		suite.Panics(func() { suite.scene.initBloom(chMock, compBGPMock, 800, 600) })
+	})
+
+	suite.Run("should panic when RegisterPipelines fails for downsample pipeline", func() {
+		chMock := light_mocks.NewMockCompositionHandler(suite.T())
+		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		chMock.EXPECT().BloomEnabled().Return(true).Once()
+		downReadViews := make([]*wgpu.TextureView, 1)
+		downStorageViews := make([]*wgpu.TextureView, 1)
+		upReadViews := make([]*wgpu.TextureView, 1)
+		upStorageViews := make([]*wgpu.TextureView, 1)
+		suite.rendererMock.EXPECT().CreateBloomTextures(400, 300).Return(
+			nil, downReadViews, downStorageViews, nil, upReadViews, upStorageViews, nil, 1, nil,
+		).Once()
+		chMock.EXPECT().SetBloomDownTexture(mock.Anything).Once()
+		chMock.EXPECT().SetBloomDownReadViews(mock.Anything).Once()
+		chMock.EXPECT().SetBloomDownStorageViews(mock.Anything).Once()
+		chMock.EXPECT().SetBloomUpTexture(mock.Anything).Once()
+		chMock.EXPECT().SetBloomUpReadViews(mock.Anything).Once()
+		chMock.EXPECT().SetBloomUpStorageViews(mock.Anything).Once()
+		chMock.EXPECT().SetBloomUpMip0View(mock.Anything).Once()
+		chMock.EXPECT().SetBloomMipCount(1).Once()
+		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(errors.New("fail")).Once()
+		suite.Panics(func() { suite.scene.initBloom(chMock, compBGPMock, 800, 600) })
+	})
+
+	suite.Run("should panic when RegisterPipelines fails for upsample pipeline", func() {
+		chMock := light_mocks.NewMockCompositionHandler(suite.T())
+		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		chMock.EXPECT().BloomEnabled().Return(true).Once()
+		downReadViews := make([]*wgpu.TextureView, 1)
+		downStorageViews := make([]*wgpu.TextureView, 1)
+		upReadViews := make([]*wgpu.TextureView, 1)
+		upStorageViews := make([]*wgpu.TextureView, 1)
+		suite.rendererMock.EXPECT().CreateBloomTextures(400, 300).Return(
+			nil, downReadViews, downStorageViews, nil, upReadViews, upStorageViews, nil, 1, nil,
+		).Once()
+		chMock.EXPECT().SetBloomDownTexture(mock.Anything).Once()
+		chMock.EXPECT().SetBloomDownReadViews(mock.Anything).Once()
+		chMock.EXPECT().SetBloomDownStorageViews(mock.Anything).Once()
+		chMock.EXPECT().SetBloomUpTexture(mock.Anything).Once()
+		chMock.EXPECT().SetBloomUpReadViews(mock.Anything).Once()
+		chMock.EXPECT().SetBloomUpStorageViews(mock.Anything).Once()
+		chMock.EXPECT().SetBloomUpMip0View(mock.Anything).Once()
+		chMock.EXPECT().SetBloomMipCount(1).Once()
+		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Once()
+		chMock.EXPECT().SetPipelineKey("bloom_downsample", "bloom_downsample").Once()
+		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(errors.New("fail")).Once()
+		suite.Panics(func() { suite.scene.initBloom(chMock, compBGPMock, 800, 600) })
+	})
+
+	suite.Run("should panic when InitBindGroup fails in downsample loop", func() {
+		chMock := light_mocks.NewMockCompositionHandler(suite.T())
+		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		chMock.EXPECT().BloomEnabled().Return(true).Once()
+		downReadViews := make([]*wgpu.TextureView, 1)
+		downStorageViews := make([]*wgpu.TextureView, 1)
+		upReadViews := make([]*wgpu.TextureView, 1)
+		upStorageViews := make([]*wgpu.TextureView, 1)
+		suite.rendererMock.EXPECT().CreateBloomTextures(400, 300).Return(
+			nil, downReadViews, downStorageViews, nil, upReadViews, upStorageViews, nil, 1, nil,
+		).Once()
+		chMock.EXPECT().SetBloomDownTexture(mock.Anything).Once()
+		chMock.EXPECT().SetBloomDownReadViews(mock.Anything).Once()
+		chMock.EXPECT().SetBloomDownStorageViews(mock.Anything).Once()
+		chMock.EXPECT().SetBloomUpTexture(mock.Anything).Once()
+		chMock.EXPECT().SetBloomUpReadViews(mock.Anything).Once()
+		chMock.EXPECT().SetBloomUpStorageViews(mock.Anything).Once()
+		chMock.EXPECT().SetBloomUpMip0View(mock.Anything).Once()
+		chMock.EXPECT().SetBloomMipCount(1).Once()
+		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Twice()
+		chMock.EXPECT().SetPipelineKey("bloom_downsample", "bloom_downsample").Once()
+		chMock.EXPECT().SetPipelineKey("bloom_upsample", "bloom_upsample").Once()
+		chMock.EXPECT().LinearSampler().Return(nil).Once()
+		chMock.EXPECT().HDRTextureView().Return(nil).Once()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("fail")).Once()
+		suite.Panics(func() { suite.scene.initBloom(chMock, compBGPMock, 800, 600) })
+	})
+
+	suite.Run("should panic when InitBindGroup fails in upsample loop", func() {
+		chMock := light_mocks.NewMockCompositionHandler(suite.T())
+		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		chMock.EXPECT().BloomEnabled().Return(true).Once()
+		downReadViews := make([]*wgpu.TextureView, 2)
+		downStorageViews := make([]*wgpu.TextureView, 2)
+		upReadViews := make([]*wgpu.TextureView, 2)
+		upStorageViews := make([]*wgpu.TextureView, 2)
+		suite.rendererMock.EXPECT().CreateBloomTextures(400, 300).Return(
+			nil, downReadViews, downStorageViews, nil, upReadViews, upStorageViews, nil, 2, nil,
+		).Once()
+		chMock.EXPECT().SetBloomDownTexture(mock.Anything).Once()
+		chMock.EXPECT().SetBloomDownReadViews(mock.Anything).Once()
+		chMock.EXPECT().SetBloomDownStorageViews(mock.Anything).Once()
+		chMock.EXPECT().SetBloomUpTexture(mock.Anything).Once()
+		chMock.EXPECT().SetBloomUpReadViews(mock.Anything).Once()
+		chMock.EXPECT().SetBloomUpStorageViews(mock.Anything).Once()
+		chMock.EXPECT().SetBloomUpMip0View(mock.Anything).Once()
+		chMock.EXPECT().SetBloomMipCount(2).Once()
+		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Twice()
+		chMock.EXPECT().SetPipelineKey("bloom_downsample", "bloom_downsample").Once()
+		chMock.EXPECT().SetPipelineKey("bloom_upsample", "bloom_upsample").Once()
+		chMock.EXPECT().LinearSampler().Return(nil).Once()
+		chMock.EXPECT().HDRTextureView().Return(nil).Once()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Twice()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("fail")).Once()
+		chMock.EXPECT().SetBgp("bloom_down_0", mock.Anything).Once()
+		chMock.EXPECT().SetBgp("bloom_down_1", mock.Anything).Once()
+		suite.Panics(func() { suite.scene.initBloom(chMock, compBGPMock, 800, 600) })
+	})
+
+	suite.Run("should cover upReadViews else branch when i is not mipCount-2 in upsample loop", func() {
+		chMock := light_mocks.NewMockCompositionHandler(suite.T())
+		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		chMock.EXPECT().BloomEnabled().Return(true).Once()
+		downReadViews := make([]*wgpu.TextureView, 3)
+		downStorageViews := make([]*wgpu.TextureView, 3)
+		upReadViews := make([]*wgpu.TextureView, 3)
+		upStorageViews := make([]*wgpu.TextureView, 3)
+		upMip0View := &wgpu.TextureView{}
+		suite.rendererMock.EXPECT().CreateBloomTextures(400, 300).Return(
+			nil, downReadViews, downStorageViews, nil, upReadViews, upStorageViews, upMip0View, 3, nil,
+		).Once()
+		chMock.EXPECT().SetBloomDownTexture(mock.Anything).Once()
+		chMock.EXPECT().SetBloomDownReadViews(mock.Anything).Once()
+		chMock.EXPECT().SetBloomDownStorageViews(mock.Anything).Once()
+		chMock.EXPECT().SetBloomUpTexture(mock.Anything).Once()
+		chMock.EXPECT().SetBloomUpReadViews(mock.Anything).Once()
+		chMock.EXPECT().SetBloomUpStorageViews(mock.Anything).Once()
+		chMock.EXPECT().SetBloomUpMip0View(mock.Anything).Once()
+		chMock.EXPECT().SetBloomMipCount(3).Once()
+		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Twice()
+		chMock.EXPECT().SetPipelineKey("bloom_downsample", "bloom_downsample").Once()
+		chMock.EXPECT().SetPipelineKey("bloom_upsample", "bloom_upsample").Once()
+		chMock.EXPECT().LinearSampler().Return(nil).Once()
+		chMock.EXPECT().HDRTextureView().Return(nil).Once()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(5)
+		chMock.EXPECT().SetBgp("bloom_down_0", mock.Anything).Once()
+		chMock.EXPECT().SetBgp("bloom_down_1", mock.Anything).Once()
+		chMock.EXPECT().SetBgp("bloom_down_2", mock.Anything).Once()
+		chMock.EXPECT().SetBgp("bloom_up_1", mock.Anything).Once()
+		chMock.EXPECT().SetBgp("bloom_up_0", mock.Anything).Once()
+		compBGPMock.EXPECT().SetTextureView(6, upMip0View).Once()
+		suite.NotPanics(func() { suite.scene.initBloom(chMock, compBGPMock, 800, 600) })
+	})
+}
+func (suite *sceneImplTest) TestCreateAnimatorUncoveredPaths() {
+	makeBase := func() (*model_mocks.MockModel, *shader_mocks.MockShader, *shader_mocks.MockShader, *shader_mocks.MockShader) {
+		return model_mocks.NewMockModel(suite.T()),
+			shader_mocks.NewMockShader(suite.T()),
+			shader_mocks.NewMockShader(suite.T()),
+			shader_mocks.NewMockShader(suite.T())
+	}
+
+	suite.Run("should panic when InitBindGroup slot 1 compute fails", func() {
+		mdl, cs, vs, fs := makeBase()
+		_ = fs
+		mdl.EXPECT().Skinned().Return(false).Maybe()
+		mdl.EXPECT().BoundingRadius().Return(float32(1.0)).Once()
+		mdl.EXPECT().BoundingMin().Return([3]float32{}).Once()
+		mdl.EXPECT().BoundingMax().Return([3]float32{}).Once()
+		mdl.EXPECT().MeshProvider().Return(nil).Once()
+		mdl.EXPECT().Name().Return("m").Maybe()
+		cs.EXPECT().Declarations().Return([]shader.Annotation{}).Maybe()
+		cs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
+		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
+		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("slot1 compute fail")).Once()
+		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
+	})
+
+	suite.Run("should init Hi-Z BGP when HiZBindGroupProvider returns non-nil", func() {
+		mdl, cs, vs, fs := makeBase()
+		_ = fs
+		mdl.EXPECT().Skinned().Return(false).Maybe()
+		mdl.EXPECT().BoundingRadius().Return(float32(1.0)).Once()
+		mdl.EXPECT().BoundingMin().Return([3]float32{}).Once()
+		mdl.EXPECT().BoundingMax().Return([3]float32{}).Once()
+		mdl.EXPECT().MeshProvider().Return(nil).Once()
+		mdl.EXPECT().Name().Return("m").Maybe()
+		mdl.EXPECT().SetComputePipelineKey(mock.Anything).Return().Once()
+		mdl.EXPECT().RenderMaterials().Return(nil).Once()
+		cs.EXPECT().Declarations().Return([]shader.Annotation{}).Maybe()
+		cs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
+		cs.EXPECT().BindGroupLayoutDescriptor(1).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
+		cs.EXPECT().Key().Return("ck").Once()
+		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
+		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
+		suite.scene.hizFallbackView = &wgpu.TextureView{}
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(5)
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
+		suite.NotPanics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
+	})
+}
