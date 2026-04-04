@@ -37,37 +37,37 @@ The `Shader` holds a `PreProcessor` internally. During construction, the pre-pro
 
 ### Delegation
 
-| Method                          | Description                                                |
-| ------------------------------- | ---------------------------------------------------------- |
-| `SetDelegate(delegate Shader)`  | Inherited from `common.Delegate[Shader]`; reroutes calls   |
+| Method                         | Description                                              |
+| ------------------------------ | -------------------------------------------------------- |
+| `SetDelegate(delegate Shader)` | Inherited from `common.Delegate[Shader]`; reroutes calls |
 
 ### Source & Identity
 
-| Method                                          | Description                                            |
-| ----------------------------------------------- | ------------------------------------------------------ |
-| `Key() string`                                  | Unique identifier for caching and lookups              |
-| `Source() string`                                | Processed WGSL source (annotations replaced)           |
-| `ShaderType() ShaderType`                        | The shader stage type                                  |
-| `EntryPoint() string`                            | Entry point function name (e.g. `"vs_main"`)           |
-| `Module() *wgpu.ShaderModuleDescriptor`          | Descriptor for GPU module creation                     |
+| Method                                  | Description                                  |
+| --------------------------------------- | -------------------------------------------- |
+| `Key() string`                          | Unique identifier for caching and lookups    |
+| `Source() string`                       | Processed WGSL source (annotations replaced) |
+| `ShaderType() ShaderType`               | The shader stage type                        |
+| `EntryPoint() string`                   | Entry point function name (e.g. `"vs_main"`) |
+| `Module() *wgpu.ShaderModuleDescriptor` | Descriptor for GPU module creation           |
 
 ### Bind Group Metadata
 
-| Method                                                                        | Description                                      |
-| ----------------------------------------------------------------------------- | ------------------------------------------------ |
-| `BindGroupLayoutDescriptor(bindingKey int) wgpu.BindGroupLayoutDescriptor`    | Layout descriptor for a specific group index     |
-| `BindGroupLayoutDescriptors() map[int]wgpu.BindGroupLayoutDescriptor`         | All layout descriptors keyed by group index      |
-| `BindGroupVarName(group, binding int) string`                                 | Variable name at a given group/binding           |
-| `BindGroupFromVarName(group int, varName string) (int, bool)`                 | Reverse lookup: binding index from variable name |
-| `BindGroupVarNames() map[int]map[int]string`                                  | All variable names keyed by group and binding    |
+| Method                                                                     | Description                                      |
+| -------------------------------------------------------------------------- | ------------------------------------------------ |
+| `BindGroupLayoutDescriptor(bindingKey int) wgpu.BindGroupLayoutDescriptor` | Layout descriptor for a specific group index     |
+| `BindGroupLayoutDescriptors() map[int]wgpu.BindGroupLayoutDescriptor`      | All layout descriptors keyed by group index      |
+| `BindGroupVarName(group, binding int) string`                              | Variable name at a given group/binding           |
+| `BindGroupFromVarName(group int, varName string) (int, bool)`              | Reverse lookup: binding index from variable name |
+| `BindGroupVarNames() map[int]map[int]string`                               | All variable names keyed by group and binding    |
 
 ### Vertex & Compute Metadata
 
-| Method                                                       | Description                              |
-| ------------------------------------------------------------ | ---------------------------------------- |
-| `VertexLayout(key int) []wgpu.VertexBufferLayout`            | Vertex buffer layout for a specific key  |
-| `VertexLayouts() map[int][]wgpu.VertexBufferLayout`          | All vertex buffer layouts                |
-| `WorkgroupSize() [3]uint32`                                  | Compute workgroup dimensions `[x, y, z]` |
+| Method                                              | Description                              |
+| --------------------------------------------------- | ---------------------------------------- |
+| `VertexLayout(key int) []wgpu.VertexBufferLayout`   | Vertex buffer layout for a specific key  |
+| `VertexLayouts() map[int][]wgpu.VertexBufferLayout` | All vertex buffer layouts                |
+| `WorkgroupSize() [3]uint32`                         | Compute workgroup dimensions `[x, y, z]` |
 
 ### Declarations
 
@@ -101,8 +101,8 @@ Panics if `sourcePath` is empty or the file cannot be read.
 
 The `NewShader` constructor accepts variadic `ShaderBuilderOption` functions:
 
-| Option | Parameters | Description |
-| ------ | ---------- | ----------- |
+| Option           | Parameters                     | Description                                                                       |
+| ---------------- | ------------------------------ | --------------------------------------------------------------------------------- |
 | `WithInjections` | `injections map[string]string` | Provides the injection key→value map used by the `@oxy:inject` pre-processor pass |
 
 ---
@@ -111,10 +111,10 @@ The `NewShader` constructor accepts variadic `ShaderBuilderOption` functions:
 
 The `PreProcessor` interface scans WGSL source for `@oxy:` annotations and produces processed output.
 
-| Method                                          | Description                                                     |
-| ----------------------------------------------- | --------------------------------------------------------------- |
+| Method                                                                    | Description                                                     |
+| ------------------------------------------------------------------------- | --------------------------------------------------------------- |
 | `Process(source string, injections ...map[string]string) (string, error)` | Returns processed WGSL and error; resets declarations each call |
-| `Declarations() []Annotation`                    | Annotations collected during the last `Process` call            |
+| `Declarations() []Annotation`                                             | Annotations collected during the last `Process` call            |
 
 ### NewPreProcessor Constructor
 
@@ -126,70 +126,74 @@ Creates a standalone `PreProcessor` instance with the full struct and address-sp
 
 ### Annotation Types
 
-| Type       | Syntax                                                        | Effect                                                 |
-| ---------- | ------------------------------------------------------------- | ------------------------------------------------------ |
-| `include`  | `//@oxy:include <struct_type>`                                | Injects embedded WGSL struct source at annotation site |
-| `group`    | `//@oxy:group <group> <binding> <addr_space> <var> <type>`    | Generates `@group/@binding var<...>` declaration       |
-| `provider` | `//@oxy:provider <group> <binding> <identity> [binding_role]` | Registers provider identity; no WGSL output            |
+| Type       | Syntax                                                        | Effect                                                                                |
+| ---------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `include`  | `//@oxy:include <struct_type>`                                | Injects embedded WGSL struct source at annotation site                                |
+| `group`    | `//@oxy:group <group> <binding> <addr_space> <var> <type>`    | Generates `@group/@binding var<...>` declaration                                      |
+| `provider` | `//@oxy:provider <group> <binding> <identity> [binding_role]` | Registers provider identity; no WGSL output                                           |
 | `inject`   | `//@oxy:inject <const_name> <wgsl_type> <injection_key>`      | Replaces a WGSL `const` declaration with a value injected from Go at pre-process time |
 
 ### Provider Identities
 
 The `<identity>` field in a `provider` annotation must be one of the following valid values:
 
-| Constant                       | Value                 | Description                          |
-| ------------------------------ | --------------------- | ------------------------------------ |
-| `AnnotationArgCamera`          | `"camera"`            |
-| `AnnotationArgMaterial`        | `"material"`          |
-| `AnnotationArgLights`          | `"lights"`            |
-| `AnnotationArgShadow`          | `"shadow"`            |
-| `AnnotationArgTiles`           | `"tiles"`             |
-| `AnnotationArgEffect`          | `"effect"`            |
-| `AnnotationArgAnimator`        | `"animator"`          |
-| `AnnotationArgAnimatorOutput`  | `"animator_output"`   |
-| `AnnotationArgAnimatorPacked`  | `"animator_packed"`   |
-| `AnnotationArgAnimatorScratch` | `"animator_scratch"`  |
-| `AnnotationArgSSAO`            | `"ssao"`              | Screen-space ambient occlusion pass  |
-| `AnnotationArgComposition`     | `"composition"`       | Tone-mapping composition pass        |
-| `AnnotationArgSSR`             | `"ssr"`               | Screen-space reflections pass        |
-| `AnnotationArgHiZInit`         | `"hiz_init"`          | Hi-Z mip initialization pass         |
-| `AnnotationArgHiZDown`         | `"hiz_down"`          | Hi-Z mip downsampling pass           |
-| `AnnotationArgContactShadows`  | `"contact_shadows"`   | Screen-space contact shadow pass     |
+| Constant                       | Value                | Description                                     |
+| ------------------------------ | -------------------- | ----------------------------------------------- |
+| `AnnotationArgCamera`          | `"camera"`           |
+| `AnnotationArgMaterial`        | `"material"`         |
+| `AnnotationArgLights`          | `"lights"`           |
+| `AnnotationArgShadow`          | `"shadow"`           |
+| `AnnotationArgTiles`           | `"tiles"`            |
+| `AnnotationArgEffect`          | `"effect"`           |
+| `AnnotationArgAnimator`        | `"animator"`         |
+| `AnnotationArgAnimatorOutput`  | `"animator_output"`  |
+| `AnnotationArgAnimatorPacked`  | `"animator_packed"`  |
+| `AnnotationArgAnimatorScratch` | `"animator_scratch"` |
+| `AnnotationArgSSAO`            | `"ssao"`             | Screen-space ambient occlusion pass             |
+| `AnnotationArgComposition`     | `"composition"`      | Tone-mapping composition pass                   |
+| `AnnotationArgSSR`             | `"ssr"`              | Screen-space reflections pass                   |
+| `AnnotationArgHiZInit`         | `"hiz_init"`         | Hi-Z mip initialization pass                    |
+| `AnnotationArgHiZDown`         | `"hiz_down"`         | Hi-Z mip downsampling pass                      |
+| `AnnotationArgHiZDownMax`      | `"hiz_down_max"`     | Hi-Z MAX pyramid downsample pass                |
+| `AnnotationArgContactShadows`  | `"contact_shadows"`  | Screen-space contact shadow pass                |
+| `AnnotationArgAnimatorHiZ`     | `"animator_hiz"`     | Animator Hi-Z min pyramid for SSR visibility    |
+| `AnnotationArgAnimatorMaxHiZ`  | `"animator_max_hiz"` | Animator MAX Hi-Z pyramid for occlusion culling |
 
 ### Binding Roles
 
 The optional `[binding_role]` field in a `provider` annotation may be one of:
 
-| Constant                                   | Value                            | Description                               |
-| ------------------------------------------ | -------------------------------- | ----------------------------------------- |
-| `AnnotationArgDiffuseTexture`              | `"diffuse_texture"`              |
-| `AnnotationArgDiffuseSampler`              | `"diffuse_sampler"`              |
-| `AnnotationArgNormalTexture`               | `"normal_texture"`               |
-| `AnnotationArgNormalSampler`               | `"normal_sampler"`               |
-| `AnnotationArgMetallicRoughnessTexture`    | `"metallic_roughness_texture"`   |
-| `AnnotationArgMetallicRoughnessSampler`    | `"metallic_roughness_sampler"`   |
-| `AnnotationArgSSAOTexture`                 | `"ssao_texture"`                 | SSAO output texture                      |
-| `AnnotationArgSSAOSampler`                 | `"ssao_sampler"`                 | SSAO texture sampler                     |
-| `AnnotationArgGBufferNormal`               | `"gbuffer_normal"`               | G-Buffer normal texture                  |
-| `AnnotationArgGBufferDepth`                | `"gbuffer_depth"`                | G-Buffer depth texture                   |
-| `AnnotationArgHDRTexture`                  | `"hdr_texture"`                  | HDR color texture                        |
-| `AnnotationArgSSROutput`                   | `"ssr_output"`                   | SSR storage output texture               |
-| `AnnotationArgSSRTexture`                  | `"ssr_texture"`                  | SSR read texture                         |
-| `AnnotationArgCompositionSampler`          | `"composition_sampler"`          | Composition pass sampler                 |
-| `AnnotationArgHiZOut`                      | `"hiz_out"`                      | Hi-Z output storage texture              |
-| `AnnotationArgHiZIn`                       | `"hiz_in"`                       | Hi-Z input mip storage texture           |
-| `AnnotationArgHiZTexture`                  | `"hiz_texture"`                  | Hi-Z read texture                        |
-| `AnnotationArgSpotShadowTexture`           | `"spot_shadow_texture"`          | Spot/point light shadow atlas texture    |
-| `AnnotationArgContactShadowTexture`        | `"contact_shadow_texture"`       | Contact shadow output texture            |
-| `AnnotationArgContactShadowSampler`        | `"contact_shadow_sampler"`       | Contact shadow sampler                   |
-| `AnnotationArgMaterialParams`              | `"material_params"`              | Per-material scalar parameter buffer     |
+| Constant                                | Value                          | Description                                        |
+| --------------------------------------- | ------------------------------ | -------------------------------------------------- |
+| `AnnotationArgDiffuseTexture`           | `"diffuse_texture"`            |
+| `AnnotationArgDiffuseSampler`           | `"diffuse_sampler"`            |
+| `AnnotationArgNormalTexture`            | `"normal_texture"`             |
+| `AnnotationArgNormalSampler`            | `"normal_sampler"`             |
+| `AnnotationArgMetallicRoughnessTexture` | `"metallic_roughness_texture"` |
+| `AnnotationArgMetallicRoughnessSampler` | `"metallic_roughness_sampler"` |
+| `AnnotationArgSSAOTexture`              | `"ssao_texture"`               | SSAO output texture                                |
+| `AnnotationArgSSAOSampler`              | `"ssao_sampler"`               | SSAO texture sampler                               |
+| `AnnotationArgGBufferNormal`            | `"gbuffer_normal"`             | G-Buffer normal texture                            |
+| `AnnotationArgGBufferDepth`             | `"gbuffer_depth"`              | G-Buffer depth texture                             |
+| `AnnotationArgHDRTexture`               | `"hdr_texture"`                | HDR color texture                                  |
+| `AnnotationArgSSROutput`                | `"ssr_output"`                 | SSR storage output texture                         |
+| `AnnotationArgSSRTexture`               | `"ssr_texture"`                | SSR read texture                                   |
+| `AnnotationArgCompositionSampler`       | `"composition_sampler"`        | Composition pass sampler                           |
+| `AnnotationArgHiZOut`                   | `"hiz_out"`                    | Hi-Z output storage texture                        |
+| `AnnotationArgHiZIn`                    | `"hiz_in"`                     | Hi-Z input mip storage texture                     |
+| `AnnotationArgHiZTexture`               | `"hiz_texture"`                | Hi-Z read texture                                  |
+| `AnnotationArgMaxHiZTexture`            | `"hiz_max_texture"`            | MAX Hi-Z depth pyramid texture (occlusion culling) |
+| `AnnotationArgSpotShadowTexture`        | `"spot_shadow_texture"`        | Spot/point light shadow atlas texture              |
+| `AnnotationArgContactShadowTexture`     | `"contact_shadow_texture"`     | Contact shadow output texture                      |
+| `AnnotationArgContactShadowSampler`     | `"contact_shadow_sampler"`     | Contact shadow sampler                             |
+| `AnnotationArgMaterialParams`           | `"material_params"`            | Per-material scalar parameter buffer               |
 
 ### Struct Registry
 
 The pre-processor maps annotation argument keys to embedded WGSL sources from GPU type packages across the engine. Currently registered types:
 
-| Key                       | WGSL Type               | Source Package | Description                               |
-| ------------------------- | ----------------------- | -------------- | ----------------------------------------- |
+| Key                       | WGSL Type               | Source Package | Description                                    |
+| ------------------------- | ----------------------- | -------------- | ---------------------------------------------- |
 | `camera`                  | `CameraUniform`         | `camera`       |
 | `vertex`                  | `VertexInput`           | `model`        |
 | `skinned_vertex`          | `VertexInput`           | `model`        |
@@ -214,14 +218,16 @@ The pre-processor maps annotation argument keys to embedded WGSL sources from GP
 | `physics_grid`            | `GridCell`              | `physics`      |
 | `physics_globals`         | `PhysicsGlobals`        | `physics`      |
 | `physics_grid_params`     | `GridParams`            | `physics`      |
-| `csm_data`                | `CSMData`               | `light`        | Dual-cascade shadow map data              |
-| `light_shadow_entry`      | `LightShadowEntry`      | `light`        | Per-light spot/point shadow atlas entry   |
+| `csm_data`                | `CSMData`               | `light`        | Dual-cascade shadow map data                   |
+| `light_shadow_entry`      | `LightShadowEntry`      | `light`        | Per-light spot/point shadow atlas entry        |
 | `gbuffer_output`          | `GBufferOutput`         | `light`        | G-Buffer MRT data written in the geometry pass |
-| `ssao_params`             | `SSAOParams`            | `light`        | SSAO compute shader parameters            |
-| `blur_params`             | `BlurParams`            | `light`        | Bilateral blur pass parameters            |
-| `composition_params`      | `CompositionParams`     | `light`        | Tone-mapping composition pass parameters  |
-| `ssr_params`              | `SSRParams`             | `light`        | Screen-space reflection parameters        |
-| `contact_shadow_params`   | `ContactShadowParams`   | `light`        | Contact shadow ray march parameters       |
+| `ssao_params`             | `SSAOParams`            | `light`        | SSAO compute shader parameters                 |
+| `blur_params`             | `BlurParams`            | `light`        | Bilateral blur pass parameters                 |
+| `composition_params`      | `CompositionParams`     | `light`        | Tone-mapping composition pass parameters       |
+| `ssr_params`              | `SSRParams`             | `light`        | Screen-space reflection parameters             |
+| `contact_shadow_params`   | `ContactShadowParams`   | `light`        | Contact shadow ray march parameters            |
+| `luminance_params`        | `LuminanceParams`       | `light`        | Luminance compute shader parameters            |
+| `bloom_params`            | `BloomParams`           | `light`        | Bloom downsample compute shader parameters     |
 
 ---
 

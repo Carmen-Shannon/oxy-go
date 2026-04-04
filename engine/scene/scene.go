@@ -428,7 +428,7 @@ func (s *scene) PrepareGBuffer() {
 			if mdl == nil {
 				continue
 			}
-			meshProvider := mdl.MeshProvider()
+			meshProvider := mdl.LODMeshProvider(s.animLODLevel(a))
 			if meshProvider == nil {
 				continue
 			}
@@ -1219,7 +1219,7 @@ func (s *scene) PrepareShadows() {
 			}
 			if buf, ok := s.shadowIndirectBuffers[a]; ok && buf != nil {
 				args := animator.GPUIndirectArgs{
-					IndexCount:    uint32(mdl.IndexCount()),
+					IndexCount:    uint32(mdl.LODIndexCount(s.animShadowLODLevel(a))),
 					InstanceCount: a.InstanceCount(),
 					FirstIndex:    0,
 					BaseVertex:    0,
@@ -1393,7 +1393,7 @@ func (s *scene) PrepareShadows() {
 					if mdl == nil || !mdl.CastsShadows() {
 						continue
 					}
-					meshProvider := mdl.MeshProvider()
+					meshProvider := mdl.LODMeshProvider(s.animShadowLODLevel(a))
 					if meshProvider == nil {
 						continue
 					}
@@ -1467,7 +1467,7 @@ func (s *scene) PrepareShadows() {
 					if mdl == nil || !mdl.CastsShadows() {
 						continue
 					}
-					meshProvider := mdl.MeshProvider()
+					meshProvider := mdl.LODMeshProvider(s.animShadowLODLevel(a))
 					if meshProvider == nil {
 						continue
 					}
@@ -1599,7 +1599,7 @@ func (s *scene) PrepareShadows() {
 						if mdl == nil || !mdl.CastsShadows() {
 							continue
 						}
-						meshProvider := mdl.MeshProvider()
+						meshProvider := mdl.LODMeshProvider(s.animShadowLODLevel(a))
 						if meshProvider == nil {
 							continue
 						}
@@ -2110,6 +2110,49 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 	}
 	wg.Wait()
 
+	if s.lodEnabled {
+		var camPosX, camPosY, camPosZ float32
+		if ctrl := s.cam.Controller(); ctrl != nil {
+			camPosX, camPosY, camPosZ = ctrl.Position()
+		}
+		for mdl, anims := range s.animatorPool {
+			if mdl.LODCount() <= 1 {
+				for _, a := range anims {
+					s.lodLevelCache[a] = 0
+				}
+				continue
+			}
+			for _, a := range anims {
+				if a.InstanceCount() == 0 {
+					s.lodLevelCache[a] = 0
+					continue
+				}
+				minDist := float32(math.MaxFloat32)
+				for i := uint32(0); i < a.InstanceCount(); i++ {
+					pos, _ := a.InstanceTransform(i)
+					dx := pos[0] - camPosX
+					dy := pos[1] - camPosY
+					dz := pos[2] - camPosZ
+					dist := float32(math.Sqrt(float64(dx*dx + dy*dy + dz*dz)))
+					if dist < minDist {
+						minDist = dist
+					}
+				}
+				level := 0
+				if minDist >= s.lod2Distance {
+					level = 2
+				} else if minDist >= s.lod1Distance {
+					level = 1
+				}
+				maxLevel := mdl.LODCount() - 1
+				if level > maxLevel {
+					level = maxLevel
+				}
+				s.lodLevelCache[a] = level
+			}
+		}
+	}
+
 	// Phase 2: coalesced GPU submission — collect all buffer writes from all animators into a single
 	// slice, then submit once to the renderer. This reduces mutex acquisitions from N to 1 for writes.
 	// For each animator with culling enabled, reset the indirect args buffer to zero instance count
@@ -2122,7 +2165,8 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 			}
 			if a.CullingEnabled() {
 				if m := a.Model(); m != nil {
-					if mp := m.MeshProvider(); mp != nil {
+					lodLevel := s.animLODLevel(a)
+					if mp := m.LODMeshProvider(lodLevel); mp != nil {
 						a.ResetIndirectArgs(uint32(mp.IndexCount()), s.animIndirectBinding[a])
 					}
 				}
@@ -2408,7 +2452,7 @@ func (s *scene) DrawCalls() error {
 			if mdl == nil {
 				continue
 			}
-			meshProvider := mdl.MeshProvider()
+			meshProvider := mdl.LODMeshProvider(s.animLODLevel(a))
 			if meshProvider == nil {
 				continue
 			}
@@ -2569,4 +2613,33 @@ func (s *scene) DrawCalls() error {
 	}
 
 	return nil
+}
+
+// animLODLevel returns the LOD level for the given animator from the per-frame cache.
+// Returns 0 (base mesh) when LOD is disabled or the animator has no cached level.
+func (s *scene) animLODLevel(a animator.Animator) int {
+	if !s.lodEnabled {
+		return 0
+	}
+	if level, ok := s.lodLevelCache[a]; ok {
+		return level
+	}
+	return 0
+}
+
+// animShadowLODLevel returns the LOD level for shadow rendering of the given
+// animator. Adds lodShadowBias to the base LOD level, clamped to the model's
+// maximum available LOD.
+func (s *scene) animShadowLODLevel(a animator.Animator) int {
+	base := s.animLODLevel(a)
+	mdl := a.Model()
+	if mdl == nil {
+		return base
+	}
+	level := base + s.lodShadowBias
+	maxLevel := mdl.LODCount() - 1
+	if level > maxLevel {
+		level = maxLevel
+	}
+	return level
 }

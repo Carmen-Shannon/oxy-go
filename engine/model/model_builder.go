@@ -229,6 +229,62 @@ func WithShadowCullMode(mode ShadowCullMode) ModelBuilderOption {
 	}
 }
 
+// WithLODMeshProviders is an option builder that sets the BindGroupProviders for
+// reduced LOD mesh levels. Provider at index 0 corresponds to LOD1, index 1 to LOD2, etc.
+//
+// Parameters:
+//   - providers: the LOD mesh providers (LOD1, LOD2, ...)
+//
+// Returns:
+//   - ModelBuilderOption: a function that applies the LOD mesh providers option to a model
+func WithLODMeshProviders(providers ...bind_group_provider.BindGroupProvider) ModelBuilderOption {
+	return func(m *model) {
+		m.lodProviders = providers
+	}
+}
+
+// WithLODVertexData is an option builder that sets the raw vertex data for
+// reduced LOD mesh levels. Data at index 0 corresponds to LOD1, index 1 to LOD2, etc.
+//
+// Parameters:
+//   - data: the LOD vertex data arrays (LOD1, LOD2, ...)
+//
+// Returns:
+//   - ModelBuilderOption: a function that applies the LOD vertex data option to a model
+func WithLODVertexData(data ...[]byte) ModelBuilderOption {
+	return func(m *model) {
+		m.lodVertexData = data
+	}
+}
+
+// WithLODIndexData is an option builder that sets the raw index data for
+// reduced LOD mesh levels. Data at index 0 corresponds to LOD1, index 1 to LOD2, etc.
+//
+// Parameters:
+//   - data: the LOD index data arrays (LOD1, LOD2, ...)
+//
+// Returns:
+//   - ModelBuilderOption: a function that applies the LOD index data option to a model
+func WithLODIndexData(data ...[]byte) ModelBuilderOption {
+	return func(m *model) {
+		m.lodIndexData = data
+	}
+}
+
+// WithLODIndexCounts is an option builder that sets the index counts for
+// reduced LOD mesh levels. Count at index 0 corresponds to LOD1, index 1 to LOD2, etc.
+//
+// Parameters:
+//   - counts: the LOD index counts (LOD1, LOD2, ...)
+//
+// Returns:
+//   - ModelBuilderOption: a function that applies the LOD index counts option to a model
+func WithLODIndexCounts(counts ...int) ModelBuilderOption {
+	return func(m *model) {
+		m.lodIndexCounts = counts
+	}
+}
+
 // NewModel creates a new Model instance with the specified options applied.
 //
 // Parameters:

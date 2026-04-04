@@ -24,4 +24,8 @@ type model struct {
 	indexCount            int
 	shadowCullMode        ShadowCullMode
 	castsShadows          bool
+	lodProviders          []bind_group_provider.BindGroupProvider
+	lodVertexData         [][]byte
+	lodIndexData          [][]byte
+	lodIndexCounts        []int
 }

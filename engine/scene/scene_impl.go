@@ -118,6 +118,12 @@ type scene struct {
 	hizFallbackView    *wgpu.TextureView
 
 	postProcessingInitialized bool
+
+	lodEnabled    bool
+	lod1Distance  float32
+	lod2Distance  float32
+	lodShadowBias int
+	lodLevelCache map[animator.Animator]int
 }
 
 // shadowPipelineKey resolves the shadow depth pipeline key for the given model
@@ -2361,6 +2367,20 @@ func (s *scene) createAnimator(mdl model.Model, computeShader, vertexShader, fra
 		}
 	}
 
+	for level := 1; level < mdl.LODCount(); level++ {
+		lodBGP := mdl.LODMeshProvider(level)
+		if lodBGP != nil && lodBGP.VertexBuffer() == nil {
+			lodVData := mdl.LODVertexData(level)
+			lodIData := mdl.LODIndexData(level)
+			lodICount := mdl.LODIndexCount(level)
+			if lodVData != nil && lodIData != nil {
+				if err := s.r.InitMeshBuffers(lodBGP, lodVData, lodIData, lodICount); err != nil {
+					panic(fmt.Sprintf("scene: failed to init LOD%d mesh BGP for model %q: %v", level, mdl.Name(), err))
+				}
+			}
+		}
+	}
+
 	// Identify the compute group from the compute shader's declarations.
 	// The animation data binding (simple or skeletal) identifies the correct group.
 	computeGroup := 0
@@ -3188,6 +3208,7 @@ func (s *scene) pruneAnimator(a animator.Animator) {
 
 	// Remove reverse-index entry.
 	delete(s.instanceLookup, a)
+	delete(s.lodLevelCache, a)
 
 	// Notify the shadow system to re-render next frame, clearing any stale atlas entries.
 	if sh := s.lightHandler.ShadowHandler(); sh != nil {

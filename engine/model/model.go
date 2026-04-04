@@ -204,6 +204,53 @@ type Model interface {
 	// Parameters:
 	//   - count: the index count to set
 	SetIndexCount(count int)
+
+	// LODCount returns the number of available Level-of-Detail mesh variants.
+	// Returns 1 when no LOD data has been set (base mesh only).
+	//
+	// Returns:
+	//   - int: the LOD level count (1 = base only, 3 = base + LOD1 + LOD2)
+	LODCount() int
+
+	// LODVertexData returns the raw vertex data for a specific LOD level.
+	// Level 0 returns the base mesh vertex data. Out-of-range levels fall back to level 0.
+	//
+	// Parameters:
+	//   - level: the LOD level (0 = base, 1 = LOD1, 2 = LOD2)
+	//
+	// Returns:
+	//   - []byte: the vertex data for the requested LOD level
+	LODVertexData(level int) []byte
+
+	// LODIndexData returns the raw index data for a specific LOD level.
+	// Level 0 returns the base mesh index data. Out-of-range levels fall back to level 0.
+	//
+	// Parameters:
+	//   - level: the LOD level (0 = base, 1 = LOD1, 2 = LOD2)
+	//
+	// Returns:
+	//   - []byte: the index data for the requested LOD level
+	LODIndexData(level int) []byte
+
+	// LODIndexCount returns the number of indices for a specific LOD level.
+	// Level 0 returns the base mesh index count. Out-of-range levels fall back to level 0.
+	//
+	// Parameters:
+	//   - level: the LOD level (0 = base, 1 = LOD1, 2 = LOD2)
+	//
+	// Returns:
+	//   - int: the index count for the requested LOD level
+	LODIndexCount(level int) int
+
+	// LODMeshProvider returns the BindGroupProvider for a specific LOD level.
+	// Level 0 returns the base mesh provider. Out-of-range levels fall back to level 0.
+	//
+	// Parameters:
+	//   - level: the LOD level (0 = base, 1 = LOD1, 2 = LOD2)
+	//
+	// Returns:
+	//   - bind_group_provider.BindGroupProvider: the mesh provider for the requested LOD level
+	LODMeshProvider(level int) bind_group_provider.BindGroupProvider
 }
 
 var _ Model = &model{}
@@ -233,6 +280,44 @@ func (m *model) CastsShadows() bool                                    { return 
 func (m *model) SetCastsShadows(casts bool)                            { m.castsShadows = casts }
 func (m *model) ShadowCullMode() ShadowCullMode                        { return m.shadowCullMode }
 func (m *model) SetShadowCullMode(mode ShadowCullMode)                 { m.shadowCullMode = mode }
+
+func (m *model) LODCount() int { return 1 + len(m.lodProviders) }
+
+func (m *model) LODVertexData(level int) []byte {
+	if level <= 0 || level > len(m.lodVertexData) {
+		return m.vertexData
+	}
+	return m.lodVertexData[level-1]
+}
+
+func (m *model) LODIndexData(level int) []byte {
+	if level <= 0 || level > len(m.lodIndexData) {
+		return m.indexData
+	}
+	return m.lodIndexData[level-1]
+}
+
+func (m *model) LODIndexCount(level int) int {
+	if level <= 0 || level > len(m.lodIndexCounts) {
+		return m.indexCount
+	}
+	idx := level - 1
+	if idx >= len(m.lodProviders) || m.lodProviders[idx].VertexBuffer() == nil {
+		return m.indexCount
+	}
+	return m.lodIndexCounts[level-1]
+}
+
+func (m *model) LODMeshProvider(level int) bind_group_provider.BindGroupProvider {
+	if level <= 0 || len(m.lodProviders) == 0 || level > len(m.lodProviders) {
+		return m.meshProvider
+	}
+	idx := level - 1
+	if m.lodProviders[idx].VertexBuffer() == nil {
+		return m.meshProvider
+	}
+	return m.lodProviders[idx]
+}
 
 func (m *model) SetEffectProvider(provider bind_group_provider.BindGroupProvider) {
 	m.effectProvider = provider

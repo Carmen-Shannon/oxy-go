@@ -37,7 +37,7 @@ func main() {
 		eng.Window(),
 		renderer.WithPresentMode(renderer.PresentModeUncapped),
 		renderer.WithMSAA(renderer.MSAAOff),
-		renderer.WithGPUSerializedProfiling(true),
+		renderer.WithGPUSerializedProfiling(false),
 	)
 
 	// ── Camera ──────────────────────────────────────────────────────────
@@ -61,6 +61,8 @@ func main() {
 	sc := scene.NewScene("Sponza Scene", cam, r,
 		scene.WithActive(true),
 		scene.WithScreenSize(eng.Window().Width(), eng.Window().Height()),
+		scene.WithLODEnabled(true),
+		scene.WithLODDistances(50.0, 150.0),
 		scene.WithLighting(light.NewLightingHandler(
 			light.WithShadowHandler(light.NewShadowHandler(
 				light.WithPCFRadius(1.0),

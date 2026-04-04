@@ -56,7 +56,10 @@ The `NewScene` constructor accepts variadic `SceneBuilderOption` functions:
 | `WithLighting(handler)`                             | Sets the `light.LightingHandler` for the scene. Enables lighting, shadows, and Forward+ culling.           |
 | `WithPhysics(opts ...physics.PhysicsBuilderOption)` | Configures the physics subsystem with the given builder options; constructs the Physics handler internally |
 | `WithScreenSize(width, height)`                     | Sets the initial screen dimensions for light culling tile calculations and shadow map setup.               |
-| `WithMaxBonesGPU`                                   | `n uint64` — Sets the maximum number of bones per model for GPU buffer allocation                          |
+| `WithMaxBonesGPU(n uint64)`                         | Sets the maximum number of bones per skinned model instance for GPU buffer allocation. Default: `64`.      |
+| `WithLODEnabled(enabled bool)`                      | Enables per-frame distance-based LOD mesh selection.                                                       |
+| `WithLODDistances(lod1, lod2 float32)`              | Camera distance thresholds: objects beyond `lod1` use LOD1; objects beyond `lod2` use LOD2.                |
+| `WithLODShadowBias(bias int)`                       | Extra LOD levels applied to shadow rendering. Default: `1` (shadow passes use one coarser LOD level).      |
 
 ---
 
@@ -116,20 +119,43 @@ All lighting/shadow/culling initialization methods (`initLighting`, `initShadowM
 
 ### Frame Methods
 
-| Method                         | Description                                                                                                                                                                                 |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PrepareCompute(deltaTime)`    | Updates camera, syncs light positions, advances animations, uploads buffers, dispatches compute shaders. Must be called within `BeginComputeFrame`/`EndComputeFrame`.                       |
-| `DrawCalls() error`            | Issues instanced draw calls for all animators. Must be called within `BeginFrame`/`EndFrame`. Uses indirect draw when frustum culling is active.                                            |
-| `PrepareShadows()`             | Renders shadow depth passes for all shadow-casting lights                                                                                                                                   |
-| `PrepareLightCulling()`        | Dispatches the Forward+ tile light culling compute pass                                                                                                                                     |
-| `PrepareGBuffer()`             | Renders the G-Buffer MRT pre-pass (normals, albedo, depth)                                                                                                                                  |
-| `PrepareSSAO()`                | Dispatches the SSAO compute pass and bilateral blur                                                                                                                                         |
-| `PrepareContactShadows()`      | Dispatches the screen-space contact shadow ray march compute pass                                                                                                                           |
-| `PrepareSSR()`                 | Dispatches the Hi-Z SSR compute pass                                                                                                                                                        |
-| `PrepareLuminance(dt float32)` | Dispatches the GPU luminance compute pass to update the adapted exposure buffer. Must be called after `DrawCalls` and after `PrepareSSR`. No-op when auto-exposure is disabled.             |
-| `PrepareBloom()`               | Dispatches the bloom compute passes (downsample chain then upsample chain). Runs its own `BeginComputeFrame`/`EndComputeFrame`. Called after SSR/luminance and before `PrepareComposition`. |
-| `PrepareComposition()`         | Dispatches the ACES tone-mapping composition pass                                                                                                                                           |
-| `BeginHDRFrame() error`        | Begins the HDR lit draw pass (Forward+ lit fragment shader)                                                                                                                                 |
+| Method                            | Description                                                                                                                                                                       |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SyncFrameSlot(slot int)`         | Switches all dual-slot GPU resources to the given frame slot. Call once per frame after `SyncGPUTimestamps` and before any `Prepare*` calls.                                      |
+| `PrepareCompute(deltaTime)`       | Updates camera matrices, advances animation state, uploads staged buffer writes, and dispatches all compute shaders. Must be called within `BeginComputeFrame`/`EndComputeFrame`. |
+| `DrawCalls() error`               | Issues instanced draw calls for all animators. Must be called within `BeginFrame`/`EndFrame`. Uses indirect draw when frustum culling is active.                                  |
+| `PrepareShadows()`                | Renders all shadow depth passes: dual-cascade CSM + spot/point cube shadow atlas with viewport switching.                                                                         |
+| `PrepareLights()`                 | Marshals the current light list into the GPU light buffer. Must be called after `PrepareShadows` so shadow index assignments are up to date.                                      |
+| `PrepareLightCulling()`           | Updates the light cull uniform buffer and dispatches the Forward+ tile assignment compute shader.                                                                                 |
+| `PrepareGBuffer()`                | Renders the G-Buffer MRT pre-pass (normals, albedo, depth)                                                                                                                        |
+| `PrepareSSAO()`                   | Dispatches the SSAO compute pass and bilateral blur                                                                                                                               |
+| `PrepareContactShadows()`         | Dispatches the screen-space contact shadow ray march compute pass                                                                                                                 |
+| `PrepareSSR()`                    | Dispatches the Hi-Z SSR compute pass                                                                                                                                              |
+| `PrepareLuminance(dt float32)`    | Dispatches the GPU luminance compute pass to update the adapted exposure buffer. Must be called after `DrawCalls` and after `PrepareSSR`. No-op when auto-exposure is disabled.   |
+| `PrepareBloom()`                  | Dispatches the bloom downsample and upsample compute passes. Must be called after `PrepareLuminance` and before `PrepareComposition`.                                             |
+| `AcquireCompositionFrame() error` | Acquires the swapchain image for the composition pass. Must be called immediately before `PrepareComposition` each frame.                                                         |
+| `PrepareComposition()`            | Runs the fullscreen composition pass: ACES tone mapping and gamma correction, writes the final LDR result to the swapchain.                                                       |
+| `BeginHDRFrame() error`           | Opens the HDR render pass targeting the composition handler's textures. Must be called before `DrawCalls` each frame.                                                             |
+
+### Per-Frame Render Order
+
+The following sequence matches the engine's `handleRender` call order each frame:
+
+1. `SyncFrameSlot` — switch dual-slot GPU resources to the current frame slot
+2. `PrepareCompute` — camera update, animation advance, buffer writes, compute dispatch
+3. `PrepareShadows` — shadow depth passes (CSM + spot/point atlas)
+4. `PrepareLights` — marshal updated light list into the GPU light buffer
+5. `PrepareGBuffer` — G-Buffer MRT pre-pass (normals, albedo, depth)
+6. `PrepareLightCulling` — Forward+ tile assignment compute shader
+7. `PrepareSSAO` — SSAO hemisphere sampling and bilateral blur
+8. `PrepareContactShadows` — contact shadow screen-space ray march
+9. `BeginHDRFrame` — open the HDR render pass
+10. `DrawCalls` — instanced draw calls (regular or indirect)
+11. `PrepareSSR` — SSR Hi-Z ray march compute shader
+12. `PrepareLuminance` — luminance compute for auto-exposure adaptation
+13. `PrepareBloom` — bloom downsample/upsample compute chain
+14. `AcquireCompositionFrame` — acquire swapchain image
+15. `PrepareComposition` — ACES tone mapping, write LDR to swapchain
 
 ---
 

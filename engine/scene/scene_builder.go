@@ -163,6 +163,51 @@ func WithMaxBonesGPU(n uint64) SceneBuilderOption {
 	}
 }
 
+// WithLODEnabled enables or disables per-frame Level-of-Detail mesh selection.
+// When enabled, the scene selects LOD levels based on camera distance each frame.
+//
+// Parameters:
+//   - enabled: true to enable LOD selection
+//
+// Returns:
+//   - SceneBuilderOption: option function to apply
+func WithLODEnabled(enabled bool) SceneBuilderOption {
+	return func(s *scene) {
+		s.lodEnabled = enabled
+	}
+}
+
+// WithLODDistances sets the camera distance thresholds for LOD level transitions.
+// Objects farther than lod1 use LOD1; objects farther than lod2 use LOD2.
+//
+// Parameters:
+//   - lod1: distance at which LOD1 activates
+//   - lod2: distance at which LOD2 activates (must be > lod1)
+//
+// Returns:
+//   - SceneBuilderOption: option function to apply
+func WithLODDistances(lod1, lod2 float32) SceneBuilderOption {
+	return func(s *scene) {
+		s.lod1Distance = lod1
+		s.lod2Distance = lod2
+	}
+}
+
+// WithLODShadowBias sets the number of extra LOD levels applied to shadow
+// rendering. A bias of 1 means shadows use one coarser LOD level than the
+// visible mesh, reducing shadow pass geometry.
+//
+// Parameters:
+//   - bias: additional LOD levels for shadow passes (default 1)
+//
+// Returns:
+//   - SceneBuilderOption: option function to apply
+func WithLODShadowBias(bias int) SceneBuilderOption {
+	return func(s *scene) {
+		s.lodShadowBias = bias
+	}
+}
+
 // NewScene creates a new Scene with the given camera and renderer. Both are
 // required and NewScene panics if either is nil. The camera's bind group layout
 // is resolved from the pre-processor declarations of the engine's standard
@@ -204,6 +249,8 @@ func NewScene(name string, cam camera.Camera, r renderer.Renderer, options ...Sc
 		lightHandler:           light.NewLightingHandler(),
 		physicsSyncGroup:       make(map[int]bind_group_provider.BindGroupProvider),
 		physicsAnimBinding:     -1,
+		lodLevelCache:          make(map[animator.Animator]int),
+		lodShadowBias:          1,
 	}
 
 	for _, option := range options {

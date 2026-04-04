@@ -548,15 +548,16 @@ shadow := light.NewShadowHandler(
 
 **Builder Options (`ShadowHandlerOption`):**
 
-| Option                      | Parameters          | Default        | Description                                  |
-| --------------------------- | ------------------- | -------------- | -------------------------------------------- |
-| `WithShadowNearFar`         | `near, far float32` | `0.1`, `200.0` | Near/far planes for shadow projection        |
-| `WithShadowNormalBiasScale` | `scale float32`     | `3.0`          | Normal-offset bias multiplier                |
-| `WithShadowMapResolution`   | `resolution int`    | `2048`         | CSM atlas resolution in texels               |
-| `WithPCFRadius`             | `radius float32`    | `1.0`          | Poisson disk PCF kernel radius in texels     |
-| `WithPCFSamples`            | `samples uint32`    | `16`           | Poisson disk tap count                       |
-| `WithShadowInnerRadius`     | `radius float32`    | `100.0`        | Inner cascade sphere radius in world units   |
-| `WithLightShadowTileSize`   | `size int`          | `1024`         | Tile size for the spot/point atlas in texels |
+| Option                      | Parameters          | Default        | Description                                     |
+| --------------------------- | ------------------- | -------------- | ----------------------------------------------- |
+| `WithShadowNearFar`         | `near, far float32` | `0.1`, `200.0` | Near/far planes for shadow projection           |
+| `WithShadowNormalBiasScale` | `scale float32`     | `3.0`          | Normal-offset bias multiplier                   |
+| `WithShadowMapResolution`   | `resolution int`    | `2048`         | CSM atlas resolution in texels                  |
+| `WithPCFRadius`             | `radius float32`    | `1.0`          | Poisson disk PCF kernel radius in texels        |
+| `WithPCFSamples`            | `samples uint32`    | `16`           | Poisson disk tap count for directional CSM PCF  |
+| `WithPCFSamplesSpot`        | `samples uint32`    | `8`            | Poisson disk tap count for spot/point light PCF |
+| `WithShadowInnerRadius`     | `radius float32`    | `100.0`        | Inner cascade sphere radius in world units      |
+| `WithLightShadowTileSize`   | `size int`          | `1024`         | Tile size for the spot/point atlas in texels    |
 
 **Key Interface Methods:**
 
@@ -567,7 +568,8 @@ shadow := light.NewShadowHandler(
 | `ShadowNormalBiasScale() float32`                                                            | Normal-offset bias multiplier        |
 | `ShadowMapResolution() int`                                                                  | CSM atlas resolution in texels       |
 | `PCFRadius() float32`                                                                        | PCF kernel radius in texels          |
-| `PCFSamples() uint32`                                                                        | PCF tap count                        |
+| `PCFSamples() uint32`                                                                        | PCF tap count for directional CSM    |
+| `PCFSamplesSpot() uint32`                                                                    | PCF tap count for spot/point lights  |
 | `ShadowInnerRadius() float32`                                                                | Inner cascade sphere radius          |
 | `LightShadowTileSize() int`                                                                  | Spot/point atlas tile size           |
 | `CascadeCount() int`                                                                         | Always 2 (dual-cascade)              |

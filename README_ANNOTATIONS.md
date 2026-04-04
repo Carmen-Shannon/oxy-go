@@ -173,7 +173,7 @@ Replaces the annotation line with a WGSL `const` declaration whose value is supp
 
 **Behavior:** The annotation line is replaced with `const <const_name>: <wgsl_type> = <value>;`. No `Annotation` declaration entry is produced — `@oxy:inject` is purely a source substitution.
 
-**Valid injection keys:** `max_bones`, `max_ssao_samples`, `tile_size`, `max_lights_per_tile`, `num_threads`, `slots_per_cell`, `flag_active`, `flag_static`, `flag_kinematic`, `empty_sentinel`, `body_idx_mask`, `pcf_samples`, `light_type_directional`, `light_type_point`, `light_type_spot`
+**Valid injection keys:** `max_bones`, `max_ssao_samples`, `tile_size`, `max_lights_per_tile`, `num_threads`, `slots_per_cell`, `flag_active`, `flag_static`, `flag_kinematic`, `empty_sentinel`, `body_idx_mask`, `pcf_samples`, `pcf_samples_spot`, `light_type_directional`, `light_type_point`, `light_type_spot`, `luminance_workgroup_size`
 
 **Example:**
 
@@ -223,6 +223,8 @@ These are the valid `struct_type` values for `@oxy:include` and `@oxy:group` ann
 | `blur_params`\*           | `BlurParams`            | `light.GPUBlurParams`               | `engine/light/assets/blur-params.wgsl`                         |
 | `composition_params`\*    | `CompositionParams`     | `light.GPUCompositionParams`        | `engine/light/assets/composition-params.wgsl`                  |
 | `ssr_params`\*            | `SSRParams`             | `light.GPUSSRParams`                | `engine/light/assets/ssr-params.wgsl`                          |
+| `luminance_params`\*      | `LuminanceParams`       | `light.GPULuminanceParams`          | `engine/light/assets/luminance-params.wgsl`                    |
+| `bloom_params`\*          | `BloomParams`           | `light.GPUBloomParams`              | `engine/light/assets/bloom-params.wgsl`                        |
 
 \* Unexported keys — used internally by the pre-processor but cannot be matched from outside the shader package.
 
@@ -244,24 +246,27 @@ These are the valid `address_space` values for `@oxy:group` annotations.
 
 These are the valid `provider_identity` values for `@oxy:provider` annotations. Each maps to a specific Scene-level resource provider that the Scene's draw call and compute setup logic uses to wire BindGroupProviders.
 
-| Argument Key       | Description                                           | Typical Bindings                                         |
-| ------------------ | ----------------------------------------------------- | -------------------------------------------------------- |
-| `camera`           | Camera uniform provider                               | `CameraUniform`                                          |
-| `material`         | Material textures, samplers, and uniforms             | `texture_2d`, `sampler`, material params                 |
-| `lights`           | Light storage buffer provider                         | `LightHeader`, `array<Light>`                            |
-| `shadow`           | Shadow map texture and comparison sampler             | `texture_depth_2d_array`, `sampler_comparison`           |
-| `tiles`            | Forward+ tile culling data                            | `array<u32>` counts/indices                              |
-| `effect`           | Visual effect/overlay parameters                      | `OverlayParams`, `EffectParams`                          |
-| `animator`         | Skinned vertex shader instance buffer                 | `array<vec4<f32>>` bone/transform data                   |
-| `animator_output`  | Compute shader output transforms buffer               | `array<f32>` (shared with vertex shader instance buffer) |
-| `animator_packed`  | Packed animation data (clips, channels, keyframes)    | `array<u32>` flat packed buffer                          |
-| `animator_scratch` | Scratch bone matrix workspace for blending            | `array<mat4x4<f32>>`                                     |
-| `ssao`             | SSAO blurred occlusion texture + sampler (lit pass)   | `texture_2d<f32>`, `sampler`                             |
-| `contact_shadows`  | Contact shadow occlusion texture + sampler (lit pass) | `texture_2d<f32>`, `sampler`                             |
-| `composition`      | Composition HDR + SSR textures + sampler + params     | `texture_2d<f32>`, `sampler`, `CompositionParams`        |
-| `ssr`              | SSR compute I/O (G-Buffer + HDR + output + params)    | `texture_2d<f32>`, `texture_storage_2d`, `SSRParams`     |
-| `hiz_init`         | Hi-Z init (G-Buffer depth → Hi-Z mip 0 copy)          | `texture_2d<f32>`, `texture_storage_2d`                  |
-| `hiz_down`         | Hi-Z downsample (mip N-1 → mip N min-downsample)      | `texture_2d<f32>`, `texture_storage_2d`                  |
+| Argument Key       | Description                                                  | Typical Bindings                                         |
+| ------------------ | ------------------------------------------------------------ | -------------------------------------------------------- |
+| `camera`           | Camera uniform provider                                      | `CameraUniform`                                          |
+| `material`         | Material textures, samplers, and uniforms                    | `texture_2d`, `sampler`, material params                 |
+| `lights`           | Light storage buffer provider                                | `LightHeader`, `array<Light>`                            |
+| `shadow`           | Shadow map texture and comparison sampler                    | `texture_depth_2d_array`, `sampler_comparison`           |
+| `tiles`            | Forward+ tile culling data                                   | `array<u32>` counts/indices                              |
+| `effect`           | Visual effect/overlay parameters                             | `OverlayParams`, `EffectParams`                          |
+| `animator`         | Skinned vertex shader instance buffer                        | `array<vec4<f32>>` bone/transform data                   |
+| `animator_output`  | Compute shader output transforms buffer                      | `array<f32>` (shared with vertex shader instance buffer) |
+| `animator_packed`  | Packed animation data (clips, channels, keyframes)           | `array<u32>` flat packed buffer                          |
+| `animator_scratch` | Scratch bone matrix workspace for blending                   | `array<mat4x4<f32>>`                                     |
+| `ssao`             | SSAO blurred occlusion texture + sampler (lit pass)          | `texture_2d<f32>`, `sampler`                             |
+| `contact_shadows`  | Contact shadow occlusion texture + sampler (lit pass)        | `texture_2d<f32>`, `sampler`                             |
+| `composition`      | Composition HDR + SSR textures + sampler + params            | `texture_2d<f32>`, `sampler`, `CompositionParams`        |
+| `ssr`              | SSR compute I/O (G-Buffer + HDR + output + params)           | `texture_2d<f32>`, `texture_storage_2d`, `SSRParams`     |
+| `hiz_init`         | Hi-Z init (G-Buffer depth → Hi-Z mip 0 copy)                 | `texture_2d<f32>`, `texture_storage_2d`                  |
+| `hiz_down`         | Hi-Z downsample (mip N-1 → mip N min-downsample)             | `texture_2d<f32>`, `texture_storage_2d`                  |
+| `hiz_down_max`     | Hi-Z MAX pyramid downsample (mip N-1 → mip N)                | `texture_2d<f32>`, `texture_storage_2d`                  |
+| `animator_hiz`     | Animator Hi-Z min pyramid for SSR ray march visibility       | `texture_2d<f32>`                                        |
+| `animator_max_hiz` | Animator MAX Hi-Z pyramid for per-instance occlusion culling | `texture_2d<f32>`                                        |
 
 ---
 
@@ -269,29 +274,30 @@ These are the valid `provider_identity` values for `@oxy:provider` annotations. 
 
 These are the valid `binding_role` values for the optional fourth argument of `@oxy:provider` annotations. They qualify individual bindings within a material provider group, telling the loader which texture or sampler role each binding fulfils.
 
-| Argument Key                 | Description                                              |
-| ---------------------------- | -------------------------------------------------------- |
-| `diffuse_texture`            | Diffuse / base-color `texture_2d<f32>` binding           |
-| `diffuse_sampler`            | Sampler paired with the diffuse texture                  |
-| `normal_texture`             | Tangent-space normal map `texture_2d<f32>` binding       |
-| `normal_sampler`             | Sampler paired with the normal map                       |
-| `metallic_roughness_texture` | Combined metallic-roughness `texture_2d<f32>` binding    |
-| `metallic_roughness_sampler` | Sampler paired with the metallic-roughness texture       |
-| `ssao_texture`               | SSAO blurred occlusion `texture_2d<f32>` binding         |
-| `ssao_sampler`               | Sampler paired with the SSAO occlusion texture           |
-| `gbuffer_normal`             | G-Buffer world-normal `texture_2d<f32>` binding          |
-| `gbuffer_depth`              | G-Buffer depth `texture_2d<f32>` binding                 |
-| `hdr_texture`                | HDR lit result `texture_2d<f32>` binding                 |
-| `ssr_output`                 | SSR compute output `texture_storage_2d` binding          |
-| `ssr_texture`                | SSR result `texture_2d<f32>` binding (composition)       |
-| `composition_sampler`        | Linear sampler for composition pass                      |
-| `hiz_out`                    | Hi-Z output `texture_storage_2d` binding                 |
-| `hiz_in`                     | Hi-Z input `texture_2d<f32>` binding (previous mip)      |
-| `hiz_texture`                | Full Hi-Z depth pyramid `texture_2d<f32>` binding        |
-| `spot_shadow_texture`        | Spot/point light shadow atlas depth texture binding      |
-| `contact_shadow_texture`     | Contact shadow occlusion `texture_2d<f32>` binding       |
-| `contact_shadow_sampler`     | Sampler paired with the contact shadow occlusion texture |
-| `material_params`            | Per-material scalar parameters uniform binding           |
+| Argument Key                 | Description                                                          |
+| ---------------------------- | -------------------------------------------------------------------- |
+| `diffuse_texture`            | Diffuse / base-color `texture_2d<f32>` binding                       |
+| `diffuse_sampler`            | Sampler paired with the diffuse texture                              |
+| `normal_texture`             | Tangent-space normal map `texture_2d<f32>` binding                   |
+| `normal_sampler`             | Sampler paired with the normal map                                   |
+| `metallic_roughness_texture` | Combined metallic-roughness `texture_2d<f32>` binding                |
+| `metallic_roughness_sampler` | Sampler paired with the metallic-roughness texture                   |
+| `ssao_texture`               | SSAO blurred occlusion `texture_2d<f32>` binding                     |
+| `ssao_sampler`               | Sampler paired with the SSAO occlusion texture                       |
+| `gbuffer_normal`             | G-Buffer world-normal `texture_2d<f32>` binding                      |
+| `gbuffer_depth`              | G-Buffer depth `texture_2d<f32>` binding                             |
+| `hdr_texture`                | HDR lit result `texture_2d<f32>` binding                             |
+| `ssr_output`                 | SSR compute output `texture_storage_2d` binding                      |
+| `ssr_texture`                | SSR result `texture_2d<f32>` binding (composition)                   |
+| `composition_sampler`        | Linear sampler for composition pass                                  |
+| `hiz_out`                    | Hi-Z output `texture_storage_2d` binding                             |
+| `hiz_in`                     | Hi-Z input `texture_2d<f32>` binding (previous mip)                  |
+| `hiz_texture`                | Full Hi-Z depth pyramid `texture_2d<f32>` binding                    |
+| `hiz_max_texture`            | MAX Hi-Z depth pyramid `texture_2d<f32>` binding (occlusion culling) |
+| `spot_shadow_texture`        | Spot/point light shadow atlas depth texture binding                  |
+| `contact_shadow_texture`     | Contact shadow occlusion `texture_2d<f32>` binding                   |
+| `contact_shadow_sampler`     | Sampler paired with the contact shadow occlusion texture             |
+| `material_params`            | Per-material scalar parameters uniform binding                       |
 
 **Usage:** Binding roles qualify the semantic purpose of an individual binding within any multi-binding `@oxy:provider` group — not just `material` providers. The remaining roles listed above (`ssao_*`, `gbuffer_*`, `hdr_*`, `ssr_*`, `composition_*`, `hiz_*`) are used by the GI subsystem providers (`ssao`, `composition`, `ssr`, `hiz_init`, `hiz_down`). Each binding in the material group should have its own `@oxy:provider` annotation with a role:
 
