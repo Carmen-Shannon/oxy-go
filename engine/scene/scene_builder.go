@@ -251,6 +251,8 @@ func NewScene(name string, cam camera.Camera, r renderer.Renderer, options ...Sc
 		physicsAnimBinding:     -1,
 		lodLevelCache:          make(map[animator.Animator]int),
 		lodShadowBias:          1,
+		drawBindGroupCache:     make(map[drawCacheKey][]bind_group_provider.BindGroupProvider),
+		drawCacheDirty:         true,
 	}
 
 	for _, option := range options {

@@ -38,6 +38,13 @@ type boneParticleUpdateGroup struct {
 	instanceIndex uint32
 }
 
+// drawCacheKey uniquely identifies a cached bind group slice for one
+// (animator, material pipeline) pair.
+type drawCacheKey struct {
+	anim        animator.Animator
+	pipelineKey string
+}
+
 type scene struct {
 	mu *sync.RWMutex
 
@@ -124,6 +131,12 @@ type scene struct {
 	lod2Distance  float32
 	lodShadowBias int
 	lodLevelCache map[animator.Animator]int
+
+	// drawBindGroupCache caches the resolved []BindGroupProvider for each
+	// (animator, pipeline) pair. Rebuilt in parallel when drawCacheDirty is true;
+	// consumed directly by the serial draw loop each frame.
+	drawBindGroupCache map[drawCacheKey][]bind_group_provider.BindGroupProvider
+	drawCacheDirty     bool
 }
 
 // shadowPipelineKey resolves the shadow depth pipeline key for the given model
