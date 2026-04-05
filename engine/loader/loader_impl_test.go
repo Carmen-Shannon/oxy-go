@@ -187,6 +187,38 @@ func (suite *loaderImplTest) TestImportedToModel() {
 		suite.NoError(err)
 		suite.Equal(1, result.LODCount())
 	})
+
+	suite.Run("generates LOD1 for skinned mesh with sufficient triangles", func() {
+		verts, indices := makeLODGridVerts(5, 5, 0.2)
+		imported := &model.ImportedModel{
+			Name: "skinned-lod1",
+			Skeleton: &model.Skeleton{
+				Bones: []model.Bone{{Name: "root"}},
+			},
+			Meshes: []model.ImportedMesh{
+				{Vertices: verts, Indices: indices},
+			},
+		}
+		result, err := suite.l.importedToModel(imported)
+		suite.NoError(err)
+		suite.Greater(result.LODCount(), 1)
+	})
+
+	suite.Run("generates LOD2 for skinned mesh with sufficient triangles", func() {
+		verts, indices := makeLODGridVerts(5, 5, 0.2)
+		imported := &model.ImportedModel{
+			Name: "skinned-lod2",
+			Skeleton: &model.Skeleton{
+				Bones: []model.Bone{{Name: "root"}},
+			},
+			Meshes: []model.ImportedMesh{
+				{Vertices: verts, Indices: indices},
+			},
+		}
+		result, err := suite.l.importedToModel(imported)
+		suite.NoError(err)
+		suite.Equal(3, result.LODCount())
+	})
 }
 
 func (suite *loaderImplTest) TestLoad() {
@@ -364,6 +396,54 @@ func (suite *loaderImplTest) TestImportedToModels() {
 		suite.Len(result, 1)
 		suite.Equal([3]float32{}, result[0].BoundingMin())
 		suite.Equal([3]float32{}, result[0].BoundingMax())
+	})
+
+	suite.Run("generates LOD levels for non-skinned multi-triangle group", func() {
+		verts, indices := makeLODGridVerts(5, 5, 0.2)
+		imported := &model.ImportedModel{
+			Name: "lod-group",
+			Meshes: []model.ImportedMesh{
+				{Vertices: verts, Indices: indices, MaterialIndex: 0},
+			},
+			Materials: []common.ImportedMaterial{{Name: "mat0"}},
+		}
+		result, err := suite.l.importedToModels(imported)
+		suite.NoError(err)
+		suite.Len(result, 1)
+		suite.Greater(result[0].LODCount(), 1)
+	})
+
+	suite.Run("generates LOD levels for skinned multi-triangle group", func() {
+		verts, indices := makeLODGridVerts(5, 5, 0.2)
+		imported := &model.ImportedModel{
+			Name: "skinned-lod-group",
+			Skeleton: &model.Skeleton{
+				Bones: []model.Bone{{Name: "root"}},
+			},
+			Meshes: []model.ImportedMesh{
+				{Vertices: verts, Indices: indices, MaterialIndex: 0},
+			},
+			Materials: []common.ImportedMaterial{{Name: "mat0"}},
+		}
+		result, err := suite.l.importedToModels(imported)
+		suite.NoError(err)
+		suite.Len(result, 1)
+		suite.Greater(result[0].LODCount(), 1)
+	})
+
+	suite.Run("skips LOD generation in importedToModels when triangle count is less than 16", func() {
+		verts, indices := makeLODGridVerts(3, 3, 0.2)
+		imported := &model.ImportedModel{
+			Name: "small-lod-group",
+			Meshes: []model.ImportedMesh{
+				{Vertices: verts, Indices: indices, MaterialIndex: 0},
+			},
+			Materials: []common.ImportedMaterial{{Name: "mat0"}},
+		}
+		result, err := suite.l.importedToModels(imported)
+		suite.NoError(err)
+		suite.Len(result, 1)
+		suite.Equal(1, result[0].LODCount())
 	})
 }
 
