@@ -12438,10 +12438,730 @@ func (suite *sceneImplTest) TestRefreshAnimatorHiZBindGroupsFallbackView() {
 		suite.rendererMock.EXPECT().Pipeline("hiz_compute").Return(pipeMock).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(hiZBGPMock, mock.Anything, mock.Anything, mock.Anything).
 			Return(errors.New("bg err")).Maybe()
-
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
 		suite.NotPanics(func() { suite.scene.refreshAnimatorHiZBindGroups() })
+	})
+}
+
+func (suite *sceneImplTest) TestDrawCallsDirtyPrePassGuardContinues() {
+	suite.Run("nil compute pool fires continue in pre-pass", func() {
+		suite.scene.drawCacheDirty = true
+		suite.scene.drawBindGroupCache = make(map[drawCacheKey][]bind_group_provider.BindGroupProvider)
+		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
+
+		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		matMock := material_mocks.NewMockMaterial(suite.T())
+		matMock.EXPECT().PipelineKey().Return("k_nilpool").Twice()
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
+		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Twice()
+		renderShdrMock := shader_mocks.NewMockShader(suite.T())
+		renderShdrMock.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
+		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
+		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(renderShdrMock).Twice()
+		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
+		animMock.EXPECT().Model().Return(mockModel).Twice()
+		animMock.EXPECT().CullingEnabled().Return(false).Once()
+		suite.rendererMock.EXPECT().Pipeline("k_nilpool").Return(mockPipe).Twice()
+		suite.rendererMock.EXPECT().DrawCall("k_nilpool", meshBGP, uint32(1), mock.Anything).Return(nil).Once()
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
+		suite.NoError(suite.scene.DrawCalls())
+	})
+
+	suite.Run("six bad animators plus good animator trigger all pre-pass guard continues", func() {
+		suite.scene.drawCacheDirty = true
+		suite.scene.drawBindGroupCache = make(map[drawCacheKey][]bind_group_provider.BindGroupProvider)
+		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
+		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
+
+		// badAnim1: InstanceCount=0 fires pre-pass guard 1 and serial guard 1.
+		badAnim1 := animator_mocks.NewMockAnimator(suite.T())
+		badAnim1.EXPECT().InstanceCount().Return(uint32(0)).Twice()
+
+		// badAnim2: InstanceCount=1, Model=nil fires pre-pass guard 2 and serial guard 2.
+		badAnim2 := animator_mocks.NewMockAnimator(suite.T())
+		badAnim2.EXPECT().InstanceCount().Return(uint32(1)).Twice()
+		badAnim2.EXPECT().Model().Return(nil).Twice()
+
+		// badAnim3: valid model but empty materials fires pre-pass guard 3 and serial guard 3.
+		meshBGP3 := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		model3 := model_mocks.NewMockModel(suite.T())
+		model3.EXPECT().RenderMaterials().Return([]material.Material{}).Twice()
+		model3.EXPECT().LODMeshProvider(0).Return(meshBGP3).Once()
+		badAnim3 := animator_mocks.NewMockAnimator(suite.T())
+		badAnim3.EXPECT().InstanceCount().Return(uint32(1)).Twice()
+		badAnim3.EXPECT().Model().Return(model3).Twice()
+
+		// badAnim4: valid model, mat with empty pipeline key fires pre-pass guard 4 and serial guard 4.
+		mat4 := material_mocks.NewMockMaterial(suite.T())
+		mat4.EXPECT().PipelineKey().Return("").Twice()
+		meshBGP4 := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		model4 := model_mocks.NewMockModel(suite.T())
+		model4.EXPECT().RenderMaterials().Return([]material.Material{mat4}).Twice()
+		model4.EXPECT().LODMeshProvider(0).Return(meshBGP4).Once()
+		badAnim4 := animator_mocks.NewMockAnimator(suite.T())
+		badAnim4.EXPECT().InstanceCount().Return(uint32(1)).Twice()
+		badAnim4.EXPECT().Model().Return(model4).Twice()
+
+		// badAnim5: mat with valid key but nil pipeline fires pre-pass guard 5 and serial guard 5.
+		mat5 := material_mocks.NewMockMaterial(suite.T())
+		mat5.EXPECT().PipelineKey().Return("k_bad5").Twice()
+		meshBGP5 := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		model5 := model_mocks.NewMockModel(suite.T())
+		model5.EXPECT().RenderMaterials().Return([]material.Material{mat5}).Twice()
+		model5.EXPECT().LODMeshProvider(0).Return(meshBGP5).Once()
+		suite.rendererMock.EXPECT().Pipeline("k_bad5").Return(nil).Twice()
+		badAnim5 := animator_mocks.NewMockAnimator(suite.T())
+		badAnim5.EXPECT().InstanceCount().Return(uint32(1)).Twice()
+		badAnim5.EXPECT().Model().Return(model5).Twice()
+
+		// badAnim6: valid pipeline but nil vertex shader fires pre-pass guard 6 and serial guard 6.
+		mat6 := material_mocks.NewMockMaterial(suite.T())
+		mat6.EXPECT().PipelineKey().Return("k_bad6").Twice()
+		meshBGP6 := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		model6 := model_mocks.NewMockModel(suite.T())
+		model6.EXPECT().RenderMaterials().Return([]material.Material{mat6}).Twice()
+		model6.EXPECT().LODMeshProvider(0).Return(meshBGP6).Once()
+		pipe6 := pipeline_mocks.NewMockPipeline(suite.T())
+		pipe6.EXPECT().Shader(shader.ShaderTypeVertex).Return(nil).Twice()
+		suite.rendererMock.EXPECT().Pipeline("k_bad6").Return(pipe6).Twice()
+		badAnim6 := animator_mocks.NewMockAnimator(suite.T())
+		badAnim6.EXPECT().InstanceCount().Return(uint32(1)).Twice()
+		badAnim6.EXPECT().Model().Return(model6).Twice()
+
+		// goodAnim: fully valid, empty decls. Goroutine runs but returns nil,nil (maxGroup=-1, valid=false).
+		// Serial fallback fires and produces a DrawCall.
+		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		matGood := material_mocks.NewMockMaterial(suite.T())
+		matGood.EXPECT().PipelineKey().Return("k_good").Twice()
+		modelGood := model_mocks.NewMockModel(suite.T())
+		modelGood.EXPECT().RenderMaterials().Return([]material.Material{matGood}).Twice()
+		modelGood.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
+		vertShdrGood := shader_mocks.NewMockShader(suite.T())
+		vertShdrGood.EXPECT().Declarations().Return([]shader.Annotation{}).Twice()
+		pipeGood := pipeline_mocks.NewMockPipeline(suite.T())
+		pipeGood.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrGood).Twice()
+		pipeGood.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Twice()
+		suite.rendererMock.EXPECT().Pipeline("k_good").Return(pipeGood).Twice()
+		suite.rendererMock.EXPECT().DrawCall("k_good", meshBGP, uint32(1), mock.Anything).Return(nil).Once()
+		goodAnim := animator_mocks.NewMockAnimator(suite.T())
+		goodAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
+		goodAnim.EXPECT().Model().Return(modelGood).Twice()
+		goodAnim.EXPECT().CullingEnabled().Return(false).Once()
+
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{
+			mapKey: {badAnim1, badAnim2, badAnim3, badAnim4, badAnim5, badAnim6, goodAnim},
+		}
+		suite.NoError(suite.scene.DrawCalls())
+	})
+}
+
+func (suite *sceneImplTest) TestDrawCallsGoroutineInfrastructure() {
+	suite.Run("goroutine processes multi-group annotations and serial hits cache", func() {
+		suite.scene.drawCacheDirty = true
+		suite.scene.drawBindGroupCache = make(map[drawCacheKey][]bind_group_provider.BindGroupProvider)
+		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
+		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
+
+		camBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		camMock := camera_mocks.NewMockCamera(suite.T())
+		// Called twice in goroutine: g0 Provider+Camera and g1 BindingGroup+Camera.
+		camMock.EXPECT().BindGroupProvider().Return(camBGP).Twice()
+		suite.scene.cam = camMock
+
+		animBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		g0, g1, g2, g3 := 0, 1, 2, 3
+
+		vertAnnotations := []shader.Annotation{
+			// nil group → if decl.Group == nil { continue } in goroutine loop.
+			{Type: shader.AnnotationTypeProvider, Args: []shader.AnnotationArg{shader.AnnotationArgCamera}},
+			// g0, Provider+Camera → camBGP; also exercises if g > maxGroup { maxGroup = g }.
+			{Group: &g0, Type: shader.AnnotationTypeProvider, Args: []shader.AnnotationArg{shader.AnnotationArgCamera}},
+			// g0 duplicate → if _, exists := groupProviders[g]; exists { continue }.
+			{Group: &g0, Type: shader.AnnotationTypeProvider, Args: []shader.AnnotationArg{shader.AnnotationArgAnimator}},
+			// g1, BindingGroup+Camera (non-array) → cam.BindGroupProvider().
+			{Group: &g1, Type: shader.AnnotationTypeBindingGroup, Args: []shader.AnnotationArg{"storage", "v", shader.AnnotationArgCamera}},
+			// g2, BindingGroup+InstanceData via array stripping → OutputBindGroupProvider().
+			{Group: &g2, Type: shader.AnnotationTypeBindingGroup, Args: []shader.AnnotationArg{"storage", "v", shader.AnnotationArg("array<" + string(shader.AnnotationArgInstanceData) + ">")}},
+		}
+		fragAnnotations := []shader.Annotation{
+			// g3, Provider+Animator → OutputBindGroupProvider(); also exercises frag shader non-nil branch.
+			{Group: &g3, Type: shader.AnnotationTypeProvider, Args: []shader.AnnotationArg{shader.AnnotationArgAnimator}},
+		}
+
+		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		matMock := material_mocks.NewMockMaterial(suite.T())
+		matMock.EXPECT().PipelineKey().Return("k_infra").Twice()
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
+		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Twice()
+
+		vertShdrMock := shader_mocks.NewMockShader(suite.T())
+		vertShdrMock.EXPECT().Declarations().Return(vertAnnotations).Once()
+		fragShdrMock := shader_mocks.NewMockShader(suite.T())
+		fragShdrMock.EXPECT().Declarations().Return(fragAnnotations).Once()
+		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
+		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
+		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(fragShdrMock).Once()
+
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
+		animMock.EXPECT().Model().Return(mockModel).Twice()
+		// Called twice in goroutine: g2 BindingGroup+InstanceData (array stripped) and g3 Provider+Animator.
+		animMock.EXPECT().OutputBindGroupProvider().Return(animBGP).Twice()
+		animMock.EXPECT().CullingEnabled().Return(false).Once()
+
+		suite.rendererMock.EXPECT().Pipeline("k_infra").Return(mockPipe).Once()
+		suite.rendererMock.EXPECT().DrawCall("k_infra", meshBGP, uint32(1), mock.MatchedBy(func(bgs []bind_group_provider.BindGroupProvider) bool {
+			return len(bgs) == 4
+		})).Return(nil).Once()
+
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
+		suite.NoError(suite.scene.DrawCalls())
+	})
+}
+
+func (suite *sceneImplTest) TestDrawCallsGoroutineInvalidPath() {
+	suite.Run("goroutine returns nil nil when no valid group provider", func() {
+		suite.scene.drawCacheDirty = true
+		suite.scene.drawBindGroupCache = make(map[drawCacheKey][]bind_group_provider.BindGroupProvider)
+		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
+		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
+
+		// cam returns nil so the goroutine's g1 provider is nil → !valid → return nil, nil.
+		camMock := camera_mocks.NewMockCamera(suite.T())
+		camMock.EXPECT().BindGroupProvider().Return(nil).Twice()
+		suite.scene.cam = camMock
+
+		animBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		g0, g1 := 0, 1
+		annotations := []shader.Annotation{
+			// nil group → if decl.Group == nil { continue }.
+			{Type: shader.AnnotationTypeProvider, Args: []shader.AnnotationArg{shader.AnnotationArgCamera}},
+			// g0, Provider+Animator → animBGP (non-nil → groupProviders[0] set).
+			{Group: &g0, Type: shader.AnnotationTypeProvider, Args: []shader.AnnotationArg{shader.AnnotationArgAnimator}},
+			// g0 duplicate → if _, exists := groupProviders[g]; exists { continue }.
+			{Group: &g0, Type: shader.AnnotationTypeProvider, Args: []shader.AnnotationArg{shader.AnnotationArgCamera}},
+			// g1, Provider+Camera → nil → if provider != nil FALSE → groupProviders[1] not set → !valid.
+			{Group: &g1, Type: shader.AnnotationTypeProvider, Args: []shader.AnnotationArg{shader.AnnotationArgCamera}},
+		}
+
+		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		matMock := material_mocks.NewMockMaterial(suite.T())
+		matMock.EXPECT().PipelineKey().Return("k_ginvalid").Twice()
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
+		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Twice()
+
+		vertShdrMock := shader_mocks.NewMockShader(suite.T())
+		vertShdrMock.EXPECT().Declarations().Return(annotations).Twice()
+		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
+		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Twice()
+		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Twice()
+
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		// No DrawCall: goroutine invalid + serial skipMaterial. Only pre-pass guard + serial guard.
+		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
+		animMock.EXPECT().Model().Return(mockModel).Twice()
+		// Goroutine g0 + serial fallback g0.
+		animMock.EXPECT().OutputBindGroupProvider().Return(animBGP).Twice()
+
+		suite.rendererMock.EXPECT().Pipeline("k_ginvalid").Return(mockPipe).Twice()
+
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
+		suite.NoError(suite.scene.DrawCalls())
+	})
+}
+
+func (suite *sceneImplTest) TestDrawCallsGoroutineAnnotationCoverage() {
+	suite.Run("goroutine provider lights enabled resolves", func() {
+		suite.scene.drawCacheDirty = true
+		suite.scene.drawBindGroupCache = make(map[drawCacheKey][]bind_group_provider.BindGroupProvider)
+		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
+		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
+
+		lightsBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		mockLH := light_mocks.NewMockLightingHandler(suite.T())
+		mockLH.EXPECT().Enabled().Return(true).Once()
+		mockLH.EXPECT().Bgp("lights").Return(lightsBGP).Once()
+		suite.scene.lightHandler = mockLH
+
+		g0 := 0
+		decl := shader.Annotation{Group: &g0, Type: shader.AnnotationTypeProvider, Args: []shader.AnnotationArg{shader.AnnotationArgLights}}
+		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		matMock := material_mocks.NewMockMaterial(suite.T())
+		matMock.EXPECT().PipelineKey().Return("k_glights").Twice()
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
+		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Twice()
+		vertShdrMock := shader_mocks.NewMockShader(suite.T())
+		vertShdrMock.EXPECT().Declarations().Return([]shader.Annotation{decl}).Once()
+		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
+		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
+		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
+		animMock.EXPECT().Model().Return(mockModel).Twice()
+		animMock.EXPECT().CullingEnabled().Return(false).Once()
+		suite.rendererMock.EXPECT().Pipeline("k_glights").Return(mockPipe).Once()
+		suite.rendererMock.EXPECT().DrawCall("k_glights", meshBGP, uint32(1), mock.Anything).Return(nil).Once()
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
+		suite.NoError(suite.scene.DrawCalls())
+	})
+
+	suite.Run("goroutine provider shadow enabled resolves", func() {
+		suite.scene.drawCacheDirty = true
+		suite.scene.drawBindGroupCache = make(map[drawCacheKey][]bind_group_provider.BindGroupProvider)
+		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
+		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
+
+		shadowBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		mockSH := light_mocks.NewMockShadowHandler(suite.T())
+		mockSH.EXPECT().Bgp("csm_shadow_lit").Return(shadowBGP).Once()
+		mockLH := light_mocks.NewMockLightingHandler(suite.T())
+		mockLH.EXPECT().Enabled().Return(true).Once()
+		mockLH.EXPECT().ShadowHandler().Return(mockSH).Once()
+		suite.scene.lightHandler = mockLH
+
+		g0 := 0
+		decl := shader.Annotation{Group: &g0, Type: shader.AnnotationTypeProvider, Args: []shader.AnnotationArg{shader.AnnotationArgShadow}}
+		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		matMock := material_mocks.NewMockMaterial(suite.T())
+		matMock.EXPECT().PipelineKey().Return("k_gshadow").Twice()
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
+		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Twice()
+		vertShdrMock := shader_mocks.NewMockShader(suite.T())
+		vertShdrMock.EXPECT().Declarations().Return([]shader.Annotation{decl}).Once()
+		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
+		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
+		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
+		animMock.EXPECT().Model().Return(mockModel).Twice()
+		animMock.EXPECT().CullingEnabled().Return(false).Once()
+		suite.rendererMock.EXPECT().Pipeline("k_gshadow").Return(mockPipe).Once()
+		suite.rendererMock.EXPECT().DrawCall("k_gshadow", meshBGP, uint32(1), mock.Anything).Return(nil).Once()
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
+		suite.NoError(suite.scene.DrawCalls())
+	})
+
+	suite.Run("goroutine provider tiles enabled resolves", func() {
+		suite.scene.drawCacheDirty = true
+		suite.scene.drawBindGroupCache = make(map[drawCacheKey][]bind_group_provider.BindGroupProvider)
+		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
+		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
+
+		tilesBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		mockLH := light_mocks.NewMockLightingHandler(suite.T())
+		mockLH.EXPECT().Enabled().Return(true).Once()
+		mockLH.EXPECT().Bgp("tile_lit").Return(tilesBGP).Once()
+		suite.scene.lightHandler = mockLH
+
+		g0 := 0
+		decl := shader.Annotation{Group: &g0, Type: shader.AnnotationTypeProvider, Args: []shader.AnnotationArg{shader.AnnotationArgTiles}}
+		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		matMock := material_mocks.NewMockMaterial(suite.T())
+		matMock.EXPECT().PipelineKey().Return("k_gtiles").Twice()
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
+		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Twice()
+		vertShdrMock := shader_mocks.NewMockShader(suite.T())
+		vertShdrMock.EXPECT().Declarations().Return([]shader.Annotation{decl}).Once()
+		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
+		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
+		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
+		animMock.EXPECT().Model().Return(mockModel).Twice()
+		animMock.EXPECT().CullingEnabled().Return(false).Once()
+		suite.rendererMock.EXPECT().Pipeline("k_gtiles").Return(mockPipe).Once()
+		suite.rendererMock.EXPECT().DrawCall("k_gtiles", meshBGP, uint32(1), mock.Anything).Return(nil).Once()
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
+		suite.NoError(suite.scene.DrawCalls())
+	})
+
+	suite.Run("goroutine provider ssao enabled resolves", func() {
+		suite.scene.drawCacheDirty = true
+		suite.scene.drawBindGroupCache = make(map[drawCacheKey][]bind_group_provider.BindGroupProvider)
+		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
+		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
+
+		ssaoBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		mockLH := light_mocks.NewMockLightingHandler(suite.T())
+		mockLH.EXPECT().Enabled().Return(true).Once()
+		mockLH.EXPECT().Bgp("ssao_lit").Return(ssaoBGP).Once()
+		suite.scene.lightHandler = mockLH
+
+		g0 := 0
+		decl := shader.Annotation{Group: &g0, Type: shader.AnnotationTypeProvider, Args: []shader.AnnotationArg{shader.AnnotationArgSSAO}}
+		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		matMock := material_mocks.NewMockMaterial(suite.T())
+		matMock.EXPECT().PipelineKey().Return("k_gssao").Twice()
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
+		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Twice()
+		vertShdrMock := shader_mocks.NewMockShader(suite.T())
+		vertShdrMock.EXPECT().Declarations().Return([]shader.Annotation{decl}).Once()
+		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
+		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
+		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
+		animMock.EXPECT().Model().Return(mockModel).Twice()
+		animMock.EXPECT().CullingEnabled().Return(false).Once()
+		suite.rendererMock.EXPECT().Pipeline("k_gssao").Return(mockPipe).Once()
+		suite.rendererMock.EXPECT().DrawCall("k_gssao", meshBGP, uint32(1), mock.Anything).Return(nil).Once()
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
+		suite.NoError(suite.scene.DrawCalls())
+	})
+
+	suite.Run("goroutine provider effect non-nil resolves", func() {
+		suite.scene.drawCacheDirty = true
+		suite.scene.drawBindGroupCache = make(map[drawCacheKey][]bind_group_provider.BindGroupProvider)
+		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
+		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
+
+		effectBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		g0 := 0
+		decl := shader.Annotation{Group: &g0, Type: shader.AnnotationTypeProvider, Args: []shader.AnnotationArg{shader.AnnotationArgEffect}}
+		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		matMock := material_mocks.NewMockMaterial(suite.T())
+		matMock.EXPECT().PipelineKey().Return("k_geffect").Twice()
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
+		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Twice()
+		mockModel.EXPECT().EffectProvider().Return(effectBGP).Once()
+		vertShdrMock := shader_mocks.NewMockShader(suite.T())
+		vertShdrMock.EXPECT().Declarations().Return([]shader.Annotation{decl}).Once()
+		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
+		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
+		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
+		animMock.EXPECT().Model().Return(mockModel).Twice()
+		animMock.EXPECT().CullingEnabled().Return(false).Once()
+		suite.rendererMock.EXPECT().Pipeline("k_geffect").Return(mockPipe).Once()
+		suite.rendererMock.EXPECT().DrawCall("k_geffect", meshBGP, uint32(1), mock.Anything).Return(nil).Once()
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
+		suite.NoError(suite.scene.DrawCalls())
+	})
+
+	suite.Run("goroutine provider material provider non-nil resolves", func() {
+		suite.scene.drawCacheDirty = true
+		suite.scene.drawBindGroupCache = make(map[drawCacheKey][]bind_group_provider.BindGroupProvider)
+		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
+		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
+
+		matBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		g0 := 0
+		decl := shader.Annotation{Group: &g0, Type: shader.AnnotationTypeProvider, Args: []shader.AnnotationArg{shader.AnnotationArgMaterial}}
+		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		matMock := material_mocks.NewMockMaterial(suite.T())
+		matMock.EXPECT().PipelineKey().Return("k_gmatprov").Twice()
+		matMock.EXPECT().Provider(0).Return(matBGP).Once()
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
+		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Twice()
+		vertShdrMock := shader_mocks.NewMockShader(suite.T())
+		vertShdrMock.EXPECT().Declarations().Return([]shader.Annotation{decl}).Once()
+		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
+		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
+		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
+		animMock.EXPECT().Model().Return(mockModel).Twice()
+		animMock.EXPECT().CullingEnabled().Return(false).Once()
+		suite.rendererMock.EXPECT().Pipeline("k_gmatprov").Return(mockPipe).Once()
+		suite.rendererMock.EXPECT().DrawCall("k_gmatprov", meshBGP, uint32(1), mock.Anything).Return(nil).Once()
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
+		suite.NoError(suite.scene.DrawCalls())
+	})
+
+	suite.Run("goroutine provider material provider nil falls to bindgroup", func() {
+		suite.scene.drawCacheDirty = true
+		suite.scene.drawBindGroupCache = make(map[drawCacheKey][]bind_group_provider.BindGroupProvider)
+		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
+		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
+
+		matBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		g0 := 0
+		decl := shader.Annotation{Group: &g0, Type: shader.AnnotationTypeProvider, Args: []shader.AnnotationArg{shader.AnnotationArgMaterial}}
+		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		matMock := material_mocks.NewMockMaterial(suite.T())
+		matMock.EXPECT().PipelineKey().Return("k_gmatbgp").Twice()
+		matMock.EXPECT().Provider(0).Return(nil).Once()
+		matMock.EXPECT().BindGroupProvider().Return(matBGP).Once()
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
+		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Twice()
+		vertShdrMock := shader_mocks.NewMockShader(suite.T())
+		vertShdrMock.EXPECT().Declarations().Return([]shader.Annotation{decl}).Once()
+		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
+		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
+		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
+		animMock.EXPECT().Model().Return(mockModel).Twice()
+		animMock.EXPECT().CullingEnabled().Return(false).Once()
+		suite.rendererMock.EXPECT().Pipeline("k_gmatbgp").Return(mockPipe).Once()
+		suite.rendererMock.EXPECT().DrawCall("k_gmatbgp", meshBGP, uint32(1), mock.Anything).Return(nil).Once()
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
+		suite.NoError(suite.scene.DrawCalls())
+	})
+
+	suite.Run("goroutine binding group light enabled resolves", func() {
+		suite.scene.drawCacheDirty = true
+		suite.scene.drawBindGroupCache = make(map[drawCacheKey][]bind_group_provider.BindGroupProvider)
+		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
+		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
+
+		lightsBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		mockLH := light_mocks.NewMockLightingHandler(suite.T())
+		mockLH.EXPECT().Enabled().Return(true).Once()
+		mockLH.EXPECT().Bgp("lights").Return(lightsBGP).Once()
+		suite.scene.lightHandler = mockLH
+
+		g0 := 0
+		decl := shader.Annotation{Group: &g0, Type: shader.AnnotationTypeBindingGroup, Args: []shader.AnnotationArg{"storage", "v", shader.AnnotationArgLight}}
+		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		matMock := material_mocks.NewMockMaterial(suite.T())
+		matMock.EXPECT().PipelineKey().Return("k_gbglight").Twice()
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
+		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Twice()
+		vertShdrMock := shader_mocks.NewMockShader(suite.T())
+		vertShdrMock.EXPECT().Declarations().Return([]shader.Annotation{decl}).Once()
+		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
+		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
+		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
+		animMock.EXPECT().Model().Return(mockModel).Twice()
+		animMock.EXPECT().CullingEnabled().Return(false).Once()
+		suite.rendererMock.EXPECT().Pipeline("k_gbglight").Return(mockPipe).Once()
+		suite.rendererMock.EXPECT().DrawCall("k_gbglight", meshBGP, uint32(1), mock.Anything).Return(nil).Once()
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
+		suite.NoError(suite.scene.DrawCalls())
+	})
+
+	suite.Run("goroutine binding group shadow uniform enabled resolves", func() {
+		suite.scene.drawCacheDirty = true
+		suite.scene.drawBindGroupCache = make(map[drawCacheKey][]bind_group_provider.BindGroupProvider)
+		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
+		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
+
+		shadowBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		mockSH := light_mocks.NewMockShadowHandler(suite.T())
+		mockSH.EXPECT().Bgp("csm_shadow_lit").Return(shadowBGP).Once()
+		mockLH := light_mocks.NewMockLightingHandler(suite.T())
+		mockLH.EXPECT().Enabled().Return(true).Once()
+		mockLH.EXPECT().ShadowHandler().Return(mockSH).Once()
+		suite.scene.lightHandler = mockLH
+
+		g0 := 0
+		decl := shader.Annotation{Group: &g0, Type: shader.AnnotationTypeBindingGroup, Args: []shader.AnnotationArg{"storage", "v", shader.AnnotationArgShadowUniform}}
+		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		matMock := material_mocks.NewMockMaterial(suite.T())
+		matMock.EXPECT().PipelineKey().Return("k_gbgshadowuni").Twice()
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
+		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Twice()
+		vertShdrMock := shader_mocks.NewMockShader(suite.T())
+		vertShdrMock.EXPECT().Declarations().Return([]shader.Annotation{decl}).Once()
+		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
+		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
+		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
+		animMock.EXPECT().Model().Return(mockModel).Twice()
+		animMock.EXPECT().CullingEnabled().Return(false).Once()
+		suite.rendererMock.EXPECT().Pipeline("k_gbgshadowuni").Return(mockPipe).Once()
+		suite.rendererMock.EXPECT().DrawCall("k_gbgshadowuni", meshBGP, uint32(1), mock.Anything).Return(nil).Once()
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
+		suite.NoError(suite.scene.DrawCalls())
+	})
+
+	suite.Run("goroutine binding group tile uniforms enabled resolves", func() {
+		suite.scene.drawCacheDirty = true
+		suite.scene.drawBindGroupCache = make(map[drawCacheKey][]bind_group_provider.BindGroupProvider)
+		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
+		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
+
+		tilesBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		mockLH := light_mocks.NewMockLightingHandler(suite.T())
+		mockLH.EXPECT().Enabled().Return(true).Once()
+		mockLH.EXPECT().Bgp("tile_lit").Return(tilesBGP).Once()
+		suite.scene.lightHandler = mockLH
+
+		g0 := 0
+		decl := shader.Annotation{Group: &g0, Type: shader.AnnotationTypeBindingGroup, Args: []shader.AnnotationArg{"storage", "v", shader.AnnotationArgTileUniforms}}
+		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		matMock := material_mocks.NewMockMaterial(suite.T())
+		matMock.EXPECT().PipelineKey().Return("k_gbgtileuni").Twice()
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
+		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Twice()
+		vertShdrMock := shader_mocks.NewMockShader(suite.T())
+		vertShdrMock.EXPECT().Declarations().Return([]shader.Annotation{decl}).Once()
+		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
+		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
+		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
+		animMock.EXPECT().Model().Return(mockModel).Twice()
+		animMock.EXPECT().CullingEnabled().Return(false).Once()
+		suite.rendererMock.EXPECT().Pipeline("k_gbgtileuni").Return(mockPipe).Once()
+		suite.rendererMock.EXPECT().DrawCall("k_gbgtileuni", meshBGP, uint32(1), mock.Anything).Return(nil).Once()
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
+		suite.NoError(suite.scene.DrawCalls())
+	})
+
+	suite.Run("goroutine binding group overlay params mat bgp non-nil resolves", func() {
+		suite.scene.drawCacheDirty = true
+		suite.scene.drawBindGroupCache = make(map[drawCacheKey][]bind_group_provider.BindGroupProvider)
+		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
+		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
+
+		matBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		g0 := 0
+		decl := shader.Annotation{Group: &g0, Type: shader.AnnotationTypeBindingGroup, Args: []shader.AnnotationArg{"storage", "v", shader.AnnotationArgOverlayParams}}
+		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		matMock := material_mocks.NewMockMaterial(suite.T())
+		matMock.EXPECT().PipelineKey().Return("k_gbgoverlay1").Twice()
+		matMock.EXPECT().BindGroupProvider().Return(matBGP).Once()
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
+		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Twice()
+		vertShdrMock := shader_mocks.NewMockShader(suite.T())
+		vertShdrMock.EXPECT().Declarations().Return([]shader.Annotation{decl}).Once()
+		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
+		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
+		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
+		animMock.EXPECT().Model().Return(mockModel).Twice()
+		animMock.EXPECT().CullingEnabled().Return(false).Once()
+		suite.rendererMock.EXPECT().Pipeline("k_gbgoverlay1").Return(mockPipe).Once()
+		suite.rendererMock.EXPECT().DrawCall("k_gbgoverlay1", meshBGP, uint32(1), mock.Anything).Return(nil).Once()
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
+		suite.NoError(suite.scene.DrawCalls())
+	})
+
+	suite.Run("goroutine binding group overlay params mat nil effect non-nil resolves", func() {
+		suite.scene.drawCacheDirty = true
+		suite.scene.drawBindGroupCache = make(map[drawCacheKey][]bind_group_provider.BindGroupProvider)
+		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
+		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
+
+		effectBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		g0 := 0
+		decl := shader.Annotation{Group: &g0, Type: shader.AnnotationTypeBindingGroup, Args: []shader.AnnotationArg{"storage", "v", shader.AnnotationArgOverlayParams}}
+		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		matMock := material_mocks.NewMockMaterial(suite.T())
+		matMock.EXPECT().PipelineKey().Return("k_gbgoverlay2").Twice()
+		matMock.EXPECT().BindGroupProvider().Return(nil).Once()
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
+		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Twice()
+		mockModel.EXPECT().EffectProvider().Return(effectBGP).Once()
+		vertShdrMock := shader_mocks.NewMockShader(suite.T())
+		vertShdrMock.EXPECT().Declarations().Return([]shader.Annotation{decl}).Once()
+		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
+		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
+		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
+		animMock.EXPECT().Model().Return(mockModel).Twice()
+		animMock.EXPECT().CullingEnabled().Return(false).Once()
+		suite.rendererMock.EXPECT().Pipeline("k_gbgoverlay2").Return(mockPipe).Once()
+		suite.rendererMock.EXPECT().DrawCall("k_gbgoverlay2", meshBGP, uint32(1), mock.Anything).Return(nil).Once()
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
+		suite.NoError(suite.scene.DrawCalls())
+	})
+
+	suite.Run("goroutine binding group effect params effect non-nil resolves", func() {
+		suite.scene.drawCacheDirty = true
+		suite.scene.drawBindGroupCache = make(map[drawCacheKey][]bind_group_provider.BindGroupProvider)
+		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
+		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
+
+		effectBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		g0 := 0
+		decl := shader.Annotation{Group: &g0, Type: shader.AnnotationTypeBindingGroup, Args: []shader.AnnotationArg{"storage", "v", shader.AnnotationArgEffectParams}}
+		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		matMock := material_mocks.NewMockMaterial(suite.T())
+		matMock.EXPECT().PipelineKey().Return("k_gbgeffect1").Twice()
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
+		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Twice()
+		mockModel.EXPECT().EffectProvider().Return(effectBGP).Once()
+		vertShdrMock := shader_mocks.NewMockShader(suite.T())
+		vertShdrMock.EXPECT().Declarations().Return([]shader.Annotation{decl}).Once()
+		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
+		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
+		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
+		animMock.EXPECT().Model().Return(mockModel).Twice()
+		animMock.EXPECT().CullingEnabled().Return(false).Once()
+		suite.rendererMock.EXPECT().Pipeline("k_gbgeffect1").Return(mockPipe).Once()
+		suite.rendererMock.EXPECT().DrawCall("k_gbgeffect1", meshBGP, uint32(1), mock.Anything).Return(nil).Once()
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
+		suite.NoError(suite.scene.DrawCalls())
+	})
+
+	suite.Run("goroutine binding group effect params effect nil mat provider non-nil resolves", func() {
+		suite.scene.drawCacheDirty = true
+		suite.scene.drawBindGroupCache = make(map[drawCacheKey][]bind_group_provider.BindGroupProvider)
+		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
+		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
+
+		matBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		g0 := 0
+		decl := shader.Annotation{Group: &g0, Type: shader.AnnotationTypeBindingGroup, Args: []shader.AnnotationArg{"storage", "v", shader.AnnotationArgEffectParams}}
+		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		matMock := material_mocks.NewMockMaterial(suite.T())
+		matMock.EXPECT().PipelineKey().Return("k_gbgeffect2").Twice()
+		matMock.EXPECT().Provider(0).Return(matBGP).Once()
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
+		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Twice()
+		mockModel.EXPECT().EffectProvider().Return(nil).Once()
+		vertShdrMock := shader_mocks.NewMockShader(suite.T())
+		vertShdrMock.EXPECT().Declarations().Return([]shader.Annotation{decl}).Once()
+		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
+		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
+		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
+		animMock.EXPECT().Model().Return(mockModel).Twice()
+		animMock.EXPECT().CullingEnabled().Return(false).Once()
+		suite.rendererMock.EXPECT().Pipeline("k_gbgeffect2").Return(mockPipe).Once()
+		suite.rendererMock.EXPECT().DrawCall("k_gbgeffect2", meshBGP, uint32(1), mock.Anything).Return(nil).Once()
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
+		suite.NoError(suite.scene.DrawCalls())
 	})
 }
 
@@ -13102,5 +13822,483 @@ func (suite *sceneImplTest) TestCreateAnimatorUncoveredPaths() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(4)
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("hiz slot1 fail")).Once()
 		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
+	})
+}
+
+func (suite *sceneImplTest) TestAnimLODLevel() {
+	suite.Run("lodEnabled true cache hit returns cached level", func() {
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		suite.scene.lodEnabled = true
+		suite.scene.lodLevelCache = map[animator.Animator]int{animMock: 2}
+		result := suite.scene.animLODLevel(animMock)
+		suite.Equal(2, result)
+	})
+
+	suite.Run("lodEnabled true cache miss returns zero", func() {
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		suite.scene.lodEnabled = true
+		suite.scene.lodLevelCache = map[animator.Animator]int{}
+		result := suite.scene.animLODLevel(animMock)
+		suite.Equal(0, result)
+	})
+}
+
+func (suite *sceneImplTest) TestAnimShadowLODLevel() {
+	suite.Run("mdl nil returns base", func() {
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Model().Return(nil).Once()
+		suite.scene.lodEnabled = false
+		result := suite.scene.animShadowLODLevel(animMock)
+		suite.Equal(0, result)
+	})
+
+	suite.Run("level exceeds maxLevel clamps to maxLevel", func() {
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		mockModel := model_mocks.NewMockModel(suite.T())
+		animMock.EXPECT().Model().Return(mockModel).Once()
+		mockModel.EXPECT().LODCount().Return(2).Once()
+		suite.scene.lodEnabled = false
+		suite.scene.lodShadowBias = 5
+		result := suite.scene.animShadowLODLevel(animMock)
+		suite.Equal(1, result)
+	})
+}
+
+func (suite *sceneImplTest) TestPrepareComputeLODPath() {
+	suite.Run("phase1 lodEnabled computes LOD level and writes cache", func() {
+		suite.scene.cullingDisabled = true
+		suite.scene.lodEnabled = true
+		suite.scene.lod1Distance = 10.0
+		suite.scene.lod2Distance = 30.0
+		suite.scene.lodLevelCache = make(map[animator.Animator]int)
+		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
+		suite.scene.buildInjectionMap()
+		realShdr := shader.NewShader("_pc_lod1", shader.ShaderTypeCompute,
+			"engine/renderer/animator/assets/simple-compute.wgsl",
+			shader.WithInjections(suite.scene.injections),
+		)
+		realPipe := pipeline.NewPipeline("pc-lod1-key", pipeline.PipelineTypeCompute,
+			pipeline.WithComputeShader(realShdr),
+		)
+		computeBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		ctrlMock := camera_mocks.NewMockCameraController(suite.T())
+		ctrlMock.EXPECT().Position().Return(float32(0), float32(0), float32(0)).Once()
+		camMock := camera_mocks.NewMockCamera(suite.T())
+		camMock.EXPECT().Update().Return().Once()
+		camMock.EXPECT().ViewProjectionMatrix().Return([16]float32{}).Once()
+		camMock.EXPECT().ProjectionMatrix().Return([16]float32{}).Once()
+		camMock.EXPECT().BindGroupProvider().Return(nil).Once()
+		camMock.EXPECT().Controller().Return(ctrlMock).Once()
+		suite.scene.cam = camMock
+		suite.scene.writePool = []bind_group_provider.BufferWrite{}
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().ComputePipelineKey().Return("pc-lod1-key").Times(2)
+		mockModel.EXPECT().LODCount().Return(2).Times(2)
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(8)
+		animMock.EXPECT().Model().Return(mockModel).Times(2)
+		animMock.EXPECT().CullingEnabled().Return(false).Once()
+		animMock.EXPECT().StagedWriteData().Return(nil).Once()
+		animMock.EXPECT().SetScreenSize(mock.Anything, mock.Anything).Return().Once()
+		animMock.EXPECT().SetProjectionX(mock.Anything).Return().Once()
+		animMock.EXPECT().SetHiZMipCount(mock.Anything).Return().Once()
+		animMock.EXPECT().SetViewProj(mock.Anything).Return().Once()
+		animMock.EXPECT().PrepareFrame(mock.Anything, mock.Anything).Return().Once()
+		animMock.EXPECT().Flush(mock.Anything, mock.Anything, mock.Anything).Return(uint32(1)).Once()
+		animMock.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{5, 0, 0}, [3]float32{1, 1, 1}).Once()
+		animMock.EXPECT().ComputeBindGroupProvider().Return(computeBGP).Once()
+		animMock.EXPECT().HiZBindGroupProvider().Return(nil).Once()
+		suite.rendererMock.EXPECT().Pipeline("pc-lod1-key").Return(realPipe).Times(2)
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.MatchedBy(func(d []renderer.ComputeDispatch) bool {
+			return len(d) == 1 && d[0].PipelineKey == "pc-lod1-key" && d[0].Providers[0].Provider == computeBGP
+		})).Return().Once()
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
+		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
+		suite.Contains(suite.scene.lodLevelCache, animMock)
+		suite.Equal(0, suite.scene.lodLevelCache[animMock])
+	})
+}
+
+func (suite *sceneImplTest) TestDrawCallsDirtyCacheElseMerge() {
+	suite.Run("drawCacheDirty true parallel pre-pass then serial fallback and builtCache merge", func() {
+		suite.scene.drawCacheDirty = true
+		suite.scene.drawBindGroupCache = make(map[drawCacheKey][]bind_group_provider.BindGroupProvider)
+		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
+		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
+		meshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		matMock := material_mocks.NewMockMaterial(suite.T())
+		matMock.EXPECT().PipelineKey().Return("k_dirty").Twice()
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
+		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Twice()
+		renderShdrMock := shader_mocks.NewMockShader(suite.T())
+		renderShdrMock.EXPECT().Declarations().Return([]shader.Annotation{}).Twice()
+		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
+		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(renderShdrMock).Twice()
+		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Twice()
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
+		animMock.EXPECT().Model().Return(mockModel).Twice()
+		animMock.EXPECT().CullingEnabled().Return(false).Once()
+		suite.rendererMock.EXPECT().Pipeline("k_dirty").Return(mockPipe).Twice()
+		suite.rendererMock.EXPECT().DrawCall("k_dirty", meshBGP, uint32(1), mock.Anything).Return(nil).Once()
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
+		suite.NoError(suite.scene.DrawCalls())
+		suite.NotNil(suite.scene.drawBindGroupCache)
+	})
+}
+
+func (suite *sceneImplTest) TestPrepareShadowsSecondLoopGuards() {
+	suite.Run("point cube face second loop skips zero instance count animator", func() {
+		suite.scene.lightHandler.SetEnabled(true)
+		sh := suite.scene.lightHandler.ShadowHandler()
+		sh.SetLightShadowAtlasSlots(6)
+		sh.SetLightShadowAtlasCols(6)
+		sh.SetPipelineKey("shadow_static_back", "shadow_static_back")
+
+		pl := light_mocks.NewMockLight(suite.T())
+		pl.EXPECT().Enabled().Return(true).Maybe()
+		pl.EXPECT().CastsShadows().Return(true).Maybe()
+		pl.EXPECT().Type().Return(light.LightTypePoint).Maybe()
+		pl.EXPECT().Position().Return([3]float32{0, 5, 0}).Maybe()
+		pl.EXPECT().Range().Return(float32(20)).Maybe()
+		pl.EXPECT().ShadowBias().Return(float32(0.005)).Maybe()
+		pl.EXPECT().InnerCone().Return(float32(0)).Maybe()
+		pl.EXPECT().OuterCone().Return(float32(0)).Maybe()
+		pl.EXPECT().Direction().Return([3]float32{}).Maybe()
+		suite.scene.lightHandler.AddLight(pl)
+
+		goodMeshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		goodOutputBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		goodModel := model_mocks.NewMockModel(suite.T())
+		goodModel.EXPECT().CastsShadows().Return(true).Times(14)
+		goodModel.EXPECT().LODCount().Return(1).Times(6)
+		goodModel.EXPECT().LODMeshProvider(0).Return(goodMeshBGP).Times(6)
+		goodModel.EXPECT().Skinned().Return(false).Times(6)
+		goodModel.EXPECT().ShadowCullMode().Return(model.ShadowCullModeBack).Times(6)
+		goodModel.EXPECT().BoundingMin().Return([3]float32{-1000, -1000, -1000}).Times(12)
+		goodModel.EXPECT().BoundingMax().Return([3]float32{1000, 1000, 1000}).Times(12)
+		goodModel.EXPECT().BoundingRadius().Return(float32(1000)).Times(12)
+		goodAnim := animator_mocks.NewMockAnimator(suite.T())
+		goodAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		goodAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(14)
+		goodAnim.EXPECT().Model().Return(goodModel).Times(20)
+		goodAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{0, 0, 0}, [3]float32{1, 1, 1}).Once()
+		goodAnim.EXPECT().OutputBindGroupProvider().Return(goodOutputBGP).Times(6)
+
+		badAnim := animator_mocks.NewMockAnimator(suite.T())
+		badAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		badAnim.EXPECT().InstanceCount().Return(uint32(0)).Times(8)
+
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {goodAnim, badAnim}}
+
+		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Times(6)
+		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
+		suite.rendererMock.EXPECT().EndShadowFrame().Return().Once()
+
+		suite.NotPanics(func() { suite.scene.PrepareShadows() })
+	})
+
+	suite.Run("point cube face second loop skips nil model animator", func() {
+		suite.scene.lightHandler.SetEnabled(true)
+		sh := suite.scene.lightHandler.ShadowHandler()
+		sh.SetLightShadowAtlasSlots(6)
+		sh.SetLightShadowAtlasCols(6)
+		sh.SetPipelineKey("shadow_static_back", "shadow_static_back")
+
+		pl := light_mocks.NewMockLight(suite.T())
+		pl.EXPECT().Enabled().Return(true).Maybe()
+		pl.EXPECT().CastsShadows().Return(true).Maybe()
+		pl.EXPECT().Type().Return(light.LightTypePoint).Maybe()
+		pl.EXPECT().Position().Return([3]float32{0, 5, 0}).Maybe()
+		pl.EXPECT().Range().Return(float32(20)).Maybe()
+		pl.EXPECT().ShadowBias().Return(float32(0.005)).Maybe()
+		pl.EXPECT().InnerCone().Return(float32(0)).Maybe()
+		pl.EXPECT().OuterCone().Return(float32(0)).Maybe()
+		pl.EXPECT().Direction().Return([3]float32{}).Maybe()
+		suite.scene.lightHandler.AddLight(pl)
+
+		goodMeshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		goodOutputBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		goodModel := model_mocks.NewMockModel(suite.T())
+		goodModel.EXPECT().CastsShadows().Return(true).Times(14)
+		goodModel.EXPECT().LODCount().Return(1).Times(6)
+		goodModel.EXPECT().LODMeshProvider(0).Return(goodMeshBGP).Times(6)
+		goodModel.EXPECT().Skinned().Return(false).Times(6)
+		goodModel.EXPECT().ShadowCullMode().Return(model.ShadowCullModeBack).Times(6)
+		goodModel.EXPECT().BoundingMin().Return([3]float32{-1000, -1000, -1000}).Times(12)
+		goodModel.EXPECT().BoundingMax().Return([3]float32{1000, 1000, 1000}).Times(12)
+		goodModel.EXPECT().BoundingRadius().Return(float32(1000)).Times(12)
+		goodAnim := animator_mocks.NewMockAnimator(suite.T())
+		goodAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		goodAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(14)
+		goodAnim.EXPECT().Model().Return(goodModel).Times(20)
+		goodAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{0, 0, 0}, [3]float32{1, 1, 1}).Once()
+		goodAnim.EXPECT().OutputBindGroupProvider().Return(goodOutputBGP).Times(6)
+
+		badAnim := animator_mocks.NewMockAnimator(suite.T())
+		badAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		badAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(8)
+		badAnim.EXPECT().Model().Return(nil).Times(8)
+
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {goodAnim, badAnim}}
+
+		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Times(6)
+		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
+		suite.rendererMock.EXPECT().EndShadowFrame().Return().Once()
+
+		suite.NotPanics(func() { suite.scene.PrepareShadows() })
+	})
+
+	suite.Run("point cube face second loop skips out of range instance", func() {
+		suite.scene.lightHandler.SetEnabled(true)
+		sh := suite.scene.lightHandler.ShadowHandler()
+		sh.SetLightShadowAtlasSlots(6)
+		sh.SetLightShadowAtlasCols(6)
+		sh.SetPipelineKey("shadow_static_back", "shadow_static_back")
+
+		pl := light_mocks.NewMockLight(suite.T())
+		pl.EXPECT().Enabled().Return(true).Maybe()
+		pl.EXPECT().CastsShadows().Return(true).Maybe()
+		pl.EXPECT().Type().Return(light.LightTypePoint).Maybe()
+		pl.EXPECT().Position().Return([3]float32{0, 5, 0}).Maybe()
+		pl.EXPECT().Range().Return(float32(20)).Maybe()
+		pl.EXPECT().ShadowBias().Return(float32(0.005)).Maybe()
+		pl.EXPECT().InnerCone().Return(float32(0)).Maybe()
+		pl.EXPECT().OuterCone().Return(float32(0)).Maybe()
+		pl.EXPECT().Direction().Return([3]float32{}).Maybe()
+		suite.scene.lightHandler.AddLight(pl)
+
+		goodMeshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		goodOutputBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		goodModel := model_mocks.NewMockModel(suite.T())
+		goodModel.EXPECT().CastsShadows().Return(true).Times(14)
+		goodModel.EXPECT().LODCount().Return(1).Times(6)
+		goodModel.EXPECT().LODMeshProvider(0).Return(goodMeshBGP).Times(6)
+		goodModel.EXPECT().Skinned().Return(false).Times(6)
+		goodModel.EXPECT().ShadowCullMode().Return(model.ShadowCullModeBack).Times(6)
+		goodModel.EXPECT().BoundingMin().Return([3]float32{-1000, -1000, -1000}).Times(12)
+		goodModel.EXPECT().BoundingMax().Return([3]float32{1000, 1000, 1000}).Times(12)
+		goodModel.EXPECT().BoundingRadius().Return(float32(1000)).Times(12)
+		goodAnim := animator_mocks.NewMockAnimator(suite.T())
+		goodAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		goodAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(14)
+		goodAnim.EXPECT().Model().Return(goodModel).Times(20)
+		goodAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{0, 0, 0}, [3]float32{1, 1, 1}).Once()
+		goodAnim.EXPECT().OutputBindGroupProvider().Return(goodOutputBGP).Times(6)
+
+		badMeshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		badModel := model_mocks.NewMockModel(suite.T())
+		badModel.EXPECT().CastsShadows().Return(true).Times(8)
+		badModel.EXPECT().LODCount().Return(1).Times(6)
+		badModel.EXPECT().LODMeshProvider(0).Return(badMeshBGP).Times(6)
+		badModel.EXPECT().Skinned().Return(false).Times(6)
+		badModel.EXPECT().ShadowCullMode().Return(model.ShadowCullModeBack).Times(6)
+		badModel.EXPECT().BoundingMin().Return([3]float32{-0.5, -0.5, -0.5}).Times(6)
+		badModel.EXPECT().BoundingMax().Return([3]float32{0.5, 0.5, 0.5}).Times(6)
+		badModel.EXPECT().BoundingRadius().Return(float32(0.5)).Times(6)
+		badAnim := animator_mocks.NewMockAnimator(suite.T())
+		badAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		badAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(8)
+		badAnim.EXPECT().Model().Return(badModel).Times(14)
+		badAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{1000, 0, 0}, [3]float32{1, 1, 1}).Once()
+
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {goodAnim, badAnim}}
+
+		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Times(6)
+		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
+		suite.rendererMock.EXPECT().EndShadowFrame().Return().Once()
+
+		suite.NotPanics(func() { suite.scene.PrepareShadows() })
+	})
+
+	suite.Run("point cube face second loop skips instance not visible in frustum", func() {
+		suite.scene.lightHandler.SetEnabled(true)
+		sh := suite.scene.lightHandler.ShadowHandler()
+		sh.SetLightShadowAtlasSlots(6)
+		sh.SetLightShadowAtlasCols(6)
+		sh.SetPipelineKey("shadow_static_back", "shadow_static_back")
+
+		pl := light_mocks.NewMockLight(suite.T())
+		pl.EXPECT().Enabled().Return(true).Maybe()
+		pl.EXPECT().CastsShadows().Return(true).Maybe()
+		pl.EXPECT().Type().Return(light.LightTypePoint).Maybe()
+		pl.EXPECT().Position().Return([3]float32{0, 5, 0}).Maybe()
+		pl.EXPECT().Range().Return(float32(1000)).Maybe()
+		pl.EXPECT().ShadowBias().Return(float32(0.005)).Maybe()
+		pl.EXPECT().InnerCone().Return(float32(0)).Maybe()
+		pl.EXPECT().OuterCone().Return(float32(0)).Maybe()
+		pl.EXPECT().Direction().Return([3]float32{}).Maybe()
+		suite.scene.lightHandler.AddLight(pl)
+
+		goodMeshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		goodOutputBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		goodModel := model_mocks.NewMockModel(suite.T())
+		goodModel.EXPECT().CastsShadows().Return(true).Times(14)
+		goodModel.EXPECT().LODCount().Return(1).Times(6)
+		goodModel.EXPECT().LODMeshProvider(0).Return(goodMeshBGP).Times(6)
+		goodModel.EXPECT().Skinned().Return(false).Times(6)
+		goodModel.EXPECT().ShadowCullMode().Return(model.ShadowCullModeBack).Times(6)
+		goodModel.EXPECT().BoundingMin().Return([3]float32{-1000, -1000, -1000}).Times(12)
+		goodModel.EXPECT().BoundingMax().Return([3]float32{1000, 1000, 1000}).Times(12)
+		goodModel.EXPECT().BoundingRadius().Return(float32(1000)).Times(12)
+		goodAnim := animator_mocks.NewMockAnimator(suite.T())
+		goodAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		goodAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(14)
+		goodAnim.EXPECT().Model().Return(goodModel).Times(20)
+		goodAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{0, 0, 0}, [3]float32{1, 1, 1}).Once()
+		goodAnim.EXPECT().OutputBindGroupProvider().Return(goodOutputBGP).Times(6)
+
+		badMeshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		badModel := model_mocks.NewMockModel(suite.T())
+		badModel.EXPECT().CastsShadows().Return(true).Times(8)
+		badModel.EXPECT().LODCount().Return(1).Times(6)
+		badModel.EXPECT().LODMeshProvider(0).Return(badMeshBGP).Times(6)
+		badModel.EXPECT().Skinned().Return(false).Times(6)
+		badModel.EXPECT().ShadowCullMode().Return(model.ShadowCullModeBack).Times(6)
+		badModel.EXPECT().BoundingMin().Return([3]float32{-0.01, -0.01, -0.01}).Times(6)
+		badModel.EXPECT().BoundingMax().Return([3]float32{0.01, 0.01, 0.01}).Times(6)
+		badModel.EXPECT().BoundingRadius().Return(float32(0.01)).Times(6)
+		badAnim := animator_mocks.NewMockAnimator(suite.T())
+		badAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		badAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(8)
+		badAnim.EXPECT().Model().Return(badModel).Times(14)
+		badAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{0, 5, 0}, [3]float32{1, 1, 1}).Once()
+
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {goodAnim, badAnim}}
+
+		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Times(6)
+		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
+		suite.rendererMock.EXPECT().EndShadowFrame().Return().Once()
+
+		suite.NotPanics(func() { suite.scene.PrepareShadows() })
+	})
+}
+
+func (suite *sceneImplTest) TestPrepareComputeLODRemainingBranches() {
+	suite.Run("phase1 lodEnabled lod1 distance branch", func() {
+		suite.scene.cullingDisabled = true
+		suite.scene.lodEnabled = true
+		suite.scene.lod1Distance = 10.0
+		suite.scene.lod2Distance = 30.0
+		suite.scene.lodLevelCache = make(map[animator.Animator]int)
+		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
+		suite.scene.buildInjectionMap()
+		realShdr := shader.NewShader("_pclod_a", shader.ShaderTypeCompute,
+			"engine/renderer/animator/assets/simple-compute.wgsl",
+			shader.WithInjections(suite.scene.injections),
+		)
+		realPipe := pipeline.NewPipeline("pclod-a-key", pipeline.PipelineTypeCompute,
+			pipeline.WithComputeShader(realShdr),
+		)
+		computeBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		ctrlMock := camera_mocks.NewMockCameraController(suite.T())
+		ctrlMock.EXPECT().Position().Return(float32(0), float32(0), float32(0)).Once()
+		camMock := camera_mocks.NewMockCamera(suite.T())
+		camMock.EXPECT().Update().Return().Once()
+		camMock.EXPECT().ViewProjectionMatrix().Return([16]float32{}).Once()
+		camMock.EXPECT().ProjectionMatrix().Return([16]float32{}).Once()
+		camMock.EXPECT().BindGroupProvider().Return(nil).Once()
+		camMock.EXPECT().Controller().Return(ctrlMock).Once()
+		suite.scene.cam = camMock
+		suite.scene.writePool = []bind_group_provider.BufferWrite{}
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().ComputePipelineKey().Return("pclod-a-key").Times(2)
+		mockModel.EXPECT().LODCount().Return(3).Times(2)
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(8)
+		animMock.EXPECT().Model().Return(mockModel).Times(2)
+		animMock.EXPECT().CullingEnabled().Return(false).Once()
+		animMock.EXPECT().StagedWriteData().Return(nil).Once()
+		animMock.EXPECT().SetScreenSize(mock.Anything, mock.Anything).Return().Once()
+		animMock.EXPECT().SetProjectionX(mock.Anything).Return().Once()
+		animMock.EXPECT().SetHiZMipCount(mock.Anything).Return().Once()
+		animMock.EXPECT().SetViewProj(mock.Anything).Return().Once()
+		animMock.EXPECT().PrepareFrame(mock.Anything, mock.Anything).Return().Once()
+		animMock.EXPECT().Flush(mock.Anything, mock.Anything, mock.Anything).Return(uint32(1)).Once()
+		animMock.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{15, 0, 0}, [3]float32{1, 1, 1}).Once()
+		animMock.EXPECT().ComputeBindGroupProvider().Return(computeBGP).Once()
+		animMock.EXPECT().HiZBindGroupProvider().Return(nil).Once()
+		suite.rendererMock.EXPECT().Pipeline("pclod-a-key").Return(realPipe).Times(2)
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.MatchedBy(func(d []renderer.ComputeDispatch) bool {
+			return len(d) == 1 && d[0].PipelineKey == "pclod-a-key" && d[0].Providers[0].Provider == computeBGP
+		})).Return().Once()
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
+		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
+		suite.Contains(suite.scene.lodLevelCache, animMock)
+		suite.Equal(1, suite.scene.lodLevelCache[animMock])
+	})
+
+	suite.Run("phase1 lodEnabled lod2 distance branch and maxLevel clamp", func() {
+		suite.scene.cullingDisabled = true
+		suite.scene.lodEnabled = true
+		suite.scene.lod1Distance = 10.0
+		suite.scene.lod2Distance = 30.0
+		suite.scene.lodLevelCache = make(map[animator.Animator]int)
+		suite.scene.computePool = worker.NewDynamicWorkerPool(1, 256, 1*time.Second)
+		suite.scene.buildInjectionMap()
+		realShdr := shader.NewShader("_pclod_b", shader.ShaderTypeCompute,
+			"engine/renderer/animator/assets/simple-compute.wgsl",
+			shader.WithInjections(suite.scene.injections),
+		)
+		realPipe := pipeline.NewPipeline("pclod-b-key", pipeline.PipelineTypeCompute,
+			pipeline.WithComputeShader(realShdr),
+		)
+		computeBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		ctrlMock := camera_mocks.NewMockCameraController(suite.T())
+		ctrlMock.EXPECT().Position().Return(float32(0), float32(0), float32(0)).Once()
+		camMock := camera_mocks.NewMockCamera(suite.T())
+		camMock.EXPECT().Update().Return().Once()
+		camMock.EXPECT().ViewProjectionMatrix().Return([16]float32{}).Once()
+		camMock.EXPECT().ProjectionMatrix().Return([16]float32{}).Once()
+		camMock.EXPECT().BindGroupProvider().Return(nil).Once()
+		camMock.EXPECT().Controller().Return(ctrlMock).Once()
+		suite.scene.cam = camMock
+		suite.scene.writePool = []bind_group_provider.BufferWrite{}
+		mockModel := model_mocks.NewMockModel(suite.T())
+		mockModel.EXPECT().ComputePipelineKey().Return("pclod-b-key").Times(2)
+		mockModel.EXPECT().LODCount().Return(2).Times(2)
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(8)
+		animMock.EXPECT().Model().Return(mockModel).Times(2)
+		animMock.EXPECT().CullingEnabled().Return(false).Once()
+		animMock.EXPECT().StagedWriteData().Return(nil).Once()
+		animMock.EXPECT().SetScreenSize(mock.Anything, mock.Anything).Return().Once()
+		animMock.EXPECT().SetProjectionX(mock.Anything).Return().Once()
+		animMock.EXPECT().SetHiZMipCount(mock.Anything).Return().Once()
+		animMock.EXPECT().SetViewProj(mock.Anything).Return().Once()
+		animMock.EXPECT().PrepareFrame(mock.Anything, mock.Anything).Return().Once()
+		animMock.EXPECT().Flush(mock.Anything, mock.Anything, mock.Anything).Return(uint32(1)).Once()
+		animMock.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{35, 0, 0}, [3]float32{1, 1, 1}).Once()
+		animMock.EXPECT().ComputeBindGroupProvider().Return(computeBGP).Once()
+		animMock.EXPECT().HiZBindGroupProvider().Return(nil).Once()
+		suite.rendererMock.EXPECT().Pipeline("pclod-b-key").Return(realPipe).Times(2)
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.MatchedBy(func(d []renderer.ComputeDispatch) bool {
+			return len(d) == 1 && d[0].PipelineKey == "pclod-b-key" && d[0].Providers[0].Provider == computeBGP
+		})).Return().Once()
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
+		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
+		suite.Contains(suite.scene.lodLevelCache, animMock)
+		suite.Equal(1, suite.scene.lodLevelCache[animMock])
 	})
 }
