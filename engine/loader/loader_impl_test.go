@@ -160,6 +160,33 @@ func (suite *loaderImplTest) TestImportedToModel() {
 		suite.Equal([3]float32{-1, -2, -3}, result.BoundingMin())
 		suite.Equal([3]float32{4, 5, 6}, result.BoundingMax())
 	})
+
+	suite.Run("generates LOD levels when total triangle count is at least 16", func() {
+		verts, indices := makeLODGridVerts(5, 5, 0.2)
+		imported := &model.ImportedModel{
+			Name: "lod-mesh",
+			Meshes: []model.ImportedMesh{
+				{Vertices: verts, Indices: indices},
+			},
+		}
+		result, err := suite.l.importedToModel(imported)
+		suite.NoError(err)
+		suite.Greater(result.LODCount(), 1)
+	})
+
+	suite.Run("skips LOD generation when total triangle count is less than 16", func() {
+		// 3×3 grid → 8 triangles < 16; no LOD levels should be added
+		verts, indices := makeLODGridVerts(3, 3, 0.2)
+		imported := &model.ImportedModel{
+			Name: "small-mesh",
+			Meshes: []model.ImportedMesh{
+				{Vertices: verts, Indices: indices},
+			},
+		}
+		result, err := suite.l.importedToModel(imported)
+		suite.NoError(err)
+		suite.Equal(1, result.LODCount())
+	})
 }
 
 func (suite *loaderImplTest) TestLoad() {
@@ -347,4 +374,27 @@ type mockLoaderBackend struct {
 
 func (m *mockLoaderBackend) Load(_ string) (*model.ImportedModel, error) {
 	return m.result, m.err
+}
+
+// makeLODGridVerts returns a rows×cols grid of GPUSkinnedVertex and triangle indices
+// for use in LOD generation tests. Produces (rows-1)*(cols-1)*2 triangles.
+func makeLODGridVerts(rows, cols int, spacing float32) ([]model.GPUSkinnedVertex, []uint32) {
+	verts := make([]model.GPUSkinnedVertex, rows*cols)
+	for r := 0; r < rows; r++ {
+		for c := 0; c < cols; c++ {
+			verts[r*cols+c].Position = [3]float32{float32(c) * spacing, float32(r) * spacing, 0}
+		}
+	}
+	var indices []uint32
+	for r := 0; r < rows-1; r++ {
+		for c := 0; c < cols-1; c++ {
+			tl := uint32(r*cols + c)
+			tr := uint32(r*cols + c + 1)
+			bl := uint32((r+1)*cols + c)
+			br := uint32((r+1)*cols + c + 1)
+			indices = append(indices, tl, tr, bl)
+			indices = append(indices, tr, br, bl)
+		}
+	}
+	return verts, indices
 }
