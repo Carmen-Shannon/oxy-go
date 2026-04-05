@@ -3,6 +3,7 @@ package lod
 import (
 	"math"
 
+	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
 )
 
@@ -72,7 +73,7 @@ func decimate(vertices []model.GPUSkinnedVertex, indices []uint32, targetRatio f
 
 	for i := range vertices {
 		v := &vertices[i]
-		key := cellKey(v.Position, vMin, delta, gridRes)
+		key := common.CellKey(v.Position, vMin, delta, gridRes)
 		vertexKeys[i] = key
 
 		acc, ok := cells[key]
@@ -128,7 +129,7 @@ func decimate(vertices []model.GPUSkinnedVertex, indices []uint32, targetRatio f
 
 	for key, acc := range cells {
 		n := float64(acc.count)
-		norm := normalizeF64(acc.normalSum)
+		norm := common.NormalizeF64(acc.normalSum)
 
 		var sv model.GPUSkinnedVertex
 		sv.Position[0] = float32(acc.posSum[0] / n)
@@ -165,60 +166,4 @@ func decimate(vertices []model.GPUSkinnedVertex, indices []uint32, targetRatio f
 	}
 
 	return repVertices, outIndices
-}
-
-// cellKey computes the flattened grid key for a vertex position.
-//
-// Parameters:
-//   - pos: vertex position
-//   - vMin: bounding box minimum
-//   - delta: cell size per axis
-//   - gridRes: grid resolution per axis
-//
-// Returns:
-//   - int: flattened cell key
-func cellKey(pos [3]float32, vMin [3]float32, delta [3]float32, gridRes int) int {
-	cx := clampInt(int(math.Floor(float64((pos[0]-vMin[0])/delta[0]))), 0, gridRes-1)
-	cy := clampInt(int(math.Floor(float64((pos[1]-vMin[1])/delta[1]))), 0, gridRes-1)
-	cz := clampInt(int(math.Floor(float64((pos[2]-vMin[2])/delta[2]))), 0, gridRes-1)
-	return cz*gridRes*gridRes + cy*gridRes + cx
-}
-
-// clampInt constrains v to the range [lo, hi].
-//
-// Parameters:
-//   - v: value to clamp
-//   - lo: lower bound
-//   - hi: upper bound
-//
-// Returns:
-//   - int: clamped value
-func clampInt(v, lo, hi int) int {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
-}
-
-// normalizeF64 normalizes a 3-component float64 vector and returns it as float32.
-// Returns a zero vector if the input length is effectively zero.
-//
-// Parameters:
-//   - v: input vector (accumulated sum, not yet normalized)
-//
-// Returns:
-//   - [3]float32: unit-length vector
-func normalizeF64(v [3]float64) [3]float32 {
-	l := math.Sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2])
-	if l < 1e-12 {
-		return [3]float32{}
-	}
-	return [3]float32{
-		float32(v[0] / l),
-		float32(v[1] / l),
-		float32(v[2] / l),
-	}
 }

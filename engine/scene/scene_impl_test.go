@@ -13823,6 +13823,40 @@ func (suite *sceneImplTest) TestCreateAnimatorUncoveredPaths() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("hiz slot1 fail")).Once()
 		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
 	})
+
+	suite.Run("output BGP slot 1 InitBindGroup panics", func() {
+		rawOutputBnd := 1
+		outputDecl := shader.Annotation{
+			Type:    shader.AnnotationTypeProvider,
+			Binding: &rawOutputBnd,
+			Args:    []shader.AnnotationArg{shader.AnnotationArgAnimatorOutput},
+		}
+		mdl, cs, vs, fs := makeBase()
+		_ = fs
+		mdl.EXPECT().Skinned().Return(false).Maybe()
+		mdl.EXPECT().BoundingRadius().Return(float32(1.0)).Once()
+		mdl.EXPECT().BoundingMin().Return([3]float32{}).Once()
+		mdl.EXPECT().BoundingMax().Return([3]float32{}).Once()
+		mdl.EXPECT().MeshProvider().Return(nil).Once()
+		mdl.EXPECT().LODCount().Return(1).Once()
+		mdl.EXPECT().Name().Return("m").Maybe()
+		cs.EXPECT().Declarations().Return([]shader.Annotation{outputDecl}).Maybe()
+		cs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{
+			Entries: []wgpu.BindGroupLayoutEntry{
+				{Binding: 1, Buffer: wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeStorage, MinBindingSize: 64}},
+			},
+		}).Once()
+		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
+		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+			RunAndReturn(func(provider bind_group_provider.BindGroupProvider, _ wgpu.BindGroupLayoutDescriptor, _ map[int]wgpu.BufferUsage, _ map[int]uint64) error {
+				provider.SetBuffer(rawOutputBnd, &wgpu.Buffer{})
+				return nil
+			}).Once()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(2)
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("output slot1 fail")).Once()
+		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
+	})
 }
 
 func (suite *sceneImplTest) TestAnimLODLevel() {
@@ -14300,5 +14334,575 @@ func (suite *sceneImplTest) TestPrepareComputeLODRemainingBranches() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 		suite.Contains(suite.scene.lodLevelCache, animMock)
 		suite.Equal(1, suite.scene.lodLevelCache[animMock])
+	})
+}
+
+func (suite *sceneImplTest) TestWithActive() {
+	suite.Run("sets active true", func() {
+		s := &scene{mu: &sync.RWMutex{}}
+		opt := WithActive(true)
+		opt(s)
+		suite.Equal(true, s.active)
+	})
+
+	suite.Run("sets active false", func() {
+		s := &scene{mu: &sync.RWMutex{}}
+		opt := WithActive(false)
+		opt(s)
+		suite.Equal(false, s.active)
+	})
+}
+
+func (suite *sceneImplTest) TestWithCullingDisabled() {
+	suite.Run("sets cullingDisabled true", func() {
+		s := &scene{mu: &sync.RWMutex{}}
+		opt := WithCullingDisabled(true)
+		opt(s)
+		suite.Equal(true, s.cullingDisabled)
+	})
+
+	suite.Run("sets cullingDisabled false", func() {
+		s := &scene{mu: &sync.RWMutex{}}
+		opt := WithCullingDisabled(false)
+		opt(s)
+		suite.Equal(false, s.cullingDisabled)
+	})
+}
+
+func (suite *sceneImplTest) TestWithLODEnabled() {
+	suite.Run("sets lodEnabled true", func() {
+		s := &scene{mu: &sync.RWMutex{}}
+		opt := WithLODEnabled(true)
+		opt(s)
+		suite.Equal(true, s.lodEnabled)
+	})
+
+	suite.Run("sets lodEnabled false", func() {
+		s := &scene{mu: &sync.RWMutex{}}
+		opt := WithLODEnabled(false)
+		opt(s)
+		suite.Equal(false, s.lodEnabled)
+	})
+}
+
+func (suite *sceneImplTest) TestWithLODDistances() {
+	suite.Run("sets lod1Distance and lod2Distance", func() {
+		s := &scene{mu: &sync.RWMutex{}}
+		opt := WithLODDistances(10.0, 30.0)
+		opt(s)
+		suite.Equal(float32(10.0), s.lod1Distance)
+		suite.Equal(float32(30.0), s.lod2Distance)
+	})
+}
+
+func (suite *sceneImplTest) TestWithLODShadowBias() {
+	suite.Run("sets lodShadowBias", func() {
+		s := &scene{mu: &sync.RWMutex{}}
+		opt := WithLODShadowBias(2)
+		opt(s)
+		suite.Equal(2, s.lodShadowBias)
+	})
+}
+
+func (suite *sceneImplTest) TestPruneAnimatorMarkAllDirty() {
+	suite.Run("calls MarkAllDirty on non-nil ShadowHandler", func() {
+		shMock := light_mocks.NewMockShadowHandler(suite.T())
+		shMock.EXPECT().MarkAllDirty().Once()
+		lhMock := light_mocks.NewMockLightingHandler(suite.T())
+		lhMock.EXPECT().ShadowHandler().Return(shMock).Once()
+		suite.scene.lightHandler = lhMock
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Model().Return(nil).Once()
+		animMock.EXPECT().Release().Once()
+		suite.NotPanics(func() { suite.scene.pruneAnimator(animMock) })
+	})
+}
+
+func (suite *sceneImplTest) TestRefreshAnimatorHiZBindGroupsNilLightHandler() {
+	suite.Run("returns immediately when lightHandler is nil", func() {
+		suite.scene.lightHandler = nil
+		suite.NotPanics(func() { suite.scene.refreshAnimatorHiZBindGroups() })
+	})
+}
+
+func (suite *sceneImplTest) TestRefreshAnimatorHiZBindGroupsMaxViewNilPaths() {
+	suite.Run("skips slot when maxHizView is nil and hizFallbackView is nil", func() {
+		suite.scene.hizFallbackView = nil
+
+		lhMock := light_mocks.NewMockLightingHandler(suite.T())
+		ssrMock := light_mocks.NewMockSSRHandler(suite.T())
+		ssrMock.EXPECT().SetSlot(mock.Anything).Maybe()
+		ssrMock.EXPECT().HiZTextureView().Return(&wgpu.TextureView{}).Maybe()
+		ssrMock.EXPECT().HiZMaxTextureView().Return(nil).Maybe()
+		lhMock.EXPECT().SSRHandler().Return(ssrMock).Once()
+		suite.scene.lightHandler = lhMock
+
+		hiZBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		hiZBGPMock.EXPECT().SetSlot(mock.Anything).Maybe()
+
+		computeShdrMock := shader_mocks.NewMockShader(suite.T())
+		computeShdrMock.EXPECT().BindGroupLayoutDescriptor(1).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
+
+		pipeMock := pipeline_mocks.NewMockPipeline(suite.T())
+		pipeMock.EXPECT().Shader(shader.ShaderTypeCompute).Return(computeShdrMock).Once()
+
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		mdlMock := model_mocks.NewMockModel(suite.T())
+		animMock.EXPECT().HiZBindGroupProvider().Return(hiZBGPMock).Once()
+		animMock.EXPECT().Model().Return(mdlMock).Once()
+		mdlMock.EXPECT().ComputePipelineKey().Return("hiz_maxnil_compute").Once()
+		suite.rendererMock.EXPECT().Pipeline("hiz_maxnil_compute").Return(pipeMock).Once()
+
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
+		suite.NotPanics(func() { suite.scene.refreshAnimatorHiZBindGroups() })
+	})
+}
+
+func (suite *sceneImplTest) TestCreateAnimatorLODMeshInitPanics() {
+	suite.Run("panics when InitMeshBuffers fails for LOD level 1", func() {
+		mdl := model_mocks.NewMockModel(suite.T())
+		cs := shader_mocks.NewMockShader(suite.T())
+		vs := shader_mocks.NewMockShader(suite.T())
+		fs := shader_mocks.NewMockShader(suite.T())
+
+		mdl.EXPECT().Skinned().Return(false).Maybe()
+		mdl.EXPECT().BoundingRadius().Return(float32(1.0)).Once()
+		mdl.EXPECT().BoundingMin().Return([3]float32{}).Once()
+		mdl.EXPECT().BoundingMax().Return([3]float32{}).Once()
+		mdl.EXPECT().MeshProvider().Return(nil).Once()
+		mdl.EXPECT().LODCount().Return(2).Once()
+		lodBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		lodBGP.EXPECT().VertexBuffer().Return(nil).Once()
+		mdl.EXPECT().LODMeshProvider(1).Return(lodBGP).Once()
+		mdl.EXPECT().LODVertexData(1).Return([]byte{1}).Once()
+		mdl.EXPECT().LODIndexData(1).Return([]byte{1}).Once()
+		mdl.EXPECT().LODIndexCount(1).Return(3).Once()
+		mdl.EXPECT().Name().Return("test-lod-model").Maybe()
+
+		cs.EXPECT().Declarations().Return([]shader.Annotation{}).Maybe()
+		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Maybe()
+
+		suite.rendererMock.EXPECT().InitMeshBuffers(lodBGP, []byte{1}, []byte{1}, 3).Return(errors.New("lod mesh fail")).Once()
+
+		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
+	})
+}
+func (suite *sceneImplTest) TestReleaseResolutionDependentResourcesBGPPaths() {
+	suite.Run("sets all bgp bind groups to nil for all handlers enabled", func() {
+		lhMock := light_mocks.NewMockLightingHandler(suite.T())
+		gbhMock := light_mocks.NewMockGBufferHandler(suite.T())
+		ssaoMock := light_mocks.NewMockSSAOHandler(suite.T())
+		cshMock := light_mocks.NewMockContactShadowHandler(suite.T())
+		shMock := light_mocks.NewMockShadowHandler(suite.T())
+		chMock := light_mocks.NewMockCompositionHandler(suite.T())
+		ssrMock := light_mocks.NewMockSSRHandler(suite.T())
+
+		lhMock.EXPECT().GBufferHandler().Return(gbhMock).Maybe()
+		lhMock.EXPECT().SSAOHandler().Return(ssaoMock).Maybe()
+		lhMock.EXPECT().ContactShadowHandler().Return(cshMock).Maybe()
+		lhMock.EXPECT().ShadowHandler().Return(shMock).Maybe()
+		lhMock.EXPECT().CompositionHandler().Return(chMock).Maybe()
+		lhMock.EXPECT().SSRHandler().Return(ssrMock).Maybe()
+
+		gbhMock.EXPECT().Enabled().Return(false).Maybe()
+
+		ssaoMock.EXPECT().Enabled().Return(true).Maybe()
+		ssaoMock.EXPECT().SetSlot(mock.Anything).Maybe()
+		ssaoMock.EXPECT().RawTextureView().Return(nil).Maybe()
+		ssaoMock.EXPECT().RawTexture().Return(nil).Maybe()
+		ssaoMock.EXPECT().SetRawTextureView(mock.Anything).Maybe()
+		ssaoMock.EXPECT().SetRawTexture(mock.Anything).Maybe()
+		ssaoMock.EXPECT().BlurredTextureView().Return(nil).Maybe()
+		ssaoMock.EXPECT().BlurredTexture().Return(nil).Maybe()
+		ssaoMock.EXPECT().SetBlurredTextureView(mock.Anything).Maybe()
+		ssaoMock.EXPECT().SetBlurredTexture(mock.Anything).Maybe()
+		ssaoMock.EXPECT().ScratchTextureView().Return(nil).Maybe()
+		ssaoMock.EXPECT().ScratchTexture().Return(nil).Maybe()
+		ssaoMock.EXPECT().SetScratchTextureView(mock.Anything).Maybe()
+		ssaoMock.EXPECT().SetScratchTexture(mock.Anything).Maybe()
+		ssaoBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		ssaoBGP.EXPECT().BindGroup().Return(nil).Once()
+		ssaoBGP.EXPECT().SetBindGroup(mock.Anything).Once()
+		ssaoMock.EXPECT().Bgp("ssao_compute").Return(ssaoBGP).Once()
+		ssaoMock.EXPECT().Bgp("ssao_blur_h").Return(nil).Maybe()
+		ssaoMock.EXPECT().Bgp("ssao_blur_v").Return(nil).Maybe()
+
+		ssaoLitBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		ssaoLitBGP.EXPECT().BindGroup().Return(nil).Once()
+		ssaoLitBGP.EXPECT().SetBindGroup(mock.Anything).Once()
+		lhMock.EXPECT().Bgp("ssao_lit").Return(ssaoLitBGP).Maybe()
+
+		cshMock.EXPECT().Enabled().Return(true).Maybe()
+		cshMock.EXPECT().SetSlot(mock.Anything).Maybe()
+		cshMock.EXPECT().TextureView().Return(nil).Maybe()
+		cshMock.EXPECT().Texture().Return(nil).Maybe()
+		cshMock.EXPECT().SetTextureView(mock.Anything).Maybe()
+		cshMock.EXPECT().SetTexture(mock.Anything).Maybe()
+		csBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		csBGP.EXPECT().BindGroup().Return(nil).Once()
+		csBGP.EXPECT().SetBindGroup(mock.Anything).Once()
+		cshMock.EXPECT().Bgp("contact_shadow_compute").Return(csBGP).Once()
+
+		shMock.EXPECT().CSMAtlasTexture().Return(&wgpu.Texture{}).Maybe()
+		csmBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		csmBGP.EXPECT().BindGroup().Return(nil).Once()
+		csmBGP.EXPECT().SetBindGroup(mock.Anything).Once()
+		shMock.EXPECT().Bgp("csm_shadow_lit").Return(csmBGP).Once()
+
+		chMock.EXPECT().Enabled().Return(true).Maybe()
+		chMock.EXPECT().BloomMipCount().Return(0).Maybe()
+		chMock.EXPECT().SetSlot(mock.Anything).Maybe()
+		chMock.EXPECT().HDRTextureView().Return(nil).Maybe()
+		chMock.EXPECT().HDRTexture().Return(nil).Maybe()
+		chMock.EXPECT().SetHDRTextureView(mock.Anything).Maybe()
+		chMock.EXPECT().SetHDRTexture(mock.Anything).Maybe()
+		chMock.EXPECT().MSAATextureView().Return(nil).Maybe()
+		chMock.EXPECT().MSAATexture().Return(nil).Maybe()
+		chMock.EXPECT().SetMSAATextureView(mock.Anything).Maybe()
+		chMock.EXPECT().SetMSAATexture(mock.Anything).Maybe()
+		chMock.EXPECT().DepthTextureView().Return(nil).Maybe()
+		chMock.EXPECT().DepthTexture().Return(nil).Maybe()
+		chMock.EXPECT().SetDepthTextureView(mock.Anything).Maybe()
+		chMock.EXPECT().SetDepthTexture(mock.Anything).Maybe()
+		chMock.EXPECT().BloomDownTexture().Return(nil).Maybe()
+		chMock.EXPECT().BloomDownReadViews().Return(nil).Maybe()
+		chMock.EXPECT().BloomDownStorageViews().Return(nil).Maybe()
+		chMock.EXPECT().SetBloomDownTexture(mock.Anything).Maybe()
+		chMock.EXPECT().SetBloomDownReadViews(mock.Anything).Maybe()
+		chMock.EXPECT().SetBloomDownStorageViews(mock.Anything).Maybe()
+		chMock.EXPECT().BloomUpTexture().Return(nil).Maybe()
+		chMock.EXPECT().BloomUpReadViews().Return(nil).Maybe()
+		chMock.EXPECT().BloomUpStorageViews().Return(nil).Maybe()
+		chMock.EXPECT().BloomUpMip0View().Return(nil).Maybe()
+		chMock.EXPECT().SetBloomUpTexture(mock.Anything).Maybe()
+		chMock.EXPECT().SetBloomUpReadViews(mock.Anything).Maybe()
+		chMock.EXPECT().SetBloomUpStorageViews(mock.Anything).Maybe()
+		chMock.EXPECT().SetBloomUpMip0View(mock.Anything).Maybe()
+		compBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		compBGP.EXPECT().BindGroup().Return(nil).Once()
+		compBGP.EXPECT().SetBindGroup(mock.Anything).Once()
+		chMock.EXPECT().Bgp("composition").Return(compBGP).Once()
+		lumBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		lumBGP.EXPECT().BindGroup().Return(nil).Once()
+		lumBGP.EXPECT().SetBindGroup(mock.Anything).Once()
+		chMock.EXPECT().Bgp("luminance_compute").Return(lumBGP).Once()
+
+		ssrMock.EXPECT().Enabled().Return(true).Maybe()
+		ssrMock.EXPECT().HiZMipCount().Return(0).Maybe()
+		ssrMock.EXPECT().SetSlot(mock.Anything).Maybe()
+		ssrMock.EXPECT().SSRTextureView().Return(nil).Maybe()
+		ssrMock.EXPECT().SSRTexture().Return(nil).Maybe()
+		ssrMock.EXPECT().SetSSRTextureView(mock.Anything).Maybe()
+		ssrMock.EXPECT().SetSSRTexture(mock.Anything).Maybe()
+		ssrMock.EXPECT().HiZTextureView().Return(nil).Maybe()
+		ssrMock.EXPECT().HiZTexture().Return(nil).Maybe()
+		ssrMock.EXPECT().HiZMipReadViews().Return(nil).Maybe()
+		ssrMock.EXPECT().HiZStorageViews().Return(nil).Maybe()
+		ssrMock.EXPECT().SetHiZTextureView(mock.Anything).Maybe()
+		ssrMock.EXPECT().SetHiZTexture(mock.Anything).Maybe()
+		ssrMock.EXPECT().SetHiZMipReadViews(mock.Anything).Maybe()
+		ssrMock.EXPECT().SetHiZStorageViews(mock.Anything).Maybe()
+		ssrBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		ssrBGP.EXPECT().BindGroup().Return(nil).Once()
+		ssrBGP.EXPECT().SetBindGroup(mock.Anything).Once()
+		ssrMock.EXPECT().Bgp("ssr_compute").Return(ssrBGP).Once()
+		ssrMock.EXPECT().Bgp("hiz_init").Return(nil).Maybe()
+		ssrMock.EXPECT().Bgp("hiz_init_max").Return(nil).Maybe()
+
+		suite.scene.lightHandler = lhMock
+		suite.NotPanics(func() { suite.scene.releaseResolutionDependentResources() })
+	})
+}
+func (suite *sceneImplTest) TestResizePostProcessingSSAOEnabled() {
+	suite.Run("panics when initSSAO fails with enabled SSAO", func() {
+		suite.scene.buildInjectionMap()
+		suite.scene.postProcessingInitialized = true
+		suite.scene.screenWidth = 800
+		suite.scene.screenHeight = 600
+
+		lhMock := light_mocks.NewMockLightingHandler(suite.T())
+		gbhMock := light_mocks.NewMockGBufferHandler(suite.T())
+		ssaoMock := light_mocks.NewMockSSAOHandler(suite.T())
+		cshMock := light_mocks.NewMockContactShadowHandler(suite.T())
+		shMock := light_mocks.NewMockShadowHandler(suite.T())
+		chMock := light_mocks.NewMockCompositionHandler(suite.T())
+		ssrMock := light_mocks.NewMockSSRHandler(suite.T())
+
+		lhMock.EXPECT().GBufferHandler().Return(gbhMock).Maybe()
+		lhMock.EXPECT().SSAOHandler().Return(ssaoMock).Maybe()
+		lhMock.EXPECT().ContactShadowHandler().Return(cshMock).Maybe()
+		lhMock.EXPECT().ShadowHandler().Return(shMock).Maybe()
+		lhMock.EXPECT().CompositionHandler().Return(chMock).Maybe()
+		lhMock.EXPECT().SSRHandler().Return(ssrMock).Maybe()
+		lhMock.EXPECT().Bgp("ssao_lit").Return(nil).Maybe()
+
+		// GBuffer.Enabled: call 1 (release phase) → false, call 2 (resize initGBuffer check) → false,
+		// call 3 (inside initSSAO prerequisite guard) → true so initSSAO proceeds to CreateSSAOTextures.
+		gbEnabledCount := 0
+		gbhMock.EXPECT().Enabled().RunAndReturn(func() bool {
+			gbEnabledCount++
+			return gbEnabledCount >= 3
+		}).Times(3)
+
+		// SSAO.Enabled: call 1 (release phase) → false, call 2 (resize initSSAO check) → true.
+		ssaoEnabledCount := 0
+		ssaoMock.EXPECT().Enabled().RunAndReturn(func() bool {
+			ssaoEnabledCount++
+			return ssaoEnabledCount > 1
+		}).Times(2)
+
+		cshMock.EXPECT().Enabled().Return(false).Maybe()
+		shMock.EXPECT().CSMAtlasTexture().Return(nil).Maybe()
+		chMock.EXPECT().Enabled().Return(false).Maybe()
+		ssrMock.EXPECT().Enabled().Return(false).Maybe()
+
+		// HalfResolution is called inside initSSAO once GBuffer.Enabled passes.
+		ssaoMock.EXPECT().HalfResolution().Return(false).Once()
+
+		suite.rendererMock.EXPECT().WaitIdle().Return().Once()
+		suite.rendererMock.EXPECT().CreateSSAOTextures(800, 600).Return(
+			(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
+			(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
+			(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
+			errors.New("ssao fail"),
+		).Once()
+
+		suite.scene.lightHandler = lhMock
+		suite.Panics(func() { suite.scene.resizePostProcessing(800, 600) })
+	})
+}
+
+func (suite *sceneImplTest) TestResizePostProcessingCSMShadowLitBindGroup() {
+	suite.Run("calls initCSMShadowLitBindGroup when CSMAtlasTexture is non-nil", func() {
+		suite.scene.buildInjectionMap()
+		suite.scene.postProcessingInitialized = true
+		suite.scene.screenWidth = 800
+		suite.scene.screenHeight = 600
+
+		lhMock := light_mocks.NewMockLightingHandler(suite.T())
+		gbhMock := light_mocks.NewMockGBufferHandler(suite.T())
+		ssaoMock := light_mocks.NewMockSSAOHandler(suite.T())
+		cshMock := light_mocks.NewMockContactShadowHandler(suite.T())
+		shMock := light_mocks.NewMockShadowHandler(suite.T())
+		chMock := light_mocks.NewMockCompositionHandler(suite.T())
+		ssrMock := light_mocks.NewMockSSRHandler(suite.T())
+
+		lhMock.EXPECT().GBufferHandler().Return(gbhMock).Maybe()
+		lhMock.EXPECT().SSAOHandler().Return(ssaoMock).Maybe()
+		lhMock.EXPECT().ContactShadowHandler().Return(cshMock).Maybe()
+		lhMock.EXPECT().ShadowHandler().Return(shMock).Maybe()
+		lhMock.EXPECT().CompositionHandler().Return(chMock).Maybe()
+		lhMock.EXPECT().SSRHandler().Return(ssrMock).Maybe()
+		lhMock.EXPECT().Bgp("ssao_lit").Return(nil).Maybe()
+
+		gbhMock.EXPECT().Enabled().Return(false).Maybe()
+		ssaoMock.EXPECT().Enabled().Return(false).Maybe()
+		cshMock.EXPECT().Enabled().Return(false).Maybe()
+		chMock.EXPECT().Enabled().Return(false).Maybe()
+		ssrMock.EXPECT().Enabled().Return(false).Maybe()
+
+		// CSMAtlasTexture returns non-nil to enter the initCSMShadowLitBindGroup branch.
+		shMock.EXPECT().CSMAtlasTexture().Return(&wgpu.Texture{}).Maybe()
+		// Release phase: Bgp("csm_shadow_lit") returns nil so the bgp block is skipped (no Release).
+		shMock.EXPECT().Bgp("csm_shadow_lit").Return(nil).Maybe()
+		// initCSMShadowLitBindGroup: CSMAtlasTextureView returns nil → early return, no panic.
+		shMock.EXPECT().CSMAtlasTextureView().Return(nil).Maybe()
+
+		suite.rendererMock.EXPECT().WaitIdle().Return().Once()
+		suite.rendererMock.EXPECT().InitTextureView(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+		suite.rendererMock.EXPECT().InitSampler(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
+		suite.scene.lightHandler = lhMock
+		suite.NotPanics(func() { suite.scene.resizePostProcessing(800, 600) })
+	})
+}
+
+func (suite *sceneImplTest) TestResizePostProcessingCompositionEnabled() {
+	suite.Run("panics when initComposition fails", func() {
+		suite.scene.buildInjectionMap()
+		suite.scene.postProcessingInitialized = true
+		suite.scene.screenWidth = 800
+		suite.scene.screenHeight = 600
+
+		lhMock := light_mocks.NewMockLightingHandler(suite.T())
+		gbhMock := light_mocks.NewMockGBufferHandler(suite.T())
+		ssaoMock := light_mocks.NewMockSSAOHandler(suite.T())
+		cshMock := light_mocks.NewMockContactShadowHandler(suite.T())
+		shMock := light_mocks.NewMockShadowHandler(suite.T())
+		chMock := light_mocks.NewMockCompositionHandler(suite.T())
+		ssrMock := light_mocks.NewMockSSRHandler(suite.T())
+
+		lhMock.EXPECT().GBufferHandler().Return(gbhMock).Maybe()
+		lhMock.EXPECT().SSAOHandler().Return(ssaoMock).Maybe()
+		lhMock.EXPECT().ContactShadowHandler().Return(cshMock).Maybe()
+		lhMock.EXPECT().ShadowHandler().Return(shMock).Maybe()
+		lhMock.EXPECT().CompositionHandler().Return(chMock).Maybe()
+		lhMock.EXPECT().SSRHandler().Return(ssrMock).Maybe()
+		lhMock.EXPECT().Bgp("ssao_lit").Return(nil).Maybe()
+
+		ssaoMock.EXPECT().BlurredTextureView().Return(nil).Maybe()
+		ssaoMock.EXPECT().LinearSampler().Return(nil).Maybe()
+
+		gbhMock.EXPECT().Enabled().Return(false).Maybe()
+		ssaoMock.EXPECT().Enabled().Return(false).Maybe()
+		cshMock.EXPECT().Enabled().Return(false).Maybe()
+		shMock.EXPECT().CSMAtlasTexture().Return(nil).Maybe()
+
+		// chMock.Enabled: call 1 (release) → false; call 2 (initComposition check) → true
+		chEnabledCount := 0
+		chMock.EXPECT().Enabled().RunAndReturn(func() bool {
+			chEnabledCount++
+			return chEnabledCount > 1
+		}).Maybe()
+
+		ssrMock.EXPECT().Enabled().Return(false).Maybe()
+
+		suite.rendererMock.EXPECT().WaitIdle().Return().Once()
+		suite.rendererMock.EXPECT().InitTextureView(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+		suite.rendererMock.EXPECT().InitSampler(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+		suite.rendererMock.EXPECT().SampleCount().Return(uint32(1)).Once()
+		suite.rendererMock.EXPECT().CreateCompositionTextures(800, 600, mock.Anything).Return(
+			(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
+			(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
+			(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
+			errors.New("comp fail"),
+		).Once()
+
+		suite.scene.lightHandler = lhMock
+		suite.Panics(func() { suite.scene.resizePostProcessing(800, 600) })
+	})
+}
+
+func (suite *sceneImplTest) TestResizePostProcessingSSREnabled() {
+	suite.Run("panics when initSSR fails", func() {
+		suite.scene.buildInjectionMap()
+		suite.scene.postProcessingInitialized = true
+		suite.scene.screenWidth = 800
+		suite.scene.screenHeight = 600
+
+		lhMock := light_mocks.NewMockLightingHandler(suite.T())
+		gbhMock := light_mocks.NewMockGBufferHandler(suite.T())
+		ssaoMock := light_mocks.NewMockSSAOHandler(suite.T())
+		cshMock := light_mocks.NewMockContactShadowHandler(suite.T())
+		shMock := light_mocks.NewMockShadowHandler(suite.T())
+		chMock := light_mocks.NewMockCompositionHandler(suite.T())
+		ssrMock := light_mocks.NewMockSSRHandler(suite.T())
+
+		lhMock.EXPECT().GBufferHandler().Return(gbhMock).Maybe()
+		lhMock.EXPECT().SSAOHandler().Return(ssaoMock).Maybe()
+		lhMock.EXPECT().ContactShadowHandler().Return(cshMock).Maybe()
+		lhMock.EXPECT().ShadowHandler().Return(shMock).Maybe()
+		lhMock.EXPECT().CompositionHandler().Return(chMock).Maybe()
+		lhMock.EXPECT().SSRHandler().Return(ssrMock).Maybe()
+		lhMock.EXPECT().Bgp("ssao_lit").Return(nil).Maybe()
+
+		ssaoMock.EXPECT().BlurredTextureView().Return(nil).Maybe()
+		ssaoMock.EXPECT().LinearSampler().Return(nil).Maybe()
+
+		// gbhMock.Enabled: false (release), false (initGBuffer check), true (initSSR internal guard)
+		gbEnabledCount := 0
+		gbhMock.EXPECT().Enabled().RunAndReturn(func() bool {
+			gbEnabledCount++
+			return gbEnabledCount >= 3
+		}).Maybe()
+
+		ssaoMock.EXPECT().Enabled().Return(false).Maybe()
+		cshMock.EXPECT().Enabled().Return(false).Maybe()
+		shMock.EXPECT().CSMAtlasTexture().Return(nil).Maybe()
+
+		// chMock.Enabled: false (release), false (initComposition check), true (initSSR internal guard)
+		chEnabledCount := 0
+		chMock.EXPECT().Enabled().RunAndReturn(func() bool {
+			chEnabledCount++
+			return chEnabledCount >= 3
+		}).Maybe()
+
+		// ssrMock.Enabled: false (release), true (initSSR check) — panics before combined block
+		ssrEnabledCount := 0
+		ssrMock.EXPECT().Enabled().RunAndReturn(func() bool {
+			ssrEnabledCount++
+			return ssrEnabledCount > 1
+		}).Maybe()
+
+		suite.rendererMock.EXPECT().WaitIdle().Return().Once()
+		suite.rendererMock.EXPECT().InitTextureView(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+		suite.rendererMock.EXPECT().InitSampler(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+		// halfW=400, halfH=300; CreateSSRTextures is the first GPU call in initSSR
+		suite.rendererMock.EXPECT().CreateSSRTextures(400, 300).Return(
+			(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
+			errors.New("ssr fail"),
+		).Once()
+
+		suite.scene.lightHandler = lhMock
+		suite.Panics(func() { suite.scene.resizePostProcessing(800, 600) })
+	})
+}
+
+func (suite *sceneImplTest) TestResizePostProcessingSSRCompositionCombinedPanic() {
+	suite.Run("panics when InitBindGroup fails in SSR+Composition combined rebind", func() {
+		suite.scene.buildInjectionMap()
+		suite.scene.postProcessingInitialized = true
+		suite.scene.screenWidth = 800
+		suite.scene.screenHeight = 600
+
+		lhMock := light_mocks.NewMockLightingHandler(suite.T())
+		gbhMock := light_mocks.NewMockGBufferHandler(suite.T())
+		ssaoMock := light_mocks.NewMockSSAOHandler(suite.T())
+		cshMock := light_mocks.NewMockContactShadowHandler(suite.T())
+		shMock := light_mocks.NewMockShadowHandler(suite.T())
+		chMock := light_mocks.NewMockCompositionHandler(suite.T())
+		ssrMock := light_mocks.NewMockSSRHandler(suite.T())
+
+		lhMock.EXPECT().GBufferHandler().Return(gbhMock).Maybe()
+		lhMock.EXPECT().SSAOHandler().Return(ssaoMock).Maybe()
+		lhMock.EXPECT().ContactShadowHandler().Return(cshMock).Maybe()
+		lhMock.EXPECT().ShadowHandler().Return(shMock).Maybe()
+		lhMock.EXPECT().CompositionHandler().Return(chMock).Maybe()
+		lhMock.EXPECT().SSRHandler().Return(ssrMock).Maybe()
+		lhMock.EXPECT().Bgp("ssao_lit").Return(nil).Maybe()
+
+		ssaoMock.EXPECT().BlurredTextureView().Return(nil).Maybe()
+		ssaoMock.EXPECT().LinearSampler().Return(nil).Maybe()
+
+		gbhMock.EXPECT().Enabled().Return(false).Maybe()
+		ssaoMock.EXPECT().Enabled().Return(false).Maybe()
+		cshMock.EXPECT().Enabled().Return(false).Maybe()
+		shMock.EXPECT().CSMAtlasTexture().Return(nil).Maybe()
+
+		// chMock.Enabled: false (release), false (initComposition check), true (combined block check)
+		chEnabledCount := 0
+		chMock.EXPECT().Enabled().RunAndReturn(func() bool {
+			chEnabledCount++
+			return chEnabledCount >= 3
+		}).Maybe()
+
+		// ssrMock.Enabled: false (release), false (initSSR check), true (combined block check)
+		ssrEnabledCount := 0
+		ssrMock.EXPECT().Enabled().RunAndReturn(func() bool {
+			ssrEnabledCount++
+			return ssrEnabledCount >= 3
+		}).Maybe()
+
+		// Combined block internals — compBGP is non-nil and SSRTextureView is non-nil
+		compBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		chMock.EXPECT().Bgp("composition").Return(compBGP).Once()
+		ssrView := &wgpu.TextureView{}
+		ssrMock.EXPECT().SSRTextureView().Return(ssrView).Maybe()
+		compBGP.EXPECT().SetTextureView(2, ssrView).Once()
+
+		// Specific failure for compBGP registered BEFORE the catch-all so it wins
+		suite.rendererMock.EXPECT().InitBindGroup(compBGP, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("rebind fail")).Once()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
+		suite.rendererMock.EXPECT().WaitIdle().Return().Once()
+		suite.rendererMock.EXPECT().InitTextureView(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+		suite.rendererMock.EXPECT().InitSampler(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
+		suite.scene.lightHandler = lhMock
+		suite.Panics(func() { suite.scene.resizePostProcessing(800, 600) })
 	})
 }

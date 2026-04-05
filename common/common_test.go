@@ -349,6 +349,58 @@ func (suite *commonTest) TestTypes() {
 	})
 }
 
+func (suite *commonTest) TestClampInt() {
+	suite.Run("clamps to lo when v is below range", func() {
+		suite.Equal(0, ClampInt(-1, 0, 5))
+	})
+	suite.Run("clamps to hi when v is above range", func() {
+		suite.Equal(5, ClampInt(6, 0, 5))
+	})
+	suite.Run("returns v unchanged when within range", func() {
+		suite.Equal(3, ClampInt(3, 0, 5))
+	})
+}
+
+func (suite *commonTest) TestNormalizeF64() {
+	suite.Run("returns zero vector for near-zero length input", func() {
+		result := NormalizeF64([3]float64{0, 0, 0})
+		suite.Equal([3]float32{}, result)
+	})
+	suite.Run("returns unit-length vector for non-zero input", func() {
+		result := NormalizeF64([3]float64{0, 3, 4})
+		suite.InDelta(float32(0.0), result[0], 1e-6)
+		suite.InDelta(float32(0.6), result[1], 1e-6)
+		suite.InDelta(float32(0.8), result[2], 1e-6)
+	})
+}
+
+func (suite *commonTest) TestCellKey() {
+	suite.Run("computes correct flattened index for origin cell", func() {
+		pos := [3]float32{0.05, 0.05, 0.05}
+		vMin := [3]float32{0, 0, 0}
+		delta := [3]float32{0.5, 0.5, 0.5}
+		gridRes := 4
+		// cx=0, cy=0, cz=0 → key = 0
+		suite.Equal(0, CellKey(pos, vMin, delta, gridRes))
+	})
+	suite.Run("computes correct flattened index for non-origin cell", func() {
+		pos := [3]float32{1.5, 0.5, 0.5}
+		vMin := [3]float32{0, 0, 0}
+		delta := [3]float32{0.5, 0.5, 0.5}
+		gridRes := 4
+		// cx=3, cy=1, cz=1 → key = 1*16 + 1*4 + 3 = 23
+		suite.Equal(23, CellKey(pos, vMin, delta, gridRes))
+	})
+	suite.Run("clamps out-of-range positions to grid boundary", func() {
+		pos := [3]float32{100, 100, 100}
+		vMin := [3]float32{0, 0, 0}
+		delta := [3]float32{0.5, 0.5, 0.5}
+		gridRes := 4
+		// all clamped to gridRes-1=3 → key = 3*16 + 3*4 + 3 = 63
+		suite.Equal(63, CellKey(pos, vMin, delta, gridRes))
+	})
+}
+
 func (suite *commonTest) TestUtils() {
 	suite.Run("should return the first non-zero value from a list of values", func() {
 		result := Coalesce(0, 0, 5, 0, 10)

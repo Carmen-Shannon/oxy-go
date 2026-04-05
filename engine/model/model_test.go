@@ -7,6 +7,7 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/material"
+	"github.com/cogentcore/webgpu/wgpu"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -450,6 +451,17 @@ func (suite *modelTest) TestLODIndexCount() {
 		)
 		suite.Equal(12, m.LODIndexCount(1))
 	})
+
+	suite.Run("level 1 returns LOD index count when vertex buffer is initialized", func() {
+		p1 := bind_group_provider.NewBindGroupProvider("lod1")
+		p1.SetVertexBuffer(&wgpu.Buffer{})
+		m := model.NewModel(
+			model.WithIndexCount(12),
+			model.WithLODMeshProviders(p1),
+			model.WithLODIndexCounts(6),
+		)
+		suite.Equal(6, m.LODIndexCount(1))
+	})
 }
 
 func (suite *modelTest) TestLODMeshProvider() {
@@ -485,6 +497,17 @@ func (suite *modelTest) TestLODMeshProvider() {
 		p := bind_group_provider.NewBindGroupProvider("base")
 		m := model.NewModel(model.WithMeshProvider(p))
 		suite.Equal(p, m.LODMeshProvider(999))
+	})
+
+	suite.Run("level 1 returns LOD provider when vertex buffer is initialized", func() {
+		base := bind_group_provider.NewBindGroupProvider("base")
+		lod1 := bind_group_provider.NewBindGroupProvider("lod1")
+		lod1.SetVertexBuffer(&wgpu.Buffer{})
+		m := model.NewModel(
+			model.WithMeshProvider(base),
+			model.WithLODMeshProviders(lod1),
+		)
+		suite.Equal(lod1, m.LODMeshProvider(1))
 	})
 }
 

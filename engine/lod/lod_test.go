@@ -131,4 +131,20 @@ func (suite *lodTest) TestDecimate() {
 		}
 		suite.True(found)
 	})
+
+	suite.Run("normals are averaged when vertex normals are non-zero", func() {
+		// Build a 5×5 grid mesh (32 triangles). Set all vertex normals to (0,1,0) so
+		// normalizeF64 receives a non-zero accumulated sum and takes the normal return path.
+		verts, indices := makeGridMesh(5, 5, 0.2)
+		for i := range verts {
+			verts[i].Normal = [3]float32{0, 1, 0}
+		}
+		outV, outI := lod.Decimate(verts, indices, 0.02)
+		suite.NotEmpty(outV)
+		suite.Equal(0, len(outI)%3)
+		// All output normals should be unit-length (roughly Y-up).
+		for _, v := range outV {
+			suite.InDelta(float32(1.0), v.Normal[1], 0.01)
+		}
+	})
 }
