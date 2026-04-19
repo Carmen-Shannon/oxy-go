@@ -100,6 +100,16 @@ func (suite *taaHandlerTest) TestPipelineKeys() {
 		suite.Equal("resolve-key", suite.handler.PipelineKey("taa_resolve"))
 		suite.Equal("sharpen-key", suite.handler.PipelineKey("taa_sharpen"))
 	})
+
+	suite.Run("should return all pipeline keys as a map", func() {
+		suite.handler.SetPipelineKey("taa_resolve", "resolve-key")
+		suite.handler.SetPipelineKey("taa_sharpen", "sharpen-key")
+
+		keys := suite.handler.PipelineKeys()
+		suite.Equal(2, len(keys))
+		suite.Equal("resolve-key", keys["taa_resolve"])
+		suite.Equal("sharpen-key", keys["taa_sharpen"])
+	})
 }
 
 func (suite *taaHandlerTest) TestSlotResources() {

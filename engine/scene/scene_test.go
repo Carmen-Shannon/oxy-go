@@ -1,6 +1,7 @@
 package scene_test
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -65,6 +66,19 @@ func (suite *sceneTest) TestNewScene() {
 
 	suite.Run("scene name is set from constructor arg", func() {
 		suite.Equal("test", suite.scene.Name())
+	})
+
+	suite.Run("creates scene without panic when hiz fallback fails", func() {
+		cam := camera_mocks.NewMockCamera(suite.T())
+		cam.EXPECT().BindGroupProvider().Return(nil).Maybe()
+		r := renderer_mocks.NewMockRenderer(suite.T())
+		r.EXPECT().SetInjections(mock.Anything).Return().Maybe()
+		r.EXPECT().CreateHiZTextures(1, 1).Return(nil, nil, nil, nil, 0, fmt.Errorf("hiz creation failed")).Once()
+		var s scene.Scene
+		suite.NotPanics(func() {
+			s = scene.NewScene("hiz-fail", cam, r)
+		})
+		suite.NotNil(s)
 	})
 }
 
@@ -252,6 +266,22 @@ func (suite *sceneTest) TestResize() {
 	suite.Run("does not call SetAspect when height is zero", func() {
 		suite.rendererMock.EXPECT().Resize(800, 0).Return().Once()
 		suite.scene.Resize(800, 0)
+	})
+
+	suite.Run("resizes the taa handler when taa is enabled", func() {
+		cam := camera_mocks.NewMockCamera(suite.T())
+		cam.EXPECT().BindGroupProvider().Return(nil).Maybe()
+		r := renderer_mocks.NewMockRenderer(suite.T())
+		r.EXPECT().SetInjections(mock.Anything).Return().Maybe()
+		r.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0, nil).Maybe()
+		handler := postprocessing.NewTAAHandler(postprocessing.WithTAAScreenSize(640, 480))
+		handler.SetEnabled(true)
+		s := scene.NewScene("taa-resize", cam, r, scene.WithTAAHandler(handler))
+		r.EXPECT().Resize(1024, 768).Return().Once()
+		cam.EXPECT().SetAspect(float32(1024) / float32(768)).Return().Once()
+		s.Resize(1024, 768)
+		suite.Equal(1024, handler.ScreenWidth())
+		suite.Equal(768, handler.ScreenHeight())
 	})
 }
 

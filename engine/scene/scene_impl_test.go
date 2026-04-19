@@ -271,6 +271,22 @@ func (suite *sceneImplTest) TestResize() {
 		suite.Equal(800, suite.scene.screenWidth)
 		suite.Equal(600, suite.scene.screenHeight)
 	})
+
+	suite.Run("resizes TAA handler when enabled", func() {
+		camMock := camera_mocks.NewMockCamera(suite.T())
+		camMock.EXPECT().SetAspect(float32(1024) / float32(768)).Return().Once()
+		suite.scene.cam = camMock
+
+		suite.scene.taaHandler.SetEnabled(true)
+
+		suite.rendererMock.EXPECT().Resize(1024, 768).Return().Once()
+
+		suite.scene.tileBufferCapacity = math.MaxInt32
+		suite.scene.Resize(1024, 768)
+
+		suite.Equal(1024, suite.scene.taaHandler.ScreenWidth())
+		suite.Equal(768, suite.scene.taaHandler.ScreenHeight())
+	})
 }
 
 func (suite *sceneImplTest) TestDetachLight() {
@@ -907,6 +923,88 @@ func (suite *sceneImplTest) TestPrepareTAA() {
 		suite.InDelta(float64(-1.0/6.0), float64(taaHandler.JitterY()), 1e-6)
 		suite.InDelta(0.0, float64(taaHandler.PrevJitterX()), 1e-6)
 		suite.InDelta(0.0, float64(taaHandler.PrevJitterY()), 1e-6)
+	})
+
+	suite.Run("returns early when lightHandler is nil", func() {
+		suite.scene.lightHandler = nil
+		suite.scene.taaHandler.SetEnabled(true)
+		suite.NotPanics(func() { suite.scene.prepareTAA() })
+	})
+
+	suite.Run("returns early when camera is nil", func() {
+		suite.scene.cam = nil
+		suite.scene.taaHandler.SetEnabled(true)
+		suite.NotPanics(func() { suite.scene.prepareTAA() })
+	})
+
+	suite.Run("skips NDC conversion when screen dimensions are zero", func() {
+		taaHandler := postprocessing.NewTAAHandler(
+			postprocessing.WithTAAScreenSize(0, 0),
+			postprocessing.WithTAABlendFactor(0.1),
+		)
+		taaHandler.SetEnabled(true)
+		taaHandler.SetPipelineKey("taa_resolve", "taa_resolve_pipeline")
+		taaHandler.SetPipelineKey("taa_sharpen", "taa_sharpen_pipeline")
+		suite.scene.taaHandler = taaHandler
+
+		camMock := camera_mocks.NewMockCamera(suite.T())
+		camMock.EXPECT().SetJitter(float32(0), float32(0)).Once()
+		camMock.EXPECT().ViewProjectionMatrix().Return([16]float32{
+			1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+		}).Once()
+		camMock.EXPECT().PrevViewProjectionMatrix().Return([16]float32{
+			1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+		}).Once()
+		suite.scene.cam = camMock
+
+		suite.rendererMock.EXPECT().CurrentFrameSlot().Return(0).Once()
+		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Once()
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.Anything).Twice()
+
+		suite.scene.prepareTAA()
+	})
+
+	suite.Run("uses slot 1 BGP keys when renderer returns frame slot 1", func() {
+		taaHandler := postprocessing.NewTAAHandler(
+			postprocessing.WithTAAScreenSize(1280, 720),
+			postprocessing.WithTAABlendFactor(0.2),
+		)
+		taaHandler.SetEnabled(true)
+		taaHandler.SetPipelineKey("taa_resolve", "taa_resolve_pipeline")
+		taaHandler.SetPipelineKey("taa_sharpen", "taa_sharpen_pipeline")
+		suite.scene.taaHandler = taaHandler
+
+		camMock := camera_mocks.NewMockCamera(suite.T())
+		camMock.EXPECT().SetJitter(mock.Anything, mock.Anything).Once()
+		camMock.EXPECT().ViewProjectionMatrix().Return([16]float32{
+			1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+		}).Once()
+		camMock.EXPECT().PrevViewProjectionMatrix().Return([16]float32{
+			1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+		}).Once()
+		suite.scene.cam = camMock
+
+		suite.rendererMock.EXPECT().CurrentFrameSlot().Return(1).Once()
+		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Run(func(writes []bind_group_provider.BufferWrite) {
+			suite.Len(writes, 1)
+			suite.Equal(taaHandler.Bgp("taa_resolve_1"), writes[0].Provider)
+		}).Once()
+
+		dispatchCount := 0
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.Anything).Run(func(dispatches []renderer.ComputeDispatch) {
+			dispatchCount++
+			suite.Len(dispatches, 1)
+			switch dispatchCount {
+			case 1:
+				suite.Equal("taa_resolve_pipeline", dispatches[0].PipelineKey)
+				suite.Equal(taaHandler.Bgp("taa_resolve_1"), dispatches[0].Providers[0].Provider)
+			case 2:
+				suite.Equal("taa_sharpen_pipeline", dispatches[0].PipelineKey)
+				suite.Equal(taaHandler.Bgp("taa_sharpen_1"), dispatches[0].Providers[0].Provider)
+			}
+		}).Twice()
+
+		suite.scene.prepareTAA()
 	})
 }
 
@@ -15410,6 +15508,42 @@ func (suite *sceneImplTest) TestReleaseResolutionDependentResourcesTAA() {
 		taaMock.EXPECT().SetSharpenTexture(mock.Anything).Maybe()
 		suite.NotPanics(func() { suite.scene.releaseResolutionDependentResources() })
 	})
+
+	suite.Run("enters non-nil BGP branch and calls SetBindGroup nil", func() {
+		taaMock := postprocessing_mocks.NewMockTAAHandler(suite.T())
+		suite.scene.taaHandler = taaMock
+		taaMock.EXPECT().Enabled().Return(true).Once()
+		taaMock.EXPECT().SetSlot(mock.Anything).Maybe()
+		taaMock.EXPECT().TAATextureView().Return(nil).Maybe()
+		taaMock.EXPECT().TAATexture().Return(nil).Maybe()
+		taaMock.EXPECT().SetTAATextureView(mock.Anything).Maybe()
+		taaMock.EXPECT().SetTAATexture(mock.Anything).Maybe()
+		taaMock.EXPECT().SharpenTextureView().Return(nil).Maybe()
+		taaMock.EXPECT().SharpenTexture().Return(nil).Maybe()
+		taaMock.EXPECT().SetSharpenTextureView(mock.Anything).Maybe()
+		taaMock.EXPECT().SetSharpenTexture(mock.Anything).Maybe()
+
+		resolveBGP0 := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		resolveBGP1 := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		sharpenBGP0 := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		sharpenBGP1 := bgp_mocks.NewMockBindGroupProvider(suite.T())
+
+		resolveBGP0.EXPECT().BindGroup().Return(nil).Once()
+		resolveBGP0.EXPECT().SetBindGroup(mock.Anything).Once()
+		resolveBGP1.EXPECT().BindGroup().Return(nil).Once()
+		resolveBGP1.EXPECT().SetBindGroup(mock.Anything).Once()
+		sharpenBGP0.EXPECT().BindGroup().Return(nil).Once()
+		sharpenBGP0.EXPECT().SetBindGroup(mock.Anything).Once()
+		sharpenBGP1.EXPECT().BindGroup().Return(nil).Once()
+		sharpenBGP1.EXPECT().SetBindGroup(mock.Anything).Once()
+
+		taaMock.EXPECT().Bgp("taa_resolve_0").Return(resolveBGP0).Once()
+		taaMock.EXPECT().Bgp("taa_resolve_1").Return(resolveBGP1).Once()
+		taaMock.EXPECT().Bgp("taa_sharpen_0").Return(sharpenBGP0).Once()
+		taaMock.EXPECT().Bgp("taa_sharpen_1").Return(sharpenBGP1).Once()
+
+		suite.NotPanics(func() { suite.scene.releaseResolutionDependentResources() })
+	})
 }
 
 func (suite *sceneImplTest) TestResizePostProcessingTAAEnabled() {
@@ -15483,5 +15617,58 @@ func (suite *sceneImplTest) TestResizePostProcessingTAAEnabled() {
 
 		suite.NotPanics(func() { suite.scene.resizePostProcessing(800, 600) })
 		suite.True(suite.scene.taaHandler.Enabled())
+	})
+}
+
+func (suite *sceneImplTest) TestBuilderOptions() {
+	suite.Run("WithDebugDisableAnimatorHiZOcclusion sets the field", func() {
+		s := &scene{}
+		opt := WithDebugDisableAnimatorHiZOcclusion(true)
+		opt(s)
+		suite.True(s.debugDisableAnimatorHiZOcclusion)
+	})
+
+	suite.Run("WithScreenSize sets width and height", func() {
+		s := &scene{}
+		opt := WithScreenSize(1920, 1080)
+		opt(s)
+		suite.Equal(1920, s.screenWidth)
+		suite.Equal(1080, s.screenHeight)
+	})
+
+	suite.Run("WithMaxBonesGPU sets the value", func() {
+		s := &scene{}
+		opt := WithMaxBonesGPU(128)
+		opt(s)
+		suite.Equal(uint64(128), s.maxBonesGPU)
+	})
+
+	suite.Run("WithMaxBonesGPU clamps zero to one", func() {
+		s := &scene{}
+		opt := WithMaxBonesGPU(0)
+		opt(s)
+		suite.Equal(uint64(1), s.maxBonesGPU)
+	})
+
+	suite.Run("WithLODEnabled sets the field", func() {
+		s := &scene{}
+		opt := WithLODEnabled(true)
+		opt(s)
+		suite.True(s.lodEnabled)
+	})
+
+	suite.Run("WithLODDistances sets both thresholds", func() {
+		s := &scene{}
+		opt := WithLODDistances(50.0, 100.0)
+		opt(s)
+		suite.Equal(float32(50.0), s.lod1Distance)
+		suite.Equal(float32(100.0), s.lod2Distance)
+	})
+
+	suite.Run("WithLODShadowBias sets the value", func() {
+		s := &scene{}
+		opt := WithLODShadowBias(2)
+		opt(s)
+		suite.Equal(2, s.lodShadowBias)
 	})
 }
