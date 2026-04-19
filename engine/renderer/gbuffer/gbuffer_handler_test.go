@@ -1,9 +1,9 @@
-package light_test
+package gbuffer_test
 
 import (
 	"testing"
 
-	"github.com/Carmen-Shannon/oxy-go/engine/light"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/gbuffer"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -13,17 +13,17 @@ func TestRunGBufferHandlerTests(t *testing.T) {
 
 type gBufferHandlerTest struct {
 	suite.Suite
-	handler light.GBufferHandler
+	handler gbuffer.GBufferHandler
 }
 
 func (suite *gBufferHandlerTest) SetupSubTest() {
-	suite.handler = light.NewGBufferHandler()
+	suite.handler = gbuffer.NewGBufferHandler()
 }
 
 func (suite *gBufferHandlerTest) TestNewGBufferHandler() {
 	suite.Run("should create a new gbuffer handler with provided options", func() {
-		h := light.NewGBufferHandler(
-			light.WithGBufferScreenSize(1920, 1080),
+		h := gbuffer.NewGBufferHandler(
+			gbuffer.WithScreenSize(1920, 1080),
 		)
 		suite.NotNil(h)
 	})

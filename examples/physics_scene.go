@@ -153,14 +153,17 @@ func main() {
 	)
 
 	// ── Scene ───────────────────────────────────────────────────────────
+	lightingHandler := light.NewLightingHandler(
+		light.WithShadowHandler(light.NewShadowHandler(
+			light.WithShadowNearFar(0.1, 1000),
+			light.WithShadowMapResolution(4096),
+		)),
+	)
+
 	sc := scene.NewScene("Fluid Physics", cam, r,
 		scene.WithActive(true),
 		scene.WithScreenSize(eng.Window().Width(), eng.Window().Height()),
-		scene.WithLighting(light.NewLightingHandler(
-			light.WithShadowHandler(light.NewShadowHandler(
-				light.WithShadowNearFar(0.1, 1000),
-			)),
-		)),
+		scene.WithLighting(lightingHandler),
 	)
 	sc.SetPhysicsHandler(ph)
 
@@ -176,6 +179,9 @@ func main() {
 		light.WithEnabled(true),
 	)
 	sc.AddLight(sun)
+	if lightingHandler.ContactShadowHandler() != nil {
+		lightingHandler.ContactShadowHandler().SetEnabled(true)
+	}
 
 	// Dim ambient fill so shadows are visible but not fully black
 	sc.SetAmbientColor([3]float32{0.12, 0.12, 0.15})
@@ -194,6 +200,7 @@ func main() {
 		float32(boxW)/2, float32(boxH)/2, float32(boxD)/2,
 		float32(wallHalfThick), wallColor,
 	)
+	boxModel.SetCastsShadows(true)
 
 	boxParticles := physics.VoxelizeMesh(boxModel, particleRadius, true)
 	fmt.Printf("[Physics] Container voxelized: %d surface particles\n", len(boxParticles))
@@ -225,6 +232,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load Fox model: %v", err)
 	}
+	foxModel.SetCastsShadows(true)
 
 	foxScale := float32(0.04) // ~4 m tall inside the 6 m box
 
@@ -270,6 +278,7 @@ func main() {
 	// Each droplet is a single DEM collision sphere at body origin.
 	dropletColor := [4]float32{0.2, 0.5, 0.9, 1.0}
 	sphereModel := buildSphereModel("droplet", dropletRadius, 2, dropletColor)
+	sphereModel.SetCastsShadows(true)
 	sphereParticles := []physics.Particle{{LocalPosition: [3]float32{0, 0, 0}}}
 
 	eng.AddScene(0, sc)
@@ -417,6 +426,8 @@ func buildOpenBoxModel(name string, ihx, ihy, ihz, wt float32, color [4]float32)
 	return model.NewModel(
 		model.WithName(name),
 		model.WithBoundingRadius(br),
+		model.WithBoundingMin([3]float32{-ohx, -2 * wt, -ohz}),
+		model.WithBoundingMax([3]float32{ohx, 2 * ihy, ohz}),
 		model.WithVertexData(common.SliceToBytes(verts)),
 		model.WithIndexData(common.SliceToBytes(indices)),
 		model.WithIndexCount(len(indices)),
@@ -636,6 +647,8 @@ func buildSphereModel(name string, radius float32, subdivisions int, color [4]fl
 	return model.NewModel(
 		model.WithName(name),
 		model.WithBoundingRadius(radius),
+		model.WithBoundingMin([3]float32{-radius, -radius, -radius}),
+		model.WithBoundingMax([3]float32{radius, radius, radius}),
 		model.WithCastsShadows(true),
 		model.WithShadowCullMode(model.ShadowCullModeFront),
 		model.WithVertexData(common.SliceToBytes(verts)),
@@ -666,7 +679,7 @@ type dropletEntry struct {
 //   - eng: the engine instance for tick callbacks and input
 //   - cam: the camera for orbit/pan/zoom controls
 //   - sc: the scene to add/remove droplets from
-//   - ph: the physics handler for diagnostic logging
+//   - ph: the physics handler for periodic readback requests
 //   - sphereModel: the shared sphere Model for all droplets
 //   - sphereParticles: the DEM particle definition for each droplet body
 func setupFluidInput(
@@ -801,27 +814,16 @@ func setupFluidInput(
 		// from poisoning the spatial grid's AABB.
 		if tickCounter%60 == 30 {
 			n := 0
-			escaped := 0
 			for _, d := range liveDroplets {
 				pos := d.body.Position()
 				if pos[1] < -5.0 {
 					sc.RemoveGameObject(d.objID)
-					escaped++
 				} else {
 					liveDroplets[n] = d
 					n++
 				}
 			}
 			liveDroplets = liveDroplets[:n]
-			if escaped > 0 {
-				fmt.Printf("[Cleanup] Removed %d escaped droplets (Y < -5)\n", escaped)
-			}
-		}
-
-		// Per-second diagnostic log (every 60 ticks at 60 Hz)
-		if tickCounter%60 == 0 {
-			fmt.Printf("[Stats] live=%d  bodies=%d  particles=%d  sceneObjs=%d\n",
-				len(liveDroplets), ph.BodiesCount(), ph.ParticleCount(), sc.Count())
 		}
 
 		// Camera controls

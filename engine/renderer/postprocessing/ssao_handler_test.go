@@ -1,10 +1,10 @@
-package light_test
+package postprocessing_test
 
 import (
 	"testing"
 
-	"github.com/Carmen-Shannon/oxy-go/engine/light"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -14,24 +14,24 @@ func TestRunSSAOHandlerTests(t *testing.T) {
 
 type ssaoHandlerTest struct {
 	suite.Suite
-	handler light.SSAOHandler
+	handler postprocessing.SSAOHandler
 }
 
 func (suite *ssaoHandlerTest) SetupSubTest() {
-	suite.handler = light.NewSSAOHandler()
+	suite.handler = postprocessing.NewSSAOHandler()
 }
 
 func (suite *ssaoHandlerTest) TestNewSSAOHandler() {
 	suite.Run("should create a new SSAO handler with provided options", func() {
-		h := light.NewSSAOHandler(
-			light.WithSSAOScreenSize(1920, 1080),
-			light.WithSSAOSampleCount(32),
-			light.WithSSAOMaxSamples(64),
-			light.WithSSAOScreenRadius(1.0),
-			light.WithSSAOBias(0.05),
-			light.WithSSAOPower(3.0),
-			light.WithSSAOBlurRadius(8),
-			light.WithSSAOHalfResolution(true),
+		h := postprocessing.NewSSAOHandler(
+			postprocessing.WithSSAOScreenSize(1920, 1080),
+			postprocessing.WithSSAOSampleCount(32),
+			postprocessing.WithSSAOMaxSamples(64),
+			postprocessing.WithSSAOScreenRadius(1.0),
+			postprocessing.WithSSAOBias(0.05),
+			postprocessing.WithSSAOPower(3.0),
+			postprocessing.WithSSAOBlurRadius(8),
+			postprocessing.WithSSAOHalfResolution(true),
 		)
 		suite.NotNil(h)
 	})

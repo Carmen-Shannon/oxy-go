@@ -31,9 +31,9 @@ func (suite *animatorTest) TestAnimatorBackendTypeConstants() {
 // --- GPUInstanceData ---
 
 func (suite *animatorTest) TestGPUInstanceData() {
-	suite.Run("Size should return 64", func() {
+	suite.Run("Size should return 80", func() {
 		g := &animator.GPUInstanceData{}
-		suite.Equal(64, g.Size())
+		suite.Equal(80, g.Size())
 	})
 	suite.Run("Marshal length should equal Size", func() {
 		g := &animator.GPUInstanceData{}
@@ -49,6 +49,18 @@ func (suite *animatorTest) TestGPUInstanceData() {
 		g.Model[15] = 7
 		buf := g.Marshal()
 		suite.Equal(math.Float32bits(7), binary.LittleEndian.Uint32(buf[60:64]))
+	})
+	suite.Run("Marshal should encode InstanceFlags at offset 64", func() {
+		g := &animator.GPUInstanceData{InstanceFlags: 9}
+		buf := g.Marshal()
+		suite.Equal(uint32(9), binary.LittleEndian.Uint32(buf[64:68]))
+	})
+	suite.Run("Marshal padding bytes should be zero", func() {
+		g := &animator.GPUInstanceData{}
+		buf := g.Marshal()
+		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[68:72]))
+		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[72:76]))
+		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[76:80]))
 	})
 }
 
@@ -83,13 +95,17 @@ func (suite *animatorTest) TestGPUAnimationData() {
 		buf := g.Marshal()
 		suite.Equal(math.Float32bits(2.0), binary.LittleEndian.Uint32(buf[48:52]))
 	})
-	suite.Run("Marshal padding bytes should be zero", func() {
+	suite.Run("Marshal should encode InstanceFlags at offset 60", func() {
+		g := &animator.GPUAnimationData{InstanceFlags: 11}
+		buf := g.Marshal()
+		suite.Equal(uint32(11), binary.LittleEndian.Uint32(buf[60:64]))
+	})
+	suite.Run("Marshal vec3 padding bytes should be zero", func() {
 		g := &animator.GPUAnimationData{}
 		buf := g.Marshal()
 		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[12:16]))
 		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[28:32]))
 		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[44:48]))
-		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[60:64]))
 	})
 }
 
@@ -432,9 +448,9 @@ func (suite *animatorTest) TestGPUClipHeader() {
 // --- GPUSkeletalAnimationData ---
 
 func (suite *animatorTest) TestGPUSkeletalAnimationData() {
-	suite.Run("Size should return 48", func() {
+	suite.Run("Size should return 32", func() {
 		g := &animator.GPUSkeletalAnimationData{}
-		suite.Equal(48, g.Size())
+		suite.Equal(32, g.Size())
 	})
 	suite.Run("Marshal length should equal Size", func() {
 		g := &animator.GPUSkeletalAnimationData{}
@@ -459,5 +475,21 @@ func (suite *animatorTest) TestGPUSkeletalAnimationData() {
 		g := &animator.GPUSkeletalAnimationData{SecondaryAnimIndex: 1}
 		buf := g.Marshal()
 		suite.Equal(uint32(1), binary.LittleEndian.Uint32(buf[12:16]))
+	})
+	suite.Run("Marshal should encode SecondaryAnimTime at offset 16", func() {
+		g := &animator.GPUSkeletalAnimationData{SecondaryAnimTime: 2.25}
+		buf := g.Marshal()
+		suite.Equal(math.Float32bits(2.25), binary.LittleEndian.Uint32(buf[16:20]))
+	})
+	suite.Run("Marshal should encode InstanceFlags at offset 20", func() {
+		g := &animator.GPUSkeletalAnimationData{InstanceFlags: 7}
+		buf := g.Marshal()
+		suite.Equal(uint32(7), binary.LittleEndian.Uint32(buf[20:24]))
+	})
+	suite.Run("Marshal padding at offsets 24 and 28 should be zero", func() {
+		g := &animator.GPUSkeletalAnimationData{}
+		buf := g.Marshal()
+		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[24:28]))
+		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[28:32]))
 	})
 }

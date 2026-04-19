@@ -10,14 +10,16 @@ import (
 )
 
 type gameObject struct {
-	id                 uint64
-	enabled            atomic.Bool
-	ephemeral          bool
-	mdl                model.Model
-	animator           animator.Animator
-	animatorInstanceID int
-	attachedLight      light.Light
-	rigidBody          physics.RigidBody
+	id                    uint64
+	enabled               atomic.Bool
+	ephemeral             bool
+	contactShadowExcluded bool
+	animatorInstanceID    int
+
+	mdl           model.Model
+	animator      animator.Animator
+	attachedLight light.Light
+	rigidBody     physics.RigidBody
 
 	// initial transform state used before the object is added to a Scene
 	initialPosition      [3]float32

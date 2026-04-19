@@ -1,10 +1,10 @@
-package light_test
+package postprocessing_test
 
 import (
 	"testing"
 
-	"github.com/Carmen-Shannon/oxy-go/engine/light"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing"
 	"github.com/cogentcore/webgpu/wgpu"
 	"github.com/stretchr/testify/suite"
 )
@@ -15,19 +15,19 @@ func TestRunCompositionHandlerTests(t *testing.T) {
 
 type compositionHandlerTest struct {
 	suite.Suite
-	handler light.CompositionHandler
+	handler postprocessing.CompositionHandler
 }
 
 func (suite *compositionHandlerTest) SetupSubTest() {
-	suite.handler = light.NewCompositionHandler()
+	suite.handler = postprocessing.NewCompositionHandler()
 }
 
 func (suite *compositionHandlerTest) TestNewCompositionHandler() {
 	suite.Run("should create a new composition handler with provided options", func() {
-		h := light.NewCompositionHandler(
-			light.WithCompositionScreenSize(1920, 1080),
-			light.WithToneMappingEnabled(false),
-			light.WithExposure(2.0),
+		h := postprocessing.NewCompositionHandler(
+			postprocessing.WithCompositionScreenSize(1920, 1080),
+			postprocessing.WithToneMappingEnabled(false),
+			postprocessing.WithExposure(2.0),
 		)
 		suite.NotNil(h)
 	})
@@ -303,36 +303,36 @@ func (suite *compositionHandlerTest) TestSetExposureBuffer() {
 
 func (suite *compositionHandlerTest) TestNewCompositionHandlerWithAutoExposureOptions() {
 	suite.Run("should create handler with auto exposure enabled", func() {
-		h := light.NewCompositionHandler(
-			light.WithAutoExposure(true),
+		h := postprocessing.NewCompositionHandler(
+			postprocessing.WithAutoExposure(true),
 		)
 		suite.Equal(true, h.AutoExposureEnabled())
 	})
 
 	suite.Run("should create handler with custom adapt speed", func() {
-		h := light.NewCompositionHandler(
-			light.WithAdaptSpeed(3.0),
+		h := postprocessing.NewCompositionHandler(
+			postprocessing.WithAdaptSpeed(3.0),
 		)
 		suite.Equal(float32(3.0), h.AdaptSpeed())
 	})
 
 	suite.Run("should create handler with custom min exposure", func() {
-		h := light.NewCompositionHandler(
-			light.WithMinExposure(0.2),
+		h := postprocessing.NewCompositionHandler(
+			postprocessing.WithMinExposure(0.2),
 		)
 		suite.Equal(float32(0.2), h.MinExposure())
 	})
 
 	suite.Run("should create handler with custom max exposure", func() {
-		h := light.NewCompositionHandler(
-			light.WithMaxExposure(15.0),
+		h := postprocessing.NewCompositionHandler(
+			postprocessing.WithMaxExposure(15.0),
 		)
 		suite.Equal(float32(15.0), h.MaxExposure())
 	})
 
 	suite.Run("should create handler with custom luminance workgroup size", func() {
-		h := light.NewCompositionHandler(
-			light.WithLuminanceWorkgroupSize(8),
+		h := postprocessing.NewCompositionHandler(
+			postprocessing.WithLuminanceWorkgroupSize(8),
 		)
 		suite.Equal(8, h.LuminanceWorkgroupSize())
 	})
@@ -483,10 +483,10 @@ func (suite *compositionHandlerTest) TestSetBloomUpMip0View() {
 
 func (suite *compositionHandlerTest) TestNewCompositionHandlerWithBloomOptions() {
 	suite.Run("should create handler with bloom options applied", func() {
-		h := light.NewCompositionHandler(
-			light.WithBloomEnabled(true),
-			light.WithBloomThreshold(0.8),
-			light.WithBloomIntensity(0.6),
+		h := postprocessing.NewCompositionHandler(
+			postprocessing.WithBloomEnabled(true),
+			postprocessing.WithBloomThreshold(0.8),
+			postprocessing.WithBloomIntensity(0.6),
 		)
 		suite.Equal(true, h.BloomEnabled())
 		suite.Equal(float32(0.8), h.BloomThreshold())
@@ -496,7 +496,7 @@ func (suite *compositionHandlerTest) TestNewCompositionHandlerWithBloomOptions()
 
 func (suite *compositionHandlerTest) TestNewCompositionHandlerBloomDefaults() {
 	suite.Run("should have correct bloom defaults with no bloom options", func() {
-		h := light.NewCompositionHandler()
+		h := postprocessing.NewCompositionHandler()
 		suite.Equal(false, h.BloomEnabled())
 		suite.Equal(float32(1.0), h.BloomThreshold())
 		suite.Equal(float32(0.5), h.BloomIntensity())

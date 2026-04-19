@@ -574,6 +574,36 @@ type wgpuRendererBackend interface {
 	//   - err: an error if texture creation fails
 	CreateContactShadowTextures(width, height int) (csView *wgpu.TextureView, csTex *wgpu.Texture, err error)
 
+	// CreateTAATextures creates two full-resolution RGBA16Float textures for TAA
+	// ping-pong history/resolve. Each texture has TextureBinding and StorageBinding
+	// usage so it can serve as either a sampled history input or a storage write
+	// target in alternating frames.
+	//
+	// Parameters:
+	//   - width:  texture width in texels (should match screen width)
+	//   - height: texture height in texels (should match screen height)
+	//
+	// Returns:
+	//   - view0: texture view for texture 0
+	//   - tex0:  texture 0
+	//   - view1: texture view for texture 1
+	//   - tex1:  texture 1
+	//   - err:   non-nil on allocation failure
+	CreateTAATextures(width, height int) (view0 *wgpu.TextureView, tex0 *wgpu.Texture, view1 *wgpu.TextureView, tex1 *wgpu.Texture, err error)
+
+	// CreateSharpenTexture creates a single full-resolution RGBA16Float texture for the
+	// CAS post-TAA sharpening pass. Usage: TextureBinding | StorageBinding.
+	//
+	// Parameters:
+	//   - width:  texture width in texels
+	//   - height: texture height in texels
+	//
+	// Returns:
+	//   - view: texture view
+	//   - tex:  texture
+	//   - err:  non-nil on allocation failure
+	CreateSharpenTexture(width, height int) (view *wgpu.TextureView, tex *wgpu.Texture, err error)
+
 	// CreateHiZTextures creates the R32Float Hi-Z depth pyramid texture with a
 	// full mip chain, plus per-mip read and storage texture views. The full-chain
 	// view is used by the SSR compute shader, per-mip read views are downsample
@@ -2759,6 +2789,83 @@ func (b *wgpuRendererBackendImpl) CreateContactShadowTextures(width, height int)
 	}
 
 	return csView, csTex, nil
+}
+
+func (b *wgpuRendererBackendImpl) CreateTAATextures(width, height int) (
+	view0 *wgpu.TextureView, tex0 *wgpu.Texture,
+	view1 *wgpu.TextureView, tex1 *wgpu.Texture, err error,
+) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	createOne := func(label string) (*wgpu.TextureView, *wgpu.Texture, error) {
+		t, e := b.device.CreateTexture(&wgpu.TextureDescriptor{
+			Label: label,
+			Size: wgpu.Extent3D{
+				Width:              uint32(width),
+				Height:             uint32(height),
+				DepthOrArrayLayers: 1,
+			},
+			MipLevelCount: 1,
+			SampleCount:   1,
+			Dimension:     wgpu.TextureDimension2D,
+			Format:        wgpu.TextureFormatRGBA16Float,
+			Usage:         wgpu.TextureUsageTextureBinding | wgpu.TextureUsageStorageBinding,
+		})
+		if e != nil {
+			return nil, nil, fmt.Errorf("failed to create TAA texture %q: %w", label, e)
+		}
+		v, e := t.CreateView(nil)
+		if e != nil {
+			t.Release()
+			return nil, nil, fmt.Errorf("failed to create TAA texture view %q: %w", label, e)
+		}
+		return v, t, nil
+	}
+
+	view0, tex0, err = createOne("taa_texture_0")
+	if err != nil {
+		return
+	}
+	view1, tex1, err = createOne("taa_texture_1")
+	if err != nil {
+		view0.Release()
+		tex0.Release()
+		view0 = nil
+		tex0 = nil
+		return
+	}
+	return
+}
+
+func (b *wgpuRendererBackendImpl) CreateSharpenTexture(width, height int) (
+	view *wgpu.TextureView, tex *wgpu.Texture, err error,
+) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	t, e := b.device.CreateTexture(&wgpu.TextureDescriptor{
+		Label: "taa_sharpen_texture",
+		Size: wgpu.Extent3D{
+			Width:              uint32(width),
+			Height:             uint32(height),
+			DepthOrArrayLayers: 1,
+		},
+		MipLevelCount: 1,
+		SampleCount:   1,
+		Dimension:     wgpu.TextureDimension2D,
+		Format:        wgpu.TextureFormatRGBA16Float,
+		Usage:         wgpu.TextureUsageTextureBinding | wgpu.TextureUsageStorageBinding,
+	})
+	if e != nil {
+		return nil, nil, fmt.Errorf("failed to create TAA sharpen texture: %w", e)
+	}
+	v, ve := t.CreateView(nil)
+	if ve != nil {
+		t.Release()
+		return nil, nil, fmt.Errorf("failed to create TAA sharpen texture view: %w", ve)
+	}
+	return v, t, nil
 }
 
 func (b *wgpuRendererBackendImpl) CreateHiZTextures(width, height int) (

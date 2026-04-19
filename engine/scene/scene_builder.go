@@ -15,6 +15,8 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/animator"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/gbuffer"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 	"github.com/cogentcore/webgpu/wgpu"
 )
@@ -94,6 +96,22 @@ func WithCullingDisabled(disabled bool) SceneBuilderOption {
 	}
 }
 
+// WithDebugDisableAnimatorHiZOcclusion forces the Hi-Z mip count sent to
+// animators to zero during PrepareCompute, isolating animator-side Hi-Z
+// occlusion without disabling frustum culling or other animator flow.
+// By default this diagnostic is disabled.
+//
+// Parameters:
+//   - disabled: true to force animators to see zero Hi-Z mips
+//
+// Returns:
+//   - SceneBuilderOption: option function to apply
+func WithDebugDisableAnimatorHiZOcclusion(disabled bool) SceneBuilderOption {
+	return func(s *scene) {
+		s.debugDisableAnimatorHiZOcclusion = disabled
+	}
+}
+
 // WithLighting attaches a pre-configured LightingHandler to the scene, replacing
 // the default handler created by NewScene. Use light.NewLightingHandler with
 // light.WithShadow* options to configure shadow mapping and ambient color before
@@ -108,6 +126,69 @@ func WithCullingDisabled(disabled bool) SceneBuilderOption {
 func WithLighting(handler light.LightingHandler) SceneBuilderOption {
 	return func(s *scene) {
 		s.lightHandler = handler
+	}
+}
+
+// WithGBufferHandler attaches a pre-configured GBufferHandler to the scene.
+func WithGBufferHandler(handler gbuffer.GBufferHandler) SceneBuilderOption {
+	return func(s *scene) {
+		s.gBufferHandler = handler
+	}
+}
+
+// WithSSAOHandler attaches a pre-configured SSAOHandler to the scene,
+// replacing the default handler created by NewScene.
+//
+// Parameters:
+//   - handler: the pre-configured SSAOHandler
+//
+// Returns:
+//   - SceneBuilderOption: option function to apply
+func WithSSAOHandler(handler postprocessing.SSAOHandler) SceneBuilderOption {
+	return func(s *scene) {
+		s.ssaoHandler = handler
+	}
+}
+
+// WithCompositionHandler attaches a pre-configured CompositionHandler to the
+// scene, replacing the default handler created by NewScene.
+//
+// Parameters:
+//   - handler: the pre-configured CompositionHandler
+//
+// Returns:
+//   - SceneBuilderOption: option function to apply
+func WithCompositionHandler(handler postprocessing.CompositionHandler) SceneBuilderOption {
+	return func(s *scene) {
+		s.compositionHandler = handler
+	}
+}
+
+// WithSSRHandler attaches a pre-configured SSRHandler to the scene,
+// replacing the default handler created by NewScene.
+//
+// Parameters:
+//   - handler: the pre-configured SSRHandler
+//
+// Returns:
+//   - SceneBuilderOption: option function to apply
+func WithSSRHandler(handler postprocessing.SSRHandler) SceneBuilderOption {
+	return func(s *scene) {
+		s.ssrHandler = handler
+	}
+}
+
+// WithTAAHandler attaches a pre-configured TAAHandler to the scene,
+// replacing the default handler created by NewScene.
+//
+// Parameters:
+//   - handler: the pre-configured TAAHandler
+//
+// Returns:
+//   - SceneBuilderOption: option function to apply
+func WithTAAHandler(handler postprocessing.TAAHandler) SceneBuilderOption {
+	return func(s *scene) {
+		s.taaHandler = handler
 	}
 }
 
@@ -247,6 +328,11 @@ func NewScene(name string, cam camera.Camera, r renderer.Renderer, options ...Sc
 		drawDeclsPool:          make([]shader.Annotation, 0, 32),
 		drawGroupProvidersPool: make(map[int]bind_group_provider.BindGroupProvider, 8),
 		lightHandler:           light.NewLightingHandler(),
+		gBufferHandler:         gbuffer.NewGBufferHandler(),
+		ssaoHandler:            postprocessing.NewSSAOHandler(),
+		compositionHandler:     postprocessing.NewCompositionHandler(postprocessing.WithToneMappingEnabled(true), postprocessing.WithExposure(1.0)),
+		ssrHandler:             postprocessing.NewSSRHandler(),
+		taaHandler:             postprocessing.NewTAAHandler(),
 		physicsSyncGroup:       make(map[int]bind_group_provider.BindGroupProvider),
 		physicsAnimBinding:     -1,
 		lodLevelCache:          make(map[animator.Animator]int),

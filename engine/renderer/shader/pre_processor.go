@@ -21,7 +21,9 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
 	"github.com/Carmen-Shannon/oxy-go/engine/physics"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/animator"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/gbuffer"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/material"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing"
 )
 
 // registryEntry pairs a WGSL struct source string (embedded from a .wgsl asset file)
@@ -117,14 +119,15 @@ func NewPreProcessor() PreProcessor {
 			AnnotationArgPhysicsGrid:           {Source: physics.GPUGridCellSource, Type: "GridCell"},
 			AnnotationArgPhysicsGlobals:        {Source: physics.GPUPhysicsGlobalsSource, Type: "PhysicsGlobals"},
 			AnnotationArgPhysicsGridParams:     {Source: physics.GPUGridParamsSource, Type: "GridParams"},
-			AnnotationArgGBufferOutput:         {Source: light.GPUGBufferOutputSource, Type: "GBufferOutput"},
-			annotationArgSSAOParams:            {Source: light.GPUSSAOParamsSource, Type: "SSAOParams"},
-			annotationArgBlurParams:            {Source: light.GPUBlurParamsSource, Type: "BlurParams"},
-			annotationArgCompositionParams:     {Source: light.GPUCompositionParamsSource, Type: "CompositionParams"},
-			annotationArgSSRParams:             {Source: light.GPUSSRParamsSource, Type: "SSRParams"},
+			AnnotationArgGBufferOutput:         {Source: gbuffer.GPUGBufferOutputSource, Type: "GBufferOutput"},
+			annotationArgSSAOParams:            {Source: postprocessing.GPUSSAOParamsSource, Type: "SSAOParams"},
+			annotationArgBlurParams:            {Source: postprocessing.GPUBlurParamsSource, Type: "BlurParams"},
+			annotationArgCompositionParams:     {Source: postprocessing.GPUCompositionParamsSource, Type: "CompositionParams"},
+			annotationArgSSRParams:             {Source: postprocessing.GPUSSRParamsSource, Type: "SSRParams"},
 			annotationArgContactShadowParams:   {Source: light.GPUContactShadowParamsSource, Type: "ContactShadowParams"},
-			annotationArgLuminanceParams:       {Source: light.GPULuminanceParamsSource, Type: "LuminanceParams"},
-			annotationArgBloomParams:           {Source: light.GPUBloomParamsSource, Type: "BloomParams"},
+			annotationArgLuminanceParams:       {Source: postprocessing.GPULuminanceParamsSource, Type: "LuminanceParams"},
+			annotationArgBloomParams:           {Source: postprocessing.GPUBloomParamsSource, Type: "BloomParams"},
+			annotationArgTAAParams:             {Source: postprocessing.GPUTAAParamsSource, Type: "TAAParams"},
 		},
 		addressSpaceRegistry: map[AnnotationArg]string{
 			annotationArgStorageTypeUniform:   "var<uniform>",

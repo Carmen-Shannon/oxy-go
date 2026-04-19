@@ -52,7 +52,7 @@ type GameObject interface {
 	// AnimatorInstanceID returns the instance index within the Animator.
 	//
 	// Returns:
-	//   - int: the instance index, or -1 if unset
+	//   - int: the instance index
 	AnimatorInstanceID() int
 
 	// Position derives the instance's current position from the Animator.
@@ -172,6 +172,20 @@ type GameObject interface {
 	// Parameters:
 	//   - rb: the RigidBody to associate with this GameObject
 	SetRigidBody(rb physics.RigidBody)
+
+	// ContactShadowExcluded returns whether this instance should be marked as excluded
+	// from contact-shadow classification.
+	//
+	// Returns:
+	//   - bool: true if the instance is marked as contact-shadow excluded
+	ContactShadowExcluded() bool
+
+	// SetContactShadowExcluded sets whether this instance should be marked as excluded
+	// from contact-shadow classification.
+	//
+	// Parameters:
+	//   - excluded: true to mark the instance as contact-shadow excluded
+	SetContactShadowExcluded(excluded bool)
 }
 
 var _ GameObject = &gameObject{}
@@ -191,6 +205,11 @@ func (g *gameObject) Light() light.Light                   { return g.attachedLi
 func (g *gameObject) SetLight(l light.Light)               { g.attachedLight = l }
 func (g *gameObject) RigidBody() physics.RigidBody         { return g.rigidBody }
 func (g *gameObject) SetRigidBody(rb physics.RigidBody)    { g.rigidBody = rb }
+func (g *gameObject) ContactShadowExcluded() bool          { return g.contactShadowExcluded }
+
+func (g *gameObject) SetContactShadowExcluded(excluded bool) {
+	g.contactShadowExcluded = excluded
+}
 
 func (g *gameObject) Position() (x, y, z float32) {
 	if g.animator == nil {

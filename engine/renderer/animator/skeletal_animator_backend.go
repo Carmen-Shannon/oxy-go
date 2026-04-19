@@ -89,6 +89,13 @@ type skeletalAnimatorBackendImpl struct {
 // and blend transitions. Methods shared with simpleAnimatorBackend (transforms, culling,
 // lifecycle, capacity management) are inherited through AnimatorBackend and not repeated here.
 type skeletalAnimatorBackend interface {
+	// SetInstanceFlags sets renderer-visible per-instance flags for a specific skeletal instance.
+	//
+	// Parameters:
+	//   - index: the instance index to update
+	//   - flags: the per-instance flag bitmask to upload
+	SetInstanceFlags(index uint32, flags uint32)
+
 	// BoneCount returns the number of bones in the skeleton. This is used to determine the size of the bone buffer and should be set before adding bone data.
 	//
 	// Returns:
@@ -498,6 +505,7 @@ func (s *skeletalAnimatorBackendImpl) PrepareFrame(deltaTime float32, binding in
 
 	for i := uint32(0); i < s.instanceCount; i++ {
 		state := &s.instanceStateData[i]
+		instanceFlags := s.instanceData[i].InstanceFlags
 
 		state.time += deltaTime * state.speed
 
@@ -534,11 +542,13 @@ func (s *skeletalAnimatorBackendImpl) PrepareFrame(deltaTime float32, binding in
 				BlendWeight:        progress,
 				SecondaryAnimIndex: state.blendTo,
 				SecondaryAnimTime:  state.blendToTime,
+				InstanceFlags:      instanceFlags,
 			}
 		} else {
 			s.instanceData[i] = GPUSkeletalAnimationData{
 				AnimationIndex: state.clipIndex,
 				AnimationTime:  state.time,
+				InstanceFlags:  instanceFlags,
 			}
 		}
 
@@ -909,6 +919,28 @@ func (s *skeletalAnimatorBackendImpl) SetInstanceData(index uint32, posXYZ, scal
 			s.modelDirtyEnd = index + 1
 		}
 		s.modelFlushRemaining = 2
+	}
+}
+
+func (s *skeletalAnimatorBackendImpl) SetInstanceFlags(index uint32, flags uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if index >= s.maxInstances {
+		return
+	}
+
+	s.instanceData[index].InstanceFlags = flags
+	if !s.dirty {
+		s.dirtyStart = index
+		s.dirtyEnd = index + 1
+		s.dirty = true
+	} else {
+		if index < s.dirtyStart {
+			s.dirtyStart = index
+		}
+		if index+1 > s.dirtyEnd {
+			s.dirtyEnd = index + 1
+		}
 	}
 }
 

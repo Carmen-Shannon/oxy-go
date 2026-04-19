@@ -520,6 +520,37 @@ type Renderer interface {
 	//   - err: an error if texture creation fails
 	CreateContactShadowTextures(width, height int) (csView *wgpu.TextureView, csTex *wgpu.Texture, err error)
 
+	// CreateTAATextures creates two full-resolution RGBA16Float textures for TAA
+	// ping-pong history/resolve. Each texture has TextureBinding and StorageBinding
+	// usage so it can serve as either a sampled history input or a storage write
+	// target in alternating frames.
+	//
+	// Parameters:
+	//   - width:  texture width in texels (should match screen width)
+	//   - height: texture height in texels (should match screen height)
+	//
+	// Returns:
+	//   - view0: texture view for texture 0
+	//   - tex0:  texture 0
+	//   - view1: texture view for texture 1
+	//   - tex1:  texture 1
+	//   - err:   non-nil on allocation failure
+	CreateTAATextures(width, height int) (view0 *wgpu.TextureView, tex0 *wgpu.Texture, view1 *wgpu.TextureView, tex1 *wgpu.Texture, err error)
+
+	// CreateSharpenTexture creates a single full-resolution RGBA16Float texture for the
+	// CAS post-TAA sharpening pass. Usage: TextureBinding | StorageBinding.
+	// Not ping-ponged — CAS writes a fresh sharpened frame every frame.
+	//
+	// Parameters:
+	//   - width:  texture width in texels
+	//   - height: texture height in texels
+	//
+	// Returns:
+	//   - view: texture view
+	//   - tex:  texture
+	//   - err:  non-nil on allocation failure
+	CreateSharpenTexture(width, height int) (view *wgpu.TextureView, tex *wgpu.Texture, err error)
+
 	// CreateHiZTextures creates the R32Float Hi-Z depth pyramid texture with a
 	// full mip chain, plus per-mip read and storage texture views.
 	//
@@ -947,6 +978,14 @@ func (r *renderer) CreateSSRTextures(width, height int) (ssrView *wgpu.TextureVi
 
 func (r *renderer) CreateContactShadowTextures(width, height int) (csView *wgpu.TextureView, csTex *wgpu.Texture, err error) {
 	return r.backend.CreateContactShadowTextures(width, height)
+}
+
+func (r *renderer) CreateTAATextures(width, height int) (view0 *wgpu.TextureView, tex0 *wgpu.Texture, view1 *wgpu.TextureView, tex1 *wgpu.Texture, err error) {
+	return r.backend.CreateTAATextures(width, height)
+}
+
+func (r *renderer) CreateSharpenTexture(width, height int) (view *wgpu.TextureView, tex *wgpu.Texture, err error) {
+	return r.backend.CreateSharpenTexture(width, height)
 }
 
 func (r *renderer) CreateHiZTextures(width, height int) (hizView *wgpu.TextureView, hizTex *wgpu.Texture, mipReadViews []*wgpu.TextureView, mipStorageViews []*wgpu.TextureView, mipCount int, err error) {

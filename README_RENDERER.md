@@ -285,15 +285,79 @@ Steps 3–8 are only executed when lighting/GI sub-handlers are active. For unli
 
 The renderer package contains the following sub-packages, each documented separately:
 
-| Sub-Package            | Description                                                                               | Documentation                            |
-| ---------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `animator/`            | GPU compute animation backends (simple transform and skeletal)                            | [README_ANIMATOR.md](README_ANIMATOR.md) |
-| `bind_group_provider/` | Bind group creation, buffer and texture storage per draw entity                           | [README_BGP.md](README_BGP.md)           |
-| `material/`            | Material GPU types, overlay modes, and effect parameters                                  | [README_MATERIAL.md](README_MATERIAL.md) |
-| `pipeline/`            | Render and compute pipeline configuration and GPU object management                       | [README_PIPELINE.md](README_PIPELINE.md) |
-| `shader/`              | Shader loading, WGSL parsing, annotation pre-processing, and bind group layout generation | [README_SHADER.md](README_SHADER.md)     |
+| Sub-Package            | Description                                                                               | Documentation                                      |
+| ---------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `animator/`            | GPU compute animation backends (simple transform and skeletal)                            | [README_ANIMATOR.md](README_ANIMATOR.md)           |
+| `bind_group_provider/` | Bind group creation, buffer and texture storage per draw entity                           | [README_BGP.md](README_BGP.md)                     |
+| `gbuffer/`             | G-Buffer MRT handler for geometry pre-pass (normals, albedo, depth)                       | [GBuffer Package](#gbuffer-package)                |
+| `material/`            | Material GPU types, overlay modes, and effect parameters                                  | [README_MATERIAL.md](README_MATERIAL.md)           |
+| `pipeline/`            | Render and compute pipeline configuration and GPU object management                       | [README_PIPELINE.md](README_PIPELINE.md)           |
+| `postprocessing/`      | Screen-space post-processing handlers (SSAO, Composition, SSR, TAA)                       | [README_POSTPROCESSOR.md](README_POSTPROCESSOR.md) |
+| `shader/`              | Shader loading, WGSL parsing, annotation pre-processing, and bind group layout generation | [README_SHADER.md](README_SHADER.md)               |
 
 ---
+
+## GBuffer Package
+
+**Package path:** `github.com/Carmen-Shannon/oxy-go/engine/renderer/gbuffer`
+
+The `gbuffer` package manages the multiple render target (MRT) textures written during the geometry pre-pass. Downstream screen-space effects (SSAO, SSR, contact shadows) read from these textures.
+
+**Constructor:** `NewGBufferHandler(opts ...GBufferHandlerOption) GBufferHandler`
+
+### Builder Options
+
+| Option           | Parameters          | Default | Description                                          |
+| ---------------- | ------------------- | ------- | ---------------------------------------------------- |
+| `WithScreenSize` | `width, height int` | 0, 0    | Initial screen dimensions for G-Buffer texture alloc |
+
+### GBufferHandler Interface (22 methods)
+
+| Method                                            | Description                                    |
+| ------------------------------------------------- | ---------------------------------------------- |
+| `Enabled() bool` / `SetEnabled(bool)`             | Whether GPU resources are initialized          |
+| `SetSlot(slot int)`                               | Sets the active double-buffer slot             |
+| `ScreenWidth() int` / `ScreenHeight() int`        | Current screen dimensions                      |
+| `NormalTexture()` / `SetNormalTexture`            | Normals + roughness MRT texture (RGBA16Float)  |
+| `NormalTextureView()` / `SetNormalTextureView`    | View for normal texture                        |
+| `AlbedoTexture()` / `SetAlbedoTexture`            | Albedo + metallic MRT texture (RGBA8Unorm)     |
+| `AlbedoTextureView()` / `SetAlbedoTextureView`    | View for albedo texture                        |
+| `DepthTexture()` / `SetDepthTexture`              | Shared depth texture (Depth24Plus)             |
+| `DepthTextureView()` / `SetDepthTextureView`      | View for depth texture                         |
+| `PipelineKey(name)` / `SetPipelineKey(name, key)` | Pipeline key storage                           |
+| `PipelineKeys() map[string]string`                | Returns all pipeline keys                      |
+| `Resize(width, height int)`                       | Updates stored screen dimensions (no GPU work) |
+
+All texture getters/setters are double-buffered (2-slot arrays indexed by the active slot set via `SetSlot`).
+
+### MRT Textures
+
+| Texture | Format      | Contents                                         |
+| ------- | ----------- | ------------------------------------------------ |
+| Normal  | RGBA16Float | World normal XYZ (packed [0,1]) + roughness in W |
+| Albedo  | RGBA8Unorm  | Albedo RGB + metallic in A                       |
+| Depth   | Depth24Plus | Shared depth for the pre-pass                    |
+
+### GPU Type: `GPUGBufferOutput` (48 bytes)
+
+| Field      | Type         | Offset | Description          |
+| ---------- | ------------ | ------ | -------------------- |
+| `Position` | `[4]float32` | 0      | World-space position |
+| `Normal`   | `[4]float32` | 16     | World-space normal   |
+| `Albedo`   | `[4]float32` | 32     | Albedo color         |
+
+Methods: `Size() int`, `Marshal() []byte`
+
+Embedded WGSL source: `GPUGBufferOutputSource` (`assets/gbuffer-output.wgsl`)
+
+### Files
+
+| File                         | Contents                                                           |
+| ---------------------------- | ------------------------------------------------------------------ |
+| `gbuffer_handler.go`         | `GBufferHandler` interface                                         |
+| `gbuffer_handler_impl.go`    | Unexported `gBufferHandlerImpl` struct                             |
+| `gbuffer_handler_builder.go` | `GBufferHandlerOption` type, `WithScreenSize`, `NewGBufferHandler` |
+| `gpu_types.go`               | `GPUGBufferOutput` struct and embedded WGSL source                 |
 
 ---
 

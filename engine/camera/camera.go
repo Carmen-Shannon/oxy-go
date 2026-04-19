@@ -76,6 +76,25 @@ type Camera interface {
 	//   - [16]float32: the inverse projection matrix
 	InverseProjectionMatrix() [16]float32
 
+	// PrevViewProjectionMatrix returns the combined view-projection matrix from the previous
+	// frame, including any sub-pixel jitter that was applied to that frame's projection.
+	// Returns the zero matrix before two frames have elapsed.
+	//
+	// Returns:
+	//   - [16]float32: the previous frame's jittered view-projection matrix (column-major)
+	PrevViewProjectionMatrix() [16]float32
+
+	// SetJitter sets the per-element offsets applied to the projection matrix's
+	// clip-space translation entries on the next Update() call. The values are in
+	// projection-matrix NDC element units, NOT pixel units. Convert pixel jitter
+	// to NDC before calling: ndcX = pixelJX * 2 / screenW, ndcY = pixelJY * 2 / screenH.
+	// Pass (0, 0) to disable jitter for a frame.
+	//
+	// Parameters:
+	//   - ndcX: offset added to projectionMatrix[8] (clip X translation)
+	//   - ndcY: offset added to projectionMatrix[9] (clip Y translation)
+	SetJitter(ndcX, ndcY float32)
+
 	// Controller returns the attached CameraController.
 	// Returns nil if no controller is attached.
 	//
@@ -192,6 +211,19 @@ func (c *camera) InverseProjectionMatrix() [16]float32 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.inverseProjectionMatrix
+}
+
+func (c *camera) PrevViewProjectionMatrix() [16]float32 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.prevViewProjectionMatrix
+}
+
+func (c *camera) SetJitter(ndcX, ndcY float32) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.jitterX = ndcX
+	c.jitterY = ndcY
 }
 
 func (c *camera) SetUp(x, y, z float32) {

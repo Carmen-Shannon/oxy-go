@@ -20,70 +20,6 @@ func WithAmbientColor(color [3]float32) LightingHandlerOption {
 	}
 }
 
-// WithGBufferHandler attaches a pre-configured GBufferHandler to the lighting
-// subsystem, overriding the default that is auto-created by NewLightingHandler.
-// GPU resources are initialized lazily during the first lighting initialization.
-//
-// Parameters:
-//   - handler: the pre-configured GBufferHandler
-//
-// Returns:
-//   - LightingHandlerOption: a function that applies the G-Buffer handler option to a lightingHandlerImpl
-func WithGBufferHandler(handler GBufferHandler) LightingHandlerOption {
-	return func(h *lightingHandlerImpl) {
-		h.gBufferHandler = handler
-	}
-}
-
-// WithSSAOHandler attaches a pre-configured SSAOHandler to the lighting
-// subsystem, overriding the default that is auto-created by NewLightingHandler.
-// GPU resources are initialized lazily during the first lighting initialization.
-//
-// Parameters:
-//   - handler: the pre-configured SSAOHandler
-//
-// Returns:
-//   - LightingHandlerOption: a function that applies the SSAO handler option to a lightingHandlerImpl
-func WithSSAOHandler(handler SSAOHandler) LightingHandlerOption {
-	return func(h *lightingHandlerImpl) {
-		h.ssaoHandler = handler
-	}
-}
-
-// WithCompositionHandler attaches a pre-configured CompositionHandler to the
-// lighting subsystem, overriding the default that is auto-created by
-// NewLightingHandler. The composition handler manages the offscreen HDR render
-// target and the full-screen tone mapping pass. GPU resources are initialized
-// lazily during the first lighting initialization.
-//
-// Parameters:
-//   - handler: the pre-configured CompositionHandler
-//
-// Returns:
-//   - LightingHandlerOption: a function that applies the composition handler option to a lightingHandlerImpl
-func WithCompositionHandler(handler CompositionHandler) LightingHandlerOption {
-	return func(h *lightingHandlerImpl) {
-		h.compositionHandler = handler
-	}
-}
-
-// WithSSRHandler attaches a pre-configured SSRHandler to the lighting
-// subsystem, overriding the default that is auto-created by NewLightingHandler.
-// The SSR handler reads the G-Buffer and writes to a texture sampled by the
-// composition pass. GPU resources are initialized lazily during the first
-// lighting initialization.
-//
-// Parameters:
-//   - handler: the pre-configured SSRHandler
-//
-// Returns:
-//   - LightingHandlerOption: a function that applies the SSR handler option to a lightingHandlerImpl
-func WithSSRHandler(handler SSRHandler) LightingHandlerOption {
-	return func(h *lightingHandlerImpl) {
-		h.ssrHandler = handler
-	}
-}
-
 // WithShadowHandler sets the ShadowHandler for the LightingHandler.
 // If not provided, NewLightingHandler creates a default ShadowHandler.
 //
@@ -182,6 +118,7 @@ func NewLightingHandler(opts ...LightingHandlerOption) LightingHandler {
 			"probe_lit":       bind_group_provider.NewBindGroupProvider("probe_lit"),
 			"composition_lit": bind_group_provider.NewBindGroupProvider("composition_lit"),
 			"ssr_lit":         bind_group_provider.NewBindGroupProvider("ssr_lit"),
+			"taa_lit":         bind_group_provider.NewBindGroupProvider("taa_lit"),
 		},
 		pipelineKeys: make(map[string]string),
 	}
@@ -189,24 +126,6 @@ func NewLightingHandler(opts ...LightingHandlerOption) LightingHandler {
 		opt(h)
 	}
 
-	// Always create the GI subsystems (GBuffer, SSAO, Composition, SSR) with
-	// sensible defaults if they were not explicitly provided via options. The
-	// full GI pipeline is mandatory for lit scenes.
-	if h.gBufferHandler == nil {
-		h.gBufferHandler = NewGBufferHandler()
-	}
-	if h.ssaoHandler == nil {
-		h.ssaoHandler = NewSSAOHandler()
-	}
-	if h.compositionHandler == nil {
-		h.compositionHandler = NewCompositionHandler(
-			WithToneMappingEnabled(true),
-			WithExposure(1.0),
-		)
-	}
-	if h.ssrHandler == nil {
-		h.ssrHandler = NewSSRHandler()
-	}
 	if h.shadowHandler == nil {
 		h.shadowHandler = NewShadowHandler()
 	}

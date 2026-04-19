@@ -161,6 +161,13 @@ type Animator interface {
 	//   - rotXYZ: current rotation angles around each axis as [3]float32
 	SetInstanceData(index uint32, posXYZ, scaleXYZ, rotSpeedXYZ, rotXYZ [3]float32)
 
+	// SetInstanceFlags sets renderer-visible per-instance flags for a specific instance.
+	//
+	// Parameters:
+	//   - index: the instance index to update
+	//   - flags: the per-instance flag bitmask to upload
+	SetInstanceFlags(index uint32, flags uint32)
+
 	// SetBoneCount allocates the bone slice for the skeleton.
 	// Must be called before SetBone. No-op on simple backends.
 	//
@@ -443,6 +450,10 @@ func (a *animator) SetInstanceRotation(index uint32, rotSpeedXYZ, rotXYZ [3]floa
 
 func (a *animator) SetInstanceData(index uint32, posXYZ, scaleXYZ, rotSpeedXYZ, rotXYZ [3]float32) {
 	a.backend.SetInstanceData(index, posXYZ, scaleXYZ, rotSpeedXYZ, rotXYZ)
+}
+
+func (a *animator) SetInstanceFlags(index uint32, flags uint32) {
+	a.backend.SetInstanceFlags(index, flags)
 }
 
 func (a *animator) Flush(instanceBinding, boneBinding, modelBinding int) uint32 {

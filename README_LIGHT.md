@@ -1,10 +1,10 @@
 # Oxy Light System
 
-The `light` package provides the lighting, shadow mapping, Forward+ tile culling, and full global illumination (GI) pipeline for the Oxy engine. It supports directional, point, and spot light types, all sharing a single `Light` interface. Lights are marshaled into GPU storage buffers each frame and evaluated in a tiled Forward+ rendering pipeline.
+The `light` package provides lighting, shadow mapping, Forward+ tile culling, and contact shadows for the Oxy engine. It supports directional, point, and spot light types, all sharing a single `Light` interface. Lights are marshaled into GPU storage buffers each frame and evaluated in a tiled Forward+ rendering pipeline.
 
 Shadow mapping uses a dual-cascade sphere-based CSM approach with a `Depth32Float` atlas, hardware `sampler_comparison`, and 16-tap Poisson PCF. Contact shadows are computed via a screen-space ray march that detects fine-detail occlusion at surface contacts.
 
-The GI pipeline includes a G-Buffer MRT pre-pass, Screen-Space Ambient Occlusion (SSAO) with bilateral blur, Screen-Space Reflections (SSR) via Hi-Z ray marching, and a final composition pass with ACES tone mapping and HDR rendering.
+> Post-processing handlers (SSAO, SSR, Composition, Bloom, TAA) are documented in [README_POSTPROCESSOR.md](README_POSTPROCESSOR.md). The G-Buffer handler is documented in the gbuffer section of [README_RENDERER.md](README_RENDERER.md).
 
 ---
 
@@ -26,23 +26,18 @@ The GI pipeline includes a G-Buffer MRT pre-pass, Screen-Space Ambient Occlusion
   - [TileCounts](#tilecounts)
 - [Shadow Mapping (PCF)](#shadow-mapping-pcf)
   - [Shadow Constants](#shadow-constants)
-- [GI Sub-Handlers](#gi-sub-handlers)
-  - [GBufferHandler](#gbufferhandler)
-  - [SSAOHandler](#ssaohandler)
-  - [SSRHandler](#ssrhandler)
-  - [CompositionHandler](#compositionhandler)
+- [Sub-Handlers](#sub-handlers)
   - [ShadowHandler](#shadowhandler)
   - [ContactShadowHandler](#contactshadowhandler)
 - [GPU Types](#gpu-types)
   - [GPULight](#gpulight)
+  - [GPULightHeader](#gpulightheader)
   - [GPUCSMData](#gpucsmdata)
   - [GPUCSMCascade](#gpucsmcascade)
   - [GPUShadowUniform](#gpushadowuniform)
   - [GPULightShadowEntry](#gpulightshadowentry)
-  - [GPUSSAOParams](#gpussaoparams)
-  - [GPUBlurParams](#gpublurparams)
+  - [GPULightCullUniforms](#gpulightculluniforms)
   - [GPUTileUniforms](#gputileuniforms)
-  - [GPULuminanceParams](#gpuluminanceparams)
   - [GPUContactShadowParams](#gpucontactshadowparams)
 - [Helper Functions](#helper-functions)
 - [Usage Example](#usage-example)
@@ -52,13 +47,12 @@ The GI pipeline includes a G-Buffer MRT pre-pass, Screen-Space Ambient Occlusion
 
 ## Overview
 
-The light system is designed around five pillars:
+The light system is designed around four pillars:
 
 1. **Light** — A scene-level entity with type, position, direction, color, intensity, range, cone angles, and per-light shadow bias. All three light types share the same interface; type-specific properties return zero values when not applicable.
 2. **Forward+ Tile Culling** — The screen is divided into tiles (`TileSize × TileSize` pixels). A compute shader assigns lights to tiles so the fragment shader only evaluates lights relevant to each tile.
 3. **Dual-Cascade PCF Shadow Mapping** — Shadow-casting directional lights render into a `Depth32Float` atlas (two cascades). Cascade 0 is a camera-centered sphere with configurable inner radius; cascade 1 is frustum-fit for the full depth range. 16-tap Poisson PCF provides soft shadow edges. Spot and point lights use a separate `Depth32Float` atlas described by `GPULightShadowEntry` records.
-4. **Global Illumination Pipeline** — A G-Buffer MRT pre-pass captures per-pixel normals, albedo, and linear depth. SSAO uses hemisphere sampling on the G-Buffer to compute ambient occlusion. A screen-space contact-shadow pass detects fine-detail occlusion at surface contacts. SSR via Hi-Z ray marching adds specular reflections. A final composition pass applies ACES tone mapping to the HDR result.
-5. **Sub-Handler Architecture** — The `LightingHandler` owns lazily-initialized sub-handlers (`GBufferHandler`, `SSAOHandler`, `CompositionHandler`, `SSRHandler`, `ShadowHandler`, `ContactShadowHandler`) that manage their own textures, pipelines, and bind groups.
+4. **Sub-Handler Architecture** — The `LightingHandler` owns lazily-initialized sub-handlers (`ShadowHandler`, `ContactShadowHandler`) that manage their own textures, pipelines, and bind groups. Post-processing sub-handlers (GBuffer, SSAO, SSR, Composition, TAA) have been extracted to separate packages under `engine/renderer/`.
 
 ---
 
@@ -187,7 +181,7 @@ All options follow the `LightBuilderOption` functional option pattern.
 
 ## LightingHandler
 
-The `LightingHandler` manages the light list, ambient color, Forward+ tile culling, GI sub-handlers, and all associated GPU resources (bind group providers, pipeline keys). It is created via `NewLightingHandler` with builder options and attached to a scene. GPU resources are initialized lazily by the scene when the first light is added. Shadow resources are owned by the `ShadowHandler` sub-handler.
+The `LightingHandler` manages the light list, ambient color, Forward+ tile culling, shadow sub-handlers, and all associated GPU resources (bind group providers, pipeline keys). It is created via `NewLightingHandler` with builder options and attached to a scene. GPU resources are initialized lazily by the scene when the first light is added. Shadow resources are owned by the `ShadowHandler` sub-handler.
 
 Thread safety is provided by the owning scene's mutex — the handler itself does not perform internal locking.
 
@@ -217,26 +211,20 @@ Defaults applied before options:
 | MaxLightsPerTile | `256`               |
 | MaxGPULights     | `1024`              |
 
-The constructor pre-creates the following named `BindGroupProvider` entries: `"lights"`, `"light_cull"`, `"tile_lit"`, `"ssao_lit"`, `"probe_lit"`, `"composition_lit"`, `"ssr_lit"`. Shadow-related BGPs live on `ShadowHandler`; SSAO blur BGPs live on `SSAOHandler`.
-
-The constructor auto-creates default sub-handlers (`GBufferHandler`, `SSAOHandler`, `CompositionHandler`, `SSRHandler`, `ShadowHandler`, `ContactShadowHandler`) if not explicitly provided via builder options.
+The constructor pre-creates the following named `BindGroupProvider` entries: `"lights"`, `"light_cull"`, `"tile_lit"`, `"ssao_lit"`, `"probe_lit"`, `"composition_lit"`, `"ssr_lit"`. Shadow-related BGPs live on `ShadowHandler`.
 
 ### LightingHandler Builder Options
 
 All options follow the `LightingHandlerOption` functional option pattern.
 
-| Option                     | Parameters                     | Description                                            |
-| -------------------------- | ------------------------------ | ------------------------------------------------------ |
-| `WithAmbientColor`         | `color [3]float32`             | Initial ambient light color                            |
-| `WithGBufferHandler`       | `handler GBufferHandler`       | Overrides the default G-Buffer handler                 |
-| `WithSSAOHandler`          | `handler SSAOHandler`          | Overrides the default SSAO handler                     |
-| `WithCompositionHandler`   | `handler CompositionHandler`   | Overrides the default composition/tone mapping handler |
-| `WithSSRHandler`           | `handler SSRHandler`           | Overrides the default SSR handler                      |
-| `WithShadowHandler`        | `h ShadowHandler`              | Overrides the default shadow handler                   |
-| `WithContactShadowHandler` | `handler ContactShadowHandler` | Overrides the default contact shadow handler           |
-| `WithTileSize`             | `size int`                     | Forward+ tile size in pixels (default 16)              |
-| `WithMaxLightsPerTile`     | `max int`                      | Max light indices per tile (default 256)               |
-| `WithMaxGPULights`         | `max int`                      | Max lights marshaled to GPU per frame (default 1024)   |
+| Option                     | Parameters                     | Description                                          |
+| -------------------------- | ------------------------------ | ---------------------------------------------------- |
+| `WithAmbientColor`         | `color [3]float32`             | Initial ambient light color                          |
+| `WithShadowHandler`        | `h ShadowHandler`              | Overrides the default shadow handler                 |
+| `WithContactShadowHandler` | `handler ContactShadowHandler` | Overrides the default contact shadow handler         |
+| `WithTileSize`             | `size int`                     | Forward+ tile size in pixels (default 16)            |
+| `WithMaxLightsPerTile`     | `max int`                      | Max light indices per tile (default 256)             |
+| `WithMaxGPULights`         | `max int`                      | Max lights marshaled to GPU per frame (default 1024) |
 
 ### LightingHandler Interface
 
@@ -262,16 +250,12 @@ All options follow the `LightingHandlerOption` functional option pattern.
 | `PipelineKeys() map[string]string` | Returns the full map of pipeline name-to-key mappings             |
 | `SetPipelineKey(name, key string)` | Stores a pipeline key under the given name                        |
 
-#### GI Sub-Handler Accessors
+#### Sub-Handler Accessors
 
-| Method                                        | Description                                            |
-| --------------------------------------------- | ------------------------------------------------------ |
-| `GBufferHandler() GBufferHandler`             | Returns the G-Buffer handler, or nil if not configured |
-| `SSAOHandler() SSAOHandler`                   | Returns the SSAO handler, or nil if not configured     |
-| `CompositionHandler() CompositionHandler`     | Returns the composition/tone mapping handler, or nil   |
-| `SSRHandler() SSRHandler`                     | Returns the SSR handler, or nil if not configured      |
-| `ShadowHandler() ShadowHandler`               | Returns the shadow handler                             |
-| `ContactShadowHandler() ContactShadowHandler` | Returns the contact shadow handler                     |
+| Method                                        | Description                        |
+| --------------------------------------------- | ---------------------------------- |
+| `ShadowHandler() ShadowHandler`               | Returns the shadow handler         |
+| `ContactShadowHandler() ContactShadowHandler` | Returns the contact shadow handler |
 
 #### Screen & Tile State
 
@@ -338,199 +322,11 @@ Shadow-casting directional lights render a depth-only pass into a `Depth32Float`
 
 ---
 
-## GI Sub-Handlers
+## Sub-Handlers
 
-The `LightingHandler` delegates each stage of the GI pipeline to a dedicated sub-handler. Default instances are auto-created in the `NewLightingHandler` constructor unless an explicit override is provided via builder options. GPU resources for each sub-handler are initialized lazily by the scene when GI is first enabled. All sub-handlers share the same thread-safety model — locking is owned by the enclosing scene.
+The `LightingHandler` delegates shadow and contact-shadow work to dedicated sub-handlers. Default instances are auto-created in the `NewLightingHandler` constructor unless an explicit override is provided via builder options. GPU resources for each sub-handler are initialized lazily by the scene when lighting is first enabled. All sub-handlers share the same thread-safety model — locking is owned by the enclosing scene.
 
-### GBufferHandler
-
-The `GBufferHandler` manages the multiple render target (MRT) textures written during the geometry pre-pass. Downstream screen-space effects (SSAO, SSR) read from these textures.
-
-```go
-gbuf := light.NewGBufferHandler(
-    light.WithGBufferScreenSize(1280, 720),
-)
-```
-
-| Builder Option          | Parameters          | Default | Description               |
-| ----------------------- | ------------------- | ------- | ------------------------- |
-| `WithGBufferScreenSize` | `width, height int` | 0, 0    | Initial screen dimensions |
-
-**MRT Textures:**
-
-| Texture | Format      | Contents                                         |
-| ------- | ----------- | ------------------------------------------------ |
-| Normal  | RGBA16Float | World normal XYZ (packed [0,1]) + roughness in W |
-| Albedo  | RGBA8Unorm  | Albedo RGB + metallic in A                       |
-| Depth   | Depth24Plus | Shared depth for the pre-pass                    |
-
-**Key Interface Methods:**
-
-| Method                                          | Description                                            |
-| ----------------------------------------------- | ------------------------------------------------------ |
-| `Enabled() bool`                                | Whether GPU resources are initialized                  |
-| `PositionTexture() / SetPositionTexture`        | World-space position MRT texture                       |
-| `NormalTexture() / SetNormalTexture`            | Normals + roughness MRT texture                        |
-| `AlbedoTexture() / SetAlbedoTexture`            | Albedo + metallic MRT texture                          |
-| `DepthTexture() / SetDepthTexture`              | Shared depth texture for the G-Buffer pass             |
-| `ScreenWidth() int` / `SetScreenWidth(w int)`   | Screen width in pixels                                 |
-| `ScreenHeight() int` / `SetScreenHeight(h int)` | Screen height in pixels                                |
-| `PipelineKey(name) / SetPipelineKey`            | Pipeline key storage for the G-Buffer render pipeline  |
-| `Resize(width, height)`                         | Updates screen dimensions (does not recreate textures) |
-
-### SSAOHandler
-
-The `SSAOHandler` manages the hemisphere sampling kernel, noise texture, raw and blurred occlusion textures, and bilateral blur pipeline. The raw AO is computed in a compute shader and then blurred with a separable bilateral filter to preserve edges.
-
-```go
-ssao := light.NewSSAOHandler(
-    light.WithSSAOSampleCount(16),
-    light.WithSSAOScreenRadius(24.0),
-    light.WithSSAOBias(0.025),
-    light.WithSSAOPower(2.0),
-    light.WithSSAOBlurRadius(4),
-    light.WithSSAOHalfResolution(false),
-)
-```
-
-| Builder Option           | Parameters       | Default | Description                                                                                                                                                 |
-| ------------------------ | ---------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `WithSSAOScreenSize`     | `width, height`  | 0, 0    | Initial screen dimensions                                                                                                                                   |
-| `WithSSAOSampleCount`    | `count int`      | 16      | Hemisphere samples per pixel (1–32)                                                                                                                         |
-| `WithSSAOScreenRadius`   | `pixels float32` | 24.0    | Screen-space sampling radius in pixels — the engine auto-computes the world-space hemisphere radius each frame from camera distance, FOV, and screen height |
-| `WithSSAOBias`           | `bias float32`   | 0.025   | Depth bias to prevent self-occlusion                                                                                                                        |
-| `WithSSAOPower`          | `power float32`  | 2.0     | Exponent for AO contrast                                                                                                                                    |
-| `WithSSAOBlurRadius`     | `radius int`     | 4       | Bilateral blur half-width in texels                                                                                                                         |
-| `WithSSAOHalfResolution` | `enabled bool`   | false   | Allocate textures at half resolution (¼ pixel count)                                                                                                        |
-| `WithSSAOMaxSamples`     | `max int`        | 32      | GPU compile-time upper bound for sample array size                                                                                                          |
-
-**Key Textures:**
-
-| Texture | Format      | Description                                           |
-| ------- | ----------- | ----------------------------------------------------- |
-| Raw     | R8Unorm     | Pre-blur SSAO output                                  |
-| Blurred | R8Unorm     | Final AO bound to the lit shader                      |
-| Scratch | R8Unorm     | Intermediate texture between horizontal/vertical blur |
-| Noise   | RGBA16Float | 4×4 random rotation vectors for kernel rotation       |
-
-**Default BGPs:** `"ssao_compute"`, `"ssao_blur_h"`, `"ssao_blur_v"`
-
-**Key Interface Methods:**
-
-| Method                                                                | Description                                |
-| --------------------------------------------------------------------- | ------------------------------------------ |
-| `MaxSamples() int`                                                    | Returns the compile-time max samples value |
-| `HalfResolution() bool` / `SetHalfResolution(enabled bool)`           | Whether SSAO runs at half resolution       |
-| `LinearSampler() *wgpu.Sampler` / `SetLinearSampler(s *wgpu.Sampler)` | Linear sampler for SSAO texture lookups    |
-
-The `CompositionHandler` manages the offscreen HDR render target, MSAA resolve, depth texture, and the full-screen composition pipeline that applies ACES tone mapping and gamma correction. When composition is active, the lit pass renders to an RGBA16Float texture instead of the swapchain; the composition pass then samples the HDR result (and any SSR contribution) and writes the final LDR output.
-
-```go
-comp := light.NewCompositionHandler(
-    light.WithToneMappingEnabled(true),
-    light.WithExposure(1.0),
-)
-```
-
-| Builder Option               | Parameters          | Default | Description                                                 |
-| ---------------------------- | ------------------- | ------- | ----------------------------------------------------------- |
-| `WithCompositionScreenSize`  | `width, height`     | 0, 0    | Initial screen dimensions                                   |
-| `WithToneMappingEnabled`     | `enabled bool`      | true    | Enables ACES tone mapping                                   |
-| `WithExposure`               | `exposure float32`  | 1.0     | HDR exposure multiplier (1.0=neutral)                       |
-| `WithAutoExposure`           | `enabled bool`      | false   | Enable GPU-driven luminance-based exposure adaptation.      |
-| `WithAdaptSpeed`             | `speed float32`     | 1.0     | Rate at which exposure converges to the target (seconds⁻¹). |
-| `WithMinExposure`            | `min float32`       | 0.1     | Minimum clamp for the adapted exposure value.               |
-| `WithMaxExposure`            | `max float32`       | 10.0    | Maximum clamp for the adapted exposure value.               |
-| `WithLuminanceWorkgroupSize` | `size int`          | 16      | Workgroup tile dimension for the luminance compute shader.  |
-| `WithBloomEnabled`           | `enabled bool`      | false   | Enables bloom post-processing.                              |
-| `WithBloomThreshold`         | `threshold float32` | 1.0     | Brightness threshold for bloom extraction (soft-knee).      |
-| `WithBloomIntensity`         | `intensity float32` | 0.5     | Multiplier for the bloom contribution in the final image.   |
-
-**Key Textures:**
-
-| Texture | Format      | Description                                                |
-| ------- | ----------- | ---------------------------------------------------------- |
-| HDR     | RGBA16Float | Offscreen render target for the lit pass                   |
-| MSAA    | RGBA16Float | Multi-sampled color attachment (resolves into HDR texture) |
-| Depth   | Depth24Plus | Depth buffer for the offscreen HDR render pass             |
-
-**Default BGPs:** `"composition"`
-
-**Key Interface Methods:**
-
-| Method                            | Returns        | Description                                                        |
-| --------------------------------- | -------------- | ------------------------------------------------------------------ |
-| `ToneMappingEnabled() bool`       | `bool`         | Whether ACES tone mapping is active.                               |
-| `SetToneMappingEnabled(bool)`     | —              | Toggle tone mapping at runtime.                                    |
-| `Exposure() float32`              | `float32`      | Current HDR exposure multiplier.                                   |
-| `SetExposure(float32)`            | —              | Set the HDR exposure multiplier.                                   |
-| `AutoExposureEnabled() bool`      | `bool`         | Whether GPU-driven auto-exposure is active.                        |
-| `SetAutoExposureEnabled(bool)`    | —              | Toggle auto-exposure at runtime.                                   |
-| `AdaptSpeed() float32`            | `float32`      | Exposure adaptation rate (exposure units/second).                  |
-| `SetAdaptSpeed(float32)`          | —              | Set the adaptation rate.                                           |
-| `MinExposure() float32`           | `float32`      | Minimum adapted exposure clamp value.                              |
-| `SetMinExposure(float32)`         | —              | Set the minimum exposure clamp.                                    |
-| `MaxExposure() float32`           | `float32`      | Maximum adapted exposure clamp value.                              |
-| `SetMaxExposure(float32)`         | —              | Set the maximum exposure clamp.                                    |
-| `ExposureBuffer() *wgpu.Buffer`   | `*wgpu.Buffer` | The GPU storage buffer holding the current adapted exposure value. |
-| `SetExposureBuffer(*wgpu.Buffer)` | —              | Set the exposure storage buffer (called during init).              |
-| `BloomEnabled() bool`             | `bool`         | Whether bloom post-processing is active.                           |
-| `SetBloomEnabled(bool)`           | —              | Toggle bloom at runtime.                                           |
-| `BloomThreshold() float32`        | `float32`      | Brightness threshold for bloom extraction.                         |
-| `SetBloomThreshold(float32)`      | —              | Set the bloom brightness threshold.                                |
-| `BloomIntensity() float32`        | `float32`      | Multiplier for the bloom contribution.                             |
-| `SetBloomIntensity(float32)`      | —              | Set the bloom intensity multiplier.                                |
-
-#### Bloom
-
-The bloom system extracts bright pixels from the HDR buffer using a soft-knee brightness threshold, then progressively downsamples (13-tap box-tent filter, CoD:AW style) and upsamples (9-tap tent filter with additive blending) through a mip chain to produce a smooth glow. The result is added to the final image in the composition shader, after exposure but before tone mapping.
-
-| Builder Option       | Parameters          | Default | Description                                                                                                |
-| -------------------- | ------------------- | ------- | ---------------------------------------------------------------------------------------------------------- |
-| `WithBloomEnabled`   | `enabled bool`      | `false` | Enables/disables bloom.                                                                                    |
-| `WithBloomThreshold` | `threshold float32` | `1.0`   | Brightness threshold for bloom extraction; pixels below this contribute less. Uses a soft-knee transition. |
-| `WithBloomIntensity` | `intensity float32` | `0.5`   | Multiplier for the bloom contribution added to the final image.                                            |
-
-**Implementation details:**
-
-- Two RGBA16Float mip chain textures (down chain + up chain) at half screen resolution, max 6 mip levels
-- Per-mip BGPs with separate `DispatchComputeBatch` per mip for GPU barriers
-- Threshold only applied on the first downsample pass (mip 0); subsequent mips downsample without threshold
-- When disabled, a 1×1 black fallback texture is bound to composition binding 6
-
-### SSRHandler
-
-The `SSRHandler` manages ray march configuration, the SSR result texture, the Hi-Z depth pyramid (for accelerated ray marching), and associated compute pipelines. The SSR compute shader reads from the G-Buffer normals and the Hi-Z pyramid to march reflected rays in screen space.
-
-```go
-ssr := light.NewSSRHandler(
-    light.WithSSRMaxSteps(64),
-    light.WithSSRMaxDistance(50.0),
-    light.WithSSRThickness(0.1),
-    light.WithSSRStride(1.0),
-    light.WithSSRRoughnessCutoff(0.5),
-)
-```
-
-| Builder Option           | Parameters          | Default | Description                                     |
-| ------------------------ | ------------------- | ------- | ----------------------------------------------- |
-| `WithSSRScreenSize`      | `width, height`     | 0, 0    | Initial screen dimensions                       |
-| `WithSSRMaxSteps`        | `steps int`         | 64      | Maximum ray march steps per pixel               |
-| `WithSSRMaxDistance`     | `distance float32`  | 50.0    | Maximum ray march distance in view space        |
-| `WithSSRThickness`       | `thickness float32` | 0.1     | Depth tolerance for hit detection               |
-| `WithSSRStride`          | `stride float32`    | 1.0     | Step stride multiplier (1.0 = uniform stepping) |
-| `WithSSRRoughnessCutoff` | `cutoff float32`    | 0.5     | Roughness above which SSR is skipped            |
-
-**Key Textures:**
-
-| Texture | Format      | Description                                       |
-| ------- | ----------- | ------------------------------------------------- |
-| SSR     | RGBA16Float | Half-resolution result (RGB=color, A=confidence)  |
-| Hi-Z    | R32Float    | Full mip chain min-depth pyramid for ray marching |
-
-**Hi-Z Pyramid:** The SSR handler also stores per-mip read views (`HiZMipReadViews`) and storage views (`HiZStorageViews`) for the Hi-Z downsample pipeline. `HiZMipCount()` returns the number of mip levels.
-
-**Default BGPs:** `"ssr_compute"`
+> Post-processing sub-handlers (GBufferHandler, SSAOHandler, SSRHandler, CompositionHandler, TAAHandler) have been extracted to separate packages. See [README_POSTPROCESSOR.md](README_POSTPROCESSOR.md) and [README_RENDERER.md](README_RENDERER.md).
 
 ### ShadowHandler
 
@@ -745,85 +541,6 @@ Per-light shadow atlas entry written into a GPU storage buffer for spot and poin
 
 Spot lights produce 1 entry per light. Point lights produce 6 consecutive entries (one per cube face, selected in the lit shader by the dominant axis of `light → fragment`).
 
-### GPUBlurParams
-
-Uniform data for the separable SSAO blur compute shader.
-
-| Field          | Type       | Offset | Description                                                      |
-| -------------- | ---------- | ------ | ---------------------------------------------------------------- |
-| `Direction`    | `[2]int32` | 0      | `(1,0)` for horizontal pass, `(0,1)` for vertical pass           |
-| `Radius`       | `int32`    | 8      | Half-width of the filter kernel in texels                        |
-| `GBufferScale` | `int32`    | 12     | Lookup scale factor for half-resolution SSAO                     |
-| `CascadeWidth` | `int32`    | 16     | Per-cascade atlas column width; `0` disables horizontal clamping |
-| `_pad`         | `int32`    | 20     | Padding to 24 bytes                                              |
-
-Total size: **24 bytes**.
-
-### GPUGBufferOutput
-
-G-Buffer MRT fragment output (written by the G-Buffer pre-pass, not typically CPU-uploaded).
-
-| Field      | Type         | Offset | Description                                      |
-| ---------- | ------------ | ------ | ------------------------------------------------ |
-| `Position` | `[4]float32` | 0      | World XYZ + linear depth in W                    |
-| `Normal`   | `[4]float32` | 16     | World normal XYZ (packed [0,1]) + roughness in W |
-| `Albedo`   | `[4]float32` | 32     | Albedo RGB + metallic in A                       |
-
-**Size:** 48 bytes
-
-### GPUSSAOParams
-
-Uniform data for the SSAO compute shader.
-
-| Field            | Type          | Offset | Description                                     |
-| ---------------- | ------------- | ------ | ----------------------------------------------- |
-| `Projection`     | `[16]float32` | 0      | View-projection matrix                          |
-| `InvViewProj`    | `[16]float32` | 64     | Inverse view-projection matrix                  |
-| `Radius`         | `float32`     | 128    | Hemisphere sample radius in world units         |
-| `Bias`           | `float32`     | 132    | Depth comparison bias to prevent self-occlusion |
-| `Power`          | `float32`     | 136    | Exponent applied to the final AO value          |
-| `SampleCount`    | `uint32`      | 140    | Number of hemisphere samples (max 32)           |
-| `ScreenWidth`    | `float32`     | 144    | Screen width in pixels                          |
-| `ScreenHeight`   | `float32`     | 148    | Screen height in pixels                         |
-| `GBufferScale`   | `float32`     | 152    | Coordinate multiplier for G-Buffer lookups      |
-| `_pad`           | `float32`     | 156    | Padding                                         |
-| `CameraPosition` | `[3]float32`  | 160    | World-space camera position                     |
-| `_pad2`          | `float32`     | 172    | Padding to 176 bytes                            |
-
-**Size:** 176 bytes
-
-### GPUCompositionParams
-
-Uniform data for the composition fragment shader.
-
-| Field                 | Type      | Offset | Description                                      |
-| --------------------- | --------- | ------ | ------------------------------------------------ |
-| `ToneMappingEnabled`  | `uint32`  | 0      | 1=ACES tone mapping applied, 0=bypassed          |
-| `Exposure`            | `float32` | 4      | Exposure multiplier before tone mapping          |
-| `AutoExposureEnabled` | `uint32`  | 8      | Non-zero when GPU-driven auto-exposure is active |
-| `_pad2`               | `uint32`  | 12     | Padding to 16 bytes                              |
-
-**Size:** 16 bytes
-
-### GPULuminanceParams
-
-Uniform data for the luminance compute pass used by auto-exposure adaptation.
-
-| Offset | Field                   | Type  | Description                                        |
-| ------ | ----------------------- | ----- | -------------------------------------------------- |
-| 0      | `screen_width`          | `u32` | HDR texture width in pixels.                       |
-| 4      | `screen_height`         | `u32` | HDR texture height in pixels.                      |
-| 8      | `adapt_speed`           | `f32` | Exposure adaptation speed (units/second).          |
-| 12     | `delta_time`            | `f32` | Frame delta time in seconds.                       |
-| 16     | `min_exposure`          | `f32` | Minimum clamped exposure value.                    |
-| 20     | `max_exposure`          | `f32` | Maximum clamped exposure value.                    |
-| 24     | `key_value`             | `f32` | Middle-gray key value for exposure mapping (0.18). |
-| 28     | `auto_exposure_enabled` | `u32` | Non-zero when auto-exposure is active.             |
-
-**Size:** 32 bytes
-
-**Workgroup size:** Configurable via `WithLuminanceWorkgroupSize(size int)` on `CompositionHandler`; defaults to `16`.
-
 ### GPUContactShadowParams
 
 Uniform data for the contact shadow compute shader.
@@ -842,26 +559,6 @@ Uniform data for the contact shadow compute shader.
 | `_pad`           | `float32`     | 172    | Padding to 176-byte alignment                 |
 
 **Size:** 176 bytes
-
-### GPUSSRParams
-
-Uniform data for the screen-space reflections compute shader.
-
-| Field             | Type          | Offset | Description                                    |
-| ----------------- | ------------- | ------ | ---------------------------------------------- |
-| `Projection`      | `[16]float32` | 0      | Projection matrix                              |
-| `InvProjection`   | `[16]float32` | 64     | Inverse projection matrix                      |
-| `View`            | `[16]float32` | 128    | View matrix                                    |
-| `MaxDistance`     | `float32`     | 192    | Maximum ray march distance in view space       |
-| `Thickness`       | `float32`     | 196    | Depth thickness tolerance for hit detection    |
-| `Stride`          | `float32`     | 200    | Step stride multiplier (unused in Hi-Z mode)   |
-| `MaxSteps`        | `uint32`      | 204    | Maximum number of ray march steps              |
-| `ScreenWidth`     | `float32`     | 208    | Screen width in pixels                         |
-| `ScreenHeight`    | `float32`     | 212    | Screen height in pixels                        |
-| `RoughnessCutoff` | `float32`     | 216    | Roughness above which SSR is skipped           |
-| `HiZMipCount`     | `uint32`      | 220    | Number of Hi-Z mip levels in the depth pyramid |
-
-**Size:** 224 bytes
 
 ### GPULightCullUniforms
 
@@ -980,30 +677,18 @@ func main() {
 
 ## Files
 
-| File                                | Contents                                                                                                                                                                                                                                   |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `light.go`                          | `Light` interface and `LightType` constants                                                                                                                                                                                                |
-| `light_impl.go`                     | Unexported `light` struct and method implementations                                                                                                                                                                                       |
-| `light_builder.go`                  | `LightBuilderOption` type, `With*` functions, `NewLight` constructor                                                                                                                                                                       |
-| `light_handler.go`                  | `LightingHandler` interface                                                                                                                                                                                                                |
-| `light_handler_impl.go`             | Unexported `lightingHandler` struct and method implementations                                                                                                                                                                             |
-| `light_handler_builder.go`          | `LightingHandlerOption` type, `With*` functions, `NewLightingHandler` constructor                                                                                                                                                          |
-| `gbuffer_handler.go`                | `GBufferHandler` interface                                                                                                                                                                                                                 |
-| `gbuffer_handler_impl.go`           | Unexported `gBufferHandler` struct                                                                                                                                                                                                         |
-| `gbuffer_handler_builder.go`        | `GBufferHandlerOption` type and `NewGBufferHandler` constructor                                                                                                                                                                            |
-| `ssao_handler.go`                   | `SSAOHandler` interface                                                                                                                                                                                                                    |
-| `ssao_handler_impl.go`              | Unexported `ssaoHandler` struct                                                                                                                                                                                                            |
-| `ssao_handler_builder.go`           | `SSAOHandlerOption` type and `NewSSAOHandler` constructor                                                                                                                                                                                  |
-| `ssr_handler.go`                    | `SSRHandler` interface                                                                                                                                                                                                                     |
-| `ssr_handler_impl.go`               | Unexported `ssrHandler` struct                                                                                                                                                                                                             |
-| `ssr_handler_builder.go`            | `SSRHandlerOption` type and `NewSSRHandler` constructor                                                                                                                                                                                    |
-| `composition_handler.go`            | `CompositionHandler` interface                                                                                                                                                                                                             |
-| `composition_handler_impl.go`       | Unexported `compositionHandler` struct                                                                                                                                                                                                     |
-| `composition_handler_builder.go`    | `CompositionHandlerOption` type and `NewCompositionHandler` constructor                                                                                                                                                                    |
-| `shadow_handler.go`                 | `ShadowHandler` interface and `ShadowType` constants                                                                                                                                                                                       |
-| `shadow_handler_impl.go`            | Unexported `shadowHandler` struct                                                                                                                                                                                                          |
-| `shadow_handler_builder.go`         | `ShadowHandlerOption` type and `NewShadowHandler` constructor                                                                                                                                                                              |
-| `contact_shadow_handler.go`         | `ContactShadowHandler` interface                                                                                                                                                                                                           |
-| `contact_shadow_handler_impl.go`    | Unexported `contactShadowHandler` struct                                                                                                                                                                                                   |
-| `contact_shadow_handler_builder.go` | `ContactShadowHandlerOption` type and `NewContactShadowHandler` constructor                                                                                                                                                                |
-| `gpu_types.go`                      | All GPU-marshaled structs (`GPULight`, `GPUCSMData`, `GPUCSMCascade`, `GPUShadowUniform`, `GPULightShadowEntry`, `GPUSSAOParams`, `GPUBlurParams`, `GPUTileUniforms`, `GPULuminanceParams`, `GPUContactShadowParams`) and helper functions |
+| File                                | Contents                                                                                                                                                                                                                     |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `light.go`                          | `Light` interface and `LightType` constants                                                                                                                                                                                  |
+| `light_impl.go`                     | Unexported `light` struct and method implementations                                                                                                                                                                         |
+| `light_builder.go`                  | `LightBuilderOption` type, `With*` functions, `NewLight` constructor                                                                                                                                                         |
+| `light_handler.go`                  | `LightingHandler` interface                                                                                                                                                                                                  |
+| `light_handler_impl.go`             | Unexported `lightingHandler` struct and method implementations                                                                                                                                                               |
+| `light_handler_builder.go`          | `LightingHandlerOption` type, `With*` functions, `NewLightingHandler` constructor                                                                                                                                            |
+| `shadow_handler.go`                 | `ShadowHandler` interface and `ShadowType` constants                                                                                                                                                                         |
+| `shadow_handler_impl.go`            | Unexported `shadowHandler` struct                                                                                                                                                                                            |
+| `shadow_handler_builder.go`         | `ShadowHandlerOption` type and `NewShadowHandler` constructor                                                                                                                                                                |
+| `contact_shadow_handler.go`         | `ContactShadowHandler` interface                                                                                                                                                                                             |
+| `contact_shadow_handler_impl.go`    | Unexported `contactShadowHandler` struct                                                                                                                                                                                     |
+| `contact_shadow_handler_builder.go` | `ContactShadowHandlerOption` type and `NewContactShadowHandler` constructor                                                                                                                                                  |
+| `gpu_types.go`                      | All GPU-marshaled structs (`GPULight`, `GPULightHeader`, `GPUCSMData`, `GPUCSMCascade`, `GPUShadowUniform`, `GPULightShadowEntry`, `GPULightCullUniforms`, `GPUTileUniforms`, `GPUContactShadowParams`) and helper functions |

@@ -25,6 +25,7 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/animator"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 )
 
@@ -275,6 +276,13 @@ type Scene interface {
 	// bloom is disabled or the composition handler has not been initialized.
 	PrepareBloom()
 
+	// PrepareTAA dispatches the TAA resolve compute shader, blending the current HDR
+	// frame with the accumulated history texture using motion-vector reprojection and
+	// neighborhood variance clamping. Must be called after PrepareBloom (so the HDR
+	// texture is fully populated) and before PrepareComposition. No-ops if the TAA
+	// handler is not initialized or the camera is nil.
+	PrepareTAA()
+
 	// PrepareComposition runs the fullscreen composition pass: samples the HDR lit
 	// texture and optional SSR texture, applies ACES tone mapping and gamma
 	// correction, and writes the final LDR result to the swapchain.
@@ -343,17 +351,20 @@ func (s *scene) Resize(width, height int) {
 	if s.lightHandler.Enabled() {
 		s.lightHandler.Resize(width, height)
 	}
-	if s.lightHandler.GBufferHandler().Enabled() {
-		s.lightHandler.GBufferHandler().Resize(width, height)
+	if s.gBufferHandler.Enabled() {
+		s.gBufferHandler.Resize(width, height)
 	}
-	if s.lightHandler.SSAOHandler().Enabled() {
-		s.lightHandler.SSAOHandler().Resize(width, height)
+	if s.ssaoHandler.Enabled() {
+		s.ssaoHandler.Resize(width, height)
 	}
-	if s.lightHandler.CompositionHandler().Enabled() {
-		s.lightHandler.CompositionHandler().Resize(width, height)
+	if s.compositionHandler.Enabled() {
+		s.compositionHandler.Resize(width, height)
 	}
-	if s.lightHandler.SSRHandler().Enabled() {
-		s.lightHandler.SSRHandler().Resize(width, height)
+	if s.ssrHandler.Enabled() {
+		s.ssrHandler.Resize(width, height)
+	}
+	if taaH := s.taaHandler; taaH != nil && taaH.Enabled() {
+		taaH.Resize(width, height)
 	}
 	needTileCullReinit := s.lightHandler.TileCountX()*s.lightHandler.TileCountY() > s.tileBufferCapacity
 	s.mu.Unlock()
@@ -405,7 +416,7 @@ func (s *scene) PrepareGBuffer() {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if s.lightHandler.GBufferHandler() == nil || !s.lightHandler.GBufferHandler().Enabled() || s.r == nil {
+	if s.gBufferHandler == nil || !s.gBufferHandler.Enabled() || s.r == nil {
 		return
 	}
 
@@ -413,9 +424,9 @@ func (s *scene) PrepareGBuffer() {
 		return
 	}
 	s.r.BeginGBufferPass(
-		s.lightHandler.GBufferHandler().NormalTextureView(),
-		s.lightHandler.GBufferHandler().AlbedoTextureView(),
-		s.lightHandler.GBufferHandler().DepthTextureView(),
+		s.gBufferHandler.NormalTextureView(),
+		s.gBufferHandler.AlbedoTextureView(),
+		s.gBufferHandler.DepthTextureView(),
 	)
 
 	for _, anim := range s.animatorPool {
@@ -434,9 +445,9 @@ func (s *scene) PrepareGBuffer() {
 			}
 
 			// Select the appropriate G-Buffer pipeline based on whether the model is skinned.
-			pipeKey := s.lightHandler.GBufferHandler().PipelineKey("static")
+			pipeKey := s.gBufferHandler.PipelineKey("static")
 			if mdl.Skinned() {
-				pipeKey = s.lightHandler.GBufferHandler().PipelineKey("skinned")
+				pipeKey = s.gBufferHandler.PipelineKey("skinned")
 			}
 			if pipeKey == "" {
 				continue
@@ -455,26 +466,29 @@ func (s *scene) PrepareGBuffer() {
 			if len(mats) == 0 {
 				continue
 			}
-			matBGP := mats[0].BindGroupProvider()
-			if matBGP == nil {
-				continue
-			}
 
-			gbufferBindGroups := []bind_group_provider.BindGroupProvider{
-				cameraBGP,
-				a.OutputBindGroupProvider(),
-				matBGP,
-			}
-
-			// Use indirect draw when GPU frustum culling is active.
-			if a.CullingEnabled() {
-				if indBuf := a.IndirectBuffer(s.animIndirectBinding[a]); indBuf != nil {
-					_ = s.r.GBufferDrawCallIndirect(pipeKey, meshProvider, indBuf, gbufferBindGroups)
+			for _, mat := range mats {
+				matBGP := mat.BindGroupProvider()
+				if matBGP == nil {
 					continue
 				}
-			}
 
-			_ = s.r.GBufferDrawCall(pipeKey, meshProvider, uint32(a.InstanceCount()), gbufferBindGroups)
+				gbufferBindGroups := []bind_group_provider.BindGroupProvider{
+					cameraBGP,
+					a.OutputBindGroupProvider(),
+					matBGP,
+				}
+
+				// Use indirect draw when GPU frustum culling is active.
+				if a.CullingEnabled() {
+					if indBuf := a.IndirectBuffer(s.animIndirectBinding[a]); indBuf != nil {
+						_ = s.r.GBufferDrawCallIndirect(pipeKey, meshProvider, indBuf, gbufferBindGroups)
+						continue
+					}
+				}
+
+				_ = s.r.GBufferDrawCall(pipeKey, meshProvider, uint32(a.InstanceCount()), gbufferBindGroups)
+			}
 		}
 	}
 
@@ -486,26 +500,26 @@ func (s *scene) PrepareSSAO() {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if s.lightHandler.SSAOHandler() == nil || !s.lightHandler.SSAOHandler().Enabled() || s.r == nil || s.cam == nil {
+	if s.ssaoHandler == nil || !s.ssaoHandler.Enabled() || s.r == nil || s.cam == nil {
 		return
 	}
 
-	w := s.lightHandler.SSAOHandler().ScreenWidth()
-	h := s.lightHandler.SSAOHandler().ScreenHeight()
+	w := s.ssaoHandler.ScreenWidth()
+	h := s.ssaoHandler.ScreenHeight()
 
 	// Compute the G-Buffer coordinate scale: 2.0 when running at half-resolution,
 	// 1.0 at full resolution. The SSAO compute and blur shaders multiply their
 	// texture coordinates by this value when reading from full-res G-Buffer textures.
 	var gbufferScale float32 = 1.0
 	var gbufferScaleI int32 = 1
-	if s.lightHandler.SSAOHandler().HalfResolution() {
+	if s.ssaoHandler.HalfResolution() {
 		gbufferScale = 2.0
 		gbufferScaleI = 2
 	}
 
 	ssaoW := w
 	ssaoH := h
-	if s.lightHandler.SSAOHandler().HalfResolution() {
+	if s.ssaoHandler.HalfResolution() {
 		ssaoW = max(w/2, 1)
 		ssaoH = max(h/2, 1)
 	}
@@ -522,7 +536,7 @@ func (s *scene) PrepareSSAO() {
 	}
 
 	// Compute view-adaptive world-space radius from screen-space pixel radius.
-	screenRadius := s.lightHandler.SSAOHandler().ScreenRadius()
+	screenRadius := s.ssaoHandler.ScreenRadius()
 	camDist := float32(1.0)
 	if ctrl := s.cam.Controller(); ctrl != nil {
 		if d := ctrl.Radius(); d > 0 {
@@ -533,32 +547,32 @@ func (s *scene) PrepareSSAO() {
 	worldRadius := screenRadius * (2.0 * camDist * float32(math.Tan(float64(fov/2.0)))) / float32(ssaoH)
 
 	// Build and write SSAO uniform parameters.
-	ssaoParams := light.GPUSSAOParams{
+	ssaoParams := postprocessing.GPUSSAOParams{
 		Projection:     s.cam.ViewProjectionMatrix(),
 		InvViewProj:    invVP,
 		Radius:         worldRadius,
-		Bias:           s.lightHandler.SSAOHandler().Bias(),
-		Power:          s.lightHandler.SSAOHandler().Power(),
-		SampleCount:    uint32(s.lightHandler.SSAOHandler().SampleCount()),
+		Bias:           s.ssaoHandler.Bias(),
+		Power:          s.ssaoHandler.Power(),
+		SampleCount:    uint32(s.ssaoHandler.SampleCount()),
 		ScreenWidth:    float32(ssaoW),
 		ScreenHeight:   float32(ssaoH),
 		GBufferScale:   gbufferScale,
 		CameraPosition: camPos,
 	}
 
-	ssaoBGP := s.lightHandler.SSAOHandler().Bgp("ssao_compute")
-	blurHBGP := s.lightHandler.SSAOHandler().Bgp("ssao_blur_h")
-	blurVBGP := s.lightHandler.SSAOHandler().Bgp("ssao_blur_v")
+	ssaoBGP := s.ssaoHandler.Bgp("ssao_compute")
+	blurHBGP := s.ssaoHandler.Bgp("ssao_blur_h")
+	blurVBGP := s.ssaoHandler.Bgp("ssao_blur_v")
 
 	// Write SSAO params to the compute BGP uniform buffer.
-	hParams := light.GPUBlurParams{
+	hParams := postprocessing.GPUBlurParams{
 		Direction:    [2]int32{1, 0},
-		Radius:       int32(s.lightHandler.SSAOHandler().BlurRadius()),
+		Radius:       int32(s.ssaoHandler.BlurRadius()),
 		GBufferScale: gbufferScaleI,
 	}
-	vParams := light.GPUBlurParams{
+	vParams := postprocessing.GPUBlurParams{
 		Direction:    [2]int32{0, 1},
-		Radius:       int32(s.lightHandler.SSAOHandler().BlurRadius()),
+		Radius:       int32(s.ssaoHandler.BlurRadius()),
 		GBufferScale: gbufferScaleI,
 	}
 	s.r.WriteBuffers([]bind_group_provider.BufferWrite{
@@ -568,7 +582,7 @@ func (s *scene) PrepareSSAO() {
 	})
 
 	// Dispatch SSAO compute + bilateral blur.
-	ssaoWGX, ssaoWGY := s.computeWorkgroupSize2D(s.lightHandler.SSAOHandler().PipelineKey("ssao_compute"), 16, 16)
+	ssaoWGX, ssaoWGY := s.computeWorkgroupSize2D(s.ssaoHandler.PipelineKey("ssao_compute"), 16, 16)
 	workGroupsX := (uint32(ssaoW) + ssaoWGX - 1) / ssaoWGX
 	workGroupsY := (uint32(ssaoH) + ssaoWGY - 1) / ssaoWGY
 	wg := [3]uint32{workGroupsX, workGroupsY, 1}
@@ -576,13 +590,13 @@ func (s *scene) PrepareSSAO() {
 	// Each dispatch is a separate compute pass to ensure automatic GPU barriers
 	// between the SSAO compute output and the blur reads (READ-AFTER-WRITE).
 	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-		{PipelineKey: s.lightHandler.SSAOHandler().PipelineKey("ssao_compute"), Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ssaoBGP}}, WorkGroupCount: wg},
+		{PipelineKey: s.ssaoHandler.PipelineKey("ssao_compute"), Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ssaoBGP}}, WorkGroupCount: wg},
 	})
 	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-		{PipelineKey: s.lightHandler.SSAOHandler().PipelineKey("ssao_blur"), Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: blurHBGP}}, WorkGroupCount: wg},
+		{PipelineKey: s.ssaoHandler.PipelineKey("ssao_blur"), Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: blurHBGP}}, WorkGroupCount: wg},
 	})
 	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-		{PipelineKey: s.lightHandler.SSAOHandler().PipelineKey("ssao_blur"), Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: blurVBGP}}, WorkGroupCount: wg},
+		{PipelineKey: s.ssaoHandler.PipelineKey("ssao_blur"), Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: blurVBGP}}, WorkGroupCount: wg},
 	})
 }
 
@@ -640,7 +654,7 @@ func (s *scene) PrepareContactShadows() {
 
 	csBGP := csHandler.Bgp("contact_shadow_compute")
 	s.r.WriteBuffers([]bind_group_provider.BufferWrite{
-		{Provider: csBGP, Binding: 2, Offset: 0, Data: params.Marshal()},
+		{Provider: csBGP, Binding: 4, Offset: 0, Data: params.Marshal()},
 	})
 
 	csWGX, csWGY := s.computeWorkgroupSize2D(csHandler.PipelineKey("contact_shadow_compute"), 16, 16)
@@ -660,8 +674,8 @@ func (s *scene) PrepareSSR() {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	ssrHandler := s.lightHandler.SSRHandler()
-	compHandler := s.lightHandler.CompositionHandler()
+	ssrHandler := s.ssrHandler
+	compHandler := s.compositionHandler
 	if ssrHandler == nil || !ssrHandler.Enabled() || compHandler == nil || !compHandler.Enabled() || s.r == nil || s.cam == nil {
 		return
 	}
@@ -681,7 +695,7 @@ func (s *scene) PrepareSSR() {
 	}
 
 	// Build and write SSR uniform parameters.
-	ssrParams := light.GPUSSRParams{
+	ssrParams := postprocessing.GPUSSRParams{
 		Projection:      s.cam.ProjectionMatrix(),
 		InvProjection:   s.cam.InverseProjectionMatrix(),
 		View:            s.cam.ViewMatrix(),
@@ -800,7 +814,7 @@ func (s *scene) PrepareBloom() {
 	if s.lightHandler == nil || s.r == nil {
 		return
 	}
-	ch := s.lightHandler.CompositionHandler()
+	ch := s.compositionHandler
 	if ch == nil || !ch.Enabled() || !ch.BloomEnabled() || ch.BloomMipCount() <= 0 {
 		return
 	}
@@ -810,7 +824,7 @@ func (s *scene) PrepareBloom() {
 	// Write bloom params for each downsample BGP.
 	writes := make([]bind_group_provider.BufferWrite, mipCount)
 	for i := 0; i < mipCount; i++ {
-		params := light.GPUBloomParams{}
+		params := postprocessing.GPUBloomParams{}
 		if i == 0 {
 			params.Threshold = ch.BloomThreshold()
 		}
@@ -861,17 +875,134 @@ func (s *scene) PrepareBloom() {
 	s.r.EndComputeFrame()
 }
 
+func (s *scene) PrepareTAA() {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	s.prepareTAA()
+}
+
+func (s *scene) prepareTAA() {
+	if s.lightHandler == nil || s.cam == nil {
+		return
+	}
+	taaH := s.taaHandler
+	if taaH == nil || !taaH.Enabled() {
+		return
+	}
+
+	// Halton sequence for sub-pixel jitter (base 2 for X, base 3 for Y).
+	// Returns value in [-0.5, 0.5] pixel space, then converted to NDC.
+	halton := func(index uint64, base uint64) float32 {
+		var result float64
+		f := 1.0 / float64(base)
+		i := index
+		for i > 0 {
+			result += f * float64(i%base)
+			i /= base
+			f /= float64(base)
+		}
+		return float32(result - 0.5) // center around 0
+	}
+
+	// Wrap the Halton sequence at N=8 per Yang et al. [YNS*09] §3.1 recommendation.
+	// UE4 uses an 8-sample Halton(2,3) sequence by default. Bounded wrapping ensures
+	// all 8 sub-pixel positions are evenly covered each cycle regardless of frame count,
+	// and avoids floating-point precision issues in the Halton computation at high indices.
+	nextIdx := (taaH.FrameIndex() + 1) % 8
+	jitterScale := taaH.JitterScale()
+	jx := halton(nextIdx, 2) * jitterScale
+	jy := halton(nextIdx, 3) * jitterScale
+	taaH.AdvanceFrame(jx, jy)
+
+	// Convert pixel jitter to projection-matrix NDC element units.
+	sw := float32(taaH.ScreenWidth())
+	sh := float32(taaH.ScreenHeight())
+	var ndcX, ndcY float32
+	if sw > 0 {
+		ndcX = jx * 2.0 / sw
+	}
+	if sh > 0 {
+		ndcY = jy * 2.0 / sh
+	}
+
+	// Schedule the jitter for the NEXT frame's cam.Update().
+	s.cam.SetJitter(ndcX, ndcY)
+
+	// Build GPUTAAParams from the camera's CURRENT (jittered) matrices.
+	// currVP reflects the jittered VP for the current frame (applied last frame's prepareTAA jitter).
+	// prevVP reflects the jittered VP that was active in the previous frame.
+	currVP := s.cam.ViewProjectionMatrix()
+	var invCurrVP [16]float32
+	common.Invert4(invCurrVP[:], currVP[:])
+	rawHistoryOnly := float32(0.0)
+	if taaH.RawHistoryOnly() {
+		rawHistoryOnly = 1.0
+	}
+
+	params := postprocessing.GPUTAAParams{
+		InvCurrViewProj:           invCurrVP,
+		PrevViewProj:              s.cam.PrevViewProjectionMatrix(),
+		JitterCurr:                [2]float32{taaH.JitterX(), taaH.JitterY()},
+		JitterPrev:                [2]float32{taaH.PrevJitterX(), taaH.PrevJitterY()},
+		ScreenWidth:               float32(taaH.ScreenWidth()),
+		ScreenHeight:              float32(taaH.ScreenHeight()),
+		BlendFactor:               taaH.BlendFactor(),
+		HistoryRectificationScale: taaH.HistoryRectificationScale(),
+		RawHistoryOnly:            rawHistoryOnly,
+	}
+
+	// Select the active slot's BGP using the renderer's current frame slot.
+	slot := s.r.CurrentFrameSlot()
+
+	bgpKey := "taa_resolve_0"
+	if slot == 1 {
+		bgpKey = "taa_resolve_1"
+	}
+	bgp := taaH.Bgp(bgpKey)
+
+	s.r.WriteBuffers([]bind_group_provider.BufferWrite{
+		{Provider: bgp, Binding: 0, Offset: 0, Data: params.Marshal()},
+	})
+
+	w := uint32(taaH.ScreenWidth())
+	h := uint32(taaH.ScreenHeight())
+	wgX := (w + 7) / 8
+	wgY := (h + 7) / 8
+
+	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+		{
+			PipelineKey:    taaH.PipelineKey("taa_resolve"),
+			Providers:      []renderer.ComputeGroupProvider{{Group: 0, Provider: bgp}},
+			WorkGroupCount: [3]uint32{wgX, wgY, 1},
+		},
+	})
+
+	casBGPKey := "taa_sharpen_0"
+	if slot == 1 {
+		casBGPKey = "taa_sharpen_1"
+	}
+	casBGP := taaH.Bgp(casBGPKey)
+
+	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+		{
+			PipelineKey:    taaH.PipelineKey("taa_sharpen"),
+			Providers:      []renderer.ComputeGroupProvider{{Group: 0, Provider: casBGP}},
+			WorkGroupCount: [3]uint32{wgX, wgY, 1},
+		},
+	})
+}
+
 func (s *scene) PrepareComposition() {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	compHandler := s.lightHandler.CompositionHandler()
+	compHandler := s.compositionHandler
 	if compHandler == nil || !compHandler.Enabled() || s.r == nil {
 		return
 	}
 
 	// Write composition params uniform.
-	compParams := light.GPUCompositionParams{
+	compParams := postprocessing.GPUCompositionParams{
 		Exposure: compHandler.Exposure(),
 	}
 	if compHandler.ToneMappingEnabled() {
@@ -908,7 +1039,7 @@ func (s *scene) BeginHDRFrame() error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	ch := s.lightHandler.CompositionHandler()
+	ch := s.compositionHandler
 	if ch == nil || !ch.Enabled() || s.r == nil {
 		return fmt.Errorf("scene %q: composition not initialized", s.name)
 	}
@@ -1819,6 +1950,9 @@ func (s *scene) AddGameObject(obj game_object.GameObject, pipelineOpts ...pipeli
 
 	// Push initial transform data from the GameObject into the animator slot
 	anim.SetInstanceData(idx, pos, scale, rotSpeed, rot)
+	if obj.ContactShadowExcluded() {
+		anim.SetInstanceFlags(idx, animator.InstanceFlagContactShadowExcluded)
+	}
 
 	// Update reverse-index so Remove() can find the swapped object in O(1).
 	if s.instanceLookup[anim] == nil {
@@ -1971,9 +2105,12 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 	hiZMipCount := 0
 	projX := float32(0)
 	if s.lightHandler != nil {
-		if ssrHandler := s.lightHandler.SSRHandler(); ssrHandler != nil {
+		if ssrHandler := s.ssrHandler; ssrHandler != nil {
 			hiZMipCount = ssrHandler.HiZMipCount()
 		}
+	}
+	if s.debugDisableAnimatorHiZOcclusion {
+		hiZMipCount = 0
 	}
 	projMat := s.cam.ProjectionMatrix()
 	projX = projMat[0]

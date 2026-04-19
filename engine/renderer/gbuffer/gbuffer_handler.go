@@ -1,4 +1,4 @@
-package light
+package gbuffer
 
 import (
 	"github.com/cogentcore/webgpu/wgpu"
@@ -17,141 +17,66 @@ import (
 type GBufferHandler interface {
 	// Enabled returns whether the G-Buffer subsystem has been GPU-initialized
 	// and is ready for rendering.
-	//
-	// Returns:
-	//   - bool: true if G-Buffer GPU resources have been initialized
 	Enabled() bool
 
 	// SetEnabled sets whether the G-Buffer subsystem is GPU-initialized.
-	//
-	// Parameters:
-	//   - enabled: true to mark as initialized
 	SetEnabled(enabled bool)
 
-	// SetSlot selects the active texture slot. Texture and view getters and
-	// setters read and write the [slot] index of the underlying arrays.
-	//
-	// Parameters:
-	//   - slot: the slot index (0 or 1)
+	// SetSlot selects the active texture slot.
 	SetSlot(slot int)
 
 	// ScreenWidth returns the current screen width in pixels used for texture sizing.
-	//
-	// Returns:
-	//   - int: the screen width
 	ScreenWidth() int
 
 	// ScreenHeight returns the current screen height in pixels used for texture sizing.
-	//
-	// Returns:
-	//   - int: the screen height
 	ScreenHeight() int
 
 	// PipelineKey retrieves the pipeline key associated with the given name.
-	// Returns an empty string if the name does not exist.
-	//
-	// Parameters:
-	//   - name: the pipeline name
-	//
-	// Returns:
-	//   - string: the pipeline key, or empty if not found
 	PipelineKey(name string) string
 
 	// PipelineKeys returns the full map of pipeline keys.
-	//
-	// Returns:
-	//   - map[string]string: all registered pipeline name-to-key mappings
 	PipelineKeys() map[string]string
 
 	// SetPipelineKey stores a pipeline key under the given name.
-	//
-	// Parameters:
-	//   - name: the pipeline name
-	//   - key: the pipeline key
 	SetPipelineKey(name, key string)
 
-	// NormalTexture returns the RGBA16Float texture storing world-space
-	// normals (XYZ packed to [0,1]) and roughness (W).
-	//
-	// Returns:
-	//   - *wgpu.Texture: the normal texture, or nil if not initialized
+	// NormalTexture returns the RGBA16Float texture storing world-space normals and roughness.
 	NormalTexture() *wgpu.Texture
 
 	// SetNormalTexture sets the normal MRT texture.
-	//
-	// Parameters:
-	//   - t: the normal texture
 	SetNormalTexture(t *wgpu.Texture)
 
 	// NormalTextureView returns the texture view for the normal texture.
-	//
-	// Returns:
-	//   - *wgpu.TextureView: the normal texture view, or nil if not initialized
 	NormalTextureView() *wgpu.TextureView
 
 	// SetNormalTextureView sets the texture view for the normal texture.
-	//
-	// Parameters:
-	//   - tv: the normal texture view
 	SetNormalTextureView(tv *wgpu.TextureView)
 
-	// AlbedoTexture returns the RGBA8Unorm texture storing albedo (RGB)
-	// and metallic (A).
-	//
-	// Returns:
-	//   - *wgpu.Texture: the albedo texture, or nil if not initialized
+	// AlbedoTexture returns the RGBA8Unorm texture storing albedo and metallic.
 	AlbedoTexture() *wgpu.Texture
 
 	// SetAlbedoTexture sets the albedo MRT texture.
-	//
-	// Parameters:
-	//   - t: the albedo texture
 	SetAlbedoTexture(t *wgpu.Texture)
 
 	// AlbedoTextureView returns the texture view for the albedo texture.
-	//
-	// Returns:
-	//   - *wgpu.TextureView: the albedo texture view, or nil if not initialized
 	AlbedoTextureView() *wgpu.TextureView
 
 	// SetAlbedoTextureView sets the texture view for the albedo texture.
-	//
-	// Parameters:
-	//   - tv: the albedo texture view
 	SetAlbedoTextureView(tv *wgpu.TextureView)
 
-	// DepthTexture returns the Depth24Plus texture used for depth testing
-	// during the G-Buffer pass.
-	//
-	// Returns:
-	//   - *wgpu.Texture: the depth texture, or nil if not initialized
+	// DepthTexture returns the Depth24Plus texture used for depth testing.
 	DepthTexture() *wgpu.Texture
 
 	// SetDepthTexture sets the depth texture for the G-Buffer pass.
-	//
-	// Parameters:
-	//   - t: the depth texture
 	SetDepthTexture(t *wgpu.Texture)
 
 	// DepthTextureView returns the texture view for the G-Buffer depth texture.
-	//
-	// Returns:
-	//   - *wgpu.TextureView: the depth texture view, or nil if not initialized
 	DepthTextureView() *wgpu.TextureView
 
 	// SetDepthTextureView sets the texture view for the G-Buffer depth texture.
-	//
-	// Parameters:
-	//   - tv: the depth texture view
 	SetDepthTextureView(tv *wgpu.TextureView)
 
-	// Resize updates the screen dimensions for texture sizing. Existing
-	// textures are not automatically recreated — call the appropriate texture
-	// creation method if the dimensions change while the handler is enabled.
-	//
-	// Parameters:
-	//   - width: the new screen width in pixels
-	//   - height: the new screen height in pixels
+	// Resize updates the screen dimensions for texture sizing.
 	Resize(width, height int)
 }
 

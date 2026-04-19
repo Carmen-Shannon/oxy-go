@@ -405,6 +405,7 @@ fn fs_main(in: FragmentInput) -> @location(0) vec4<f32> {
 
     // Sample screen-space ambient occlusion from the blurred SSAO texture.
     let screen_uv = in.position.xy / vec2<f32>(f32(tile_uniforms.screen_width), f32(tile_uniforms.screen_height));
+    let contact_shadow = textureSample(contact_shadow_texture, contact_shadow_sampler, screen_uv).r;
     let ao = textureSample(ssao_texture, ssao_sampler, screen_uv).r;
 
     var total_light = albedo * (light_header.ambient_color * ao);
@@ -417,8 +418,7 @@ fn fs_main(in: FragmentInput) -> @location(0) vec4<f32> {
 
         if light.light_type == LIGHT_TYPE_DIRECTIONAL && light.casts_shadows == 1u {
             contribution *= sample_shadow_csm(in.world_position, normal, light.direction, cam_depth);
-            let contact = textureSample(contact_shadow_texture, contact_shadow_sampler, screen_uv).r;
-            contribution *= contact;
+            contribution *= contact_shadow;
         }
 
         if light.light_type == LIGHT_TYPE_SPOT && light.shadow_index != 0xFFFFFFFFu {
@@ -434,6 +434,5 @@ fn fs_main(in: FragmentInput) -> @location(0) vec4<f32> {
         total_light += contribution;
     }
 
-    let final_color = total_light;
-    return vec4<f32>(final_color, tex_color.a * in.color.a);
+    return vec4<f32>(total_light, tex_color.a);
 }

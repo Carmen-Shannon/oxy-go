@@ -48,6 +48,11 @@ func (suite *gameObjectTest) TestNewGameObject() {
 		)
 		suite.NotNil(obj)
 	})
+	suite.Run("should apply the contact-shadow exclusion option and keep the default animator instance id", func() {
+		obj := game_object.NewGameObject(game_object.WithContactShadowExcluded(true))
+		suite.True(obj.ContactShadowExcluded())
+		suite.Equal(0, obj.AnimatorInstanceID())
+	})
 }
 
 func (suite *gameObjectTest) TestID() {
@@ -144,6 +149,31 @@ func (suite *gameObjectTest) TestSetRigidBody() {
 	suite.Run("should update the attached rigid body", func() {
 		suite.obj.SetRigidBody(suite.rigidBodyMock)
 		suite.Equal(suite.rigidBodyMock, suite.obj.RigidBody())
+	})
+}
+
+func (suite *gameObjectTest) TestContactShadowExcluded() {
+	suite.Run("should return false by default", func() {
+		suite.False(suite.obj.ContactShadowExcluded())
+	})
+
+	suite.Run("should update the contact-shadow exclusion flag", func() {
+		suite.obj.SetContactShadowExcluded(true)
+		suite.True(suite.obj.ContactShadowExcluded())
+
+		suite.obj.SetContactShadowExcluded(false)
+		suite.False(suite.obj.ContactShadowExcluded())
+	})
+
+	suite.Run("should update the flag without querying the animator", func() {
+		suite.obj.SetAnimator(suite.animatorMock)
+		suite.obj.SetAnimatorInstanceID(7)
+
+		suite.obj.SetContactShadowExcluded(true)
+		suite.True(suite.obj.ContactShadowExcluded())
+
+		suite.obj.SetContactShadowExcluded(false)
+		suite.False(suite.obj.ContactShadowExcluded())
 	})
 }
 

@@ -23,12 +23,12 @@ struct VertexOutput {
 
 // ── Per-instance data layout in flat vec4 storage ──────────────────
 // The compute shader writes each instance as a flat sequence of vec4<f32>:
-//   [model_matrix: 4 vec4] [bone_0: 4 vec4] [bone_1: 4 vec4] ... [bone_(MAX_BONES-1): 4 vec4]
-// Total per instance: (1 + MAX_BONES) × 4 vec4 = 260 vec4 = 4160 bytes.
+//   [model_matrix: 4 vec4] [instance_flags: 1 vec4] [bone_0: 4 vec4] [bone_1: 4 vec4] ... [bone_(MAX_BONES-1): 4 vec4]
+// Total per instance: 5 vec4 header entries + 4 vec4 per bone matrix.
 // We use a flat runtime-sized array of vec4 instead of a struct with a
 // fixed-size array because naga forbids dynamic indexing into fixed-size
 // arrays inside structs.
-const FLOATS_PER_INSTANCE: u32 = (1u + MAX_BONES) * 4u; // 260 vec4 per instance
+const FLOATS_PER_INSTANCE: u32 = 5u + MAX_BONES * 4u;
 
 //@oxy:group 0 0 storage_uniform camera camera
 //@oxy:provider 1 0 animator
@@ -54,9 +54,9 @@ fn vs_main(
     // Model matrix is the first 4 vec4 entries.
     let model_matrix = read_mat4(base);
 
-    // Bone matrices start right after the model matrix.
+    // Bone matrices start right after the model matrix and instance flag slot.
     // Each bone occupies 4 consecutive vec4 entries.
-    let bone_base = base + 4u;
+    let bone_base = base + 5u;
 
     // Blend up to 4 bone influences into a single skinning matrix.
     // Bone weights are normalised by the importer so they sum to 1.0.

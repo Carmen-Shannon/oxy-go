@@ -8,15 +8,19 @@ import (
 )
 
 // GPUInstanceDataSource is the canonical WGSL definition of the InstanceData struct.
-// Matches GPUInstanceData layout exactly (64 bytes, std430 aligned).
+// Matches GPUInstanceData layout exactly (80 bytes, std430 aligned).
 //
 //go:embed assets/instance-data.wgsl
 var GPUInstanceDataSource string
 
 // GPUInstanceData is the GPU-aligned representation of per-instance data for models.
-// Size: 64 bytes (std430 aligned).
+// Size: 80 bytes (std430 aligned).
 type GPUInstanceData struct {
-	Model [16]float32 // offset 0, size 64 (mat4x4<f32>)
+	Model         [16]float32 // offset 0, size 64 (mat4x4<f32>)
+	InstanceFlags uint32      // offset 64, size 4 (u32)
+	_pad0         uint32      // offset 68, size 4
+	_pad1         uint32      // offset 72, size 4
+	_pad2         uint32      // offset 76, size 4
 }
 
 // Size returns the size of the GPUInstanceData struct in bytes.
@@ -30,12 +34,16 @@ func (g *GPUInstanceData) Size() int {
 // Marshal serializes the GPUInstanceData struct into a byte buffer suitable for GPU upload.
 //
 // Returns:
-//   - []byte: 64-byte buffer ready for GPU upload.
+//   - []byte: 80-byte buffer ready for GPU upload.
 func (g *GPUInstanceData) Marshal() []byte {
 	buf := make([]byte, g.Size())
 	for i := range 16 {
 		binary.LittleEndian.PutUint32(buf[i*4:(i+1)*4], math.Float32bits(g.Model[i]))
 	}
+	binary.LittleEndian.PutUint32(buf[64:68], g.InstanceFlags)
+	binary.LittleEndian.PutUint32(buf[68:72], 0)
+	binary.LittleEndian.PutUint32(buf[72:76], 0)
+	binary.LittleEndian.PutUint32(buf[76:80], 0)
 	return buf
 }
 
@@ -49,14 +57,14 @@ var GPUAnimationDataSource string
 // Matches the WGSL AnimationData struct layout exactly (see GPUAnimationDataSource).
 // Size: 64 bytes (16 floats = 4 × vec4, std430 aligned).
 type GPUAnimationData struct {
-	RotSpeed [3]float32 // offset 0: rotation speed around X, Y, Z axes (radians per frame)
-	_pad0    float32    // offset 12: implicit vec3 pad
-	Rot      [3]float32 // offset 16: current rotation angles around X, Y, Z axes
-	_pad1    float32    // offset 28: implicit vec3 pad
-	Pos      [3]float32 // offset 32: position X, Y, Z
-	_pad2    float32    // offset 44: implicit vec3 pad
-	Scale    [3]float32 // offset 48: scale X, Y, Z
-	_pad3    float32    // offset 60: implicit vec3 pad
+	RotSpeed      [3]float32 // offset 0: rotation speed around X, Y, Z axes (radians per frame)
+	_pad0         float32    // offset 12: implicit vec3 pad
+	Rot           [3]float32 // offset 16: current rotation angles around X, Y, Z axes
+	_pad1         float32    // offset 28: implicit vec3 pad
+	Pos           [3]float32 // offset 32: position X, Y, Z
+	_pad2         float32    // offset 44: implicit vec3 pad
+	Scale         [3]float32 // offset 48: scale X, Y, Z
+	InstanceFlags uint32     // offset 60: renderer-visible per-instance flags
 }
 
 // Size returns the size of the GPUAnimationData struct in bytes.
@@ -88,7 +96,7 @@ func (g *GPUAnimationData) Marshal() []byte {
 	binary.LittleEndian.PutUint32(buf[48:52], math.Float32bits(g.Scale[0]))
 	binary.LittleEndian.PutUint32(buf[52:56], math.Float32bits(g.Scale[1]))
 	binary.LittleEndian.PutUint32(buf[56:60], math.Float32bits(g.Scale[2]))
-	binary.LittleEndian.PutUint32(buf[60:64], 0) // _pad3
+	binary.LittleEndian.PutUint32(buf[60:64], g.InstanceFlags)
 	return buf
 }
 
@@ -495,7 +503,7 @@ func (g *GPUClipHeader) Marshal() []byte {
 }
 
 // GPUSkeletalAnimationDataSource is the canonical WGSL definition of the SkeletalAnimationData struct.
-// Matches GPUSkeletalAnimationData layout exactly (48 bytes, std430 aligned).
+// Matches GPUSkeletalAnimationData layout exactly (32 bytes, std430 aligned).
 //
 //go:embed assets/skeletal-animation-data.wgsl
 var GPUSkeletalAnimationDataSource string
@@ -510,17 +518,19 @@ var GPUSkeletalAnimationDataSource string
 //	blend_weight:         f32       offset  8
 //	secondary_anim_index: u32       offset 12
 //	secondary_anim_time:  f32       offset 16
-//	_pad:                 vec3<f32> offset 32 (align 16 → gap 20..31)
-//	struct align = 16, struct size = roundUp(16, 44) = 48
+//	instance_flags:       u32       offset 20
+//	_pad:                 vec2<f32> offset 24
+//	struct align = 8, struct size = 32
 //
-// Size: 48 bytes.
+// Size: 32 bytes.
 type GPUSkeletalAnimationData struct {
 	AnimationIndex     uint32     // offset 0: index of the primary animation clip
 	AnimationTime      float32    // offset 4: current playback time of the primary clip
 	BlendWeight        float32    // offset 8: blend weight between primary and secondary (0.0 = primary, 1.0 = secondary)
 	SecondaryAnimIndex uint32     // offset 12: index of the secondary animation clip for blending
 	SecondaryAnimTime  float32    // offset 16: current playback time of the secondary clip
-	_pad               [7]float32 // offset 20: padding to reach WGSL struct size of 48 bytes
+	InstanceFlags      uint32     // offset 20: renderer-visible per-instance flags
+	_pad               [2]float32 // offset 24: padding to reach WGSL struct size of 32 bytes
 }
 
 // Size returns the size of the GPUSkeletalAnimationData struct in bytes.
@@ -534,7 +544,7 @@ func (g *GPUSkeletalAnimationData) Size() int {
 // Marshal serializes the GPUSkeletalAnimationData struct into a byte buffer suitable for GPU upload.
 //
 // Returns:
-//   - []byte: 48-byte buffer ready for GPU upload.
+//   - []byte: 32-byte buffer ready for GPU upload.
 func (g *GPUSkeletalAnimationData) Marshal() []byte {
 	buf := make([]byte, g.Size())
 	binary.LittleEndian.PutUint32(buf[0:4], g.AnimationIndex)
@@ -542,8 +552,8 @@ func (g *GPUSkeletalAnimationData) Marshal() []byte {
 	binary.LittleEndian.PutUint32(buf[8:12], math.Float32bits(g.BlendWeight))
 	binary.LittleEndian.PutUint32(buf[12:16], g.SecondaryAnimIndex)
 	binary.LittleEndian.PutUint32(buf[16:20], math.Float32bits(g.SecondaryAnimTime))
-	for i := range 7 {
-		binary.LittleEndian.PutUint32(buf[20+i*4:24+i*4], 0) // _pad
-	}
+	binary.LittleEndian.PutUint32(buf[20:24], g.InstanceFlags)
+	binary.LittleEndian.PutUint32(buf[24:28], 0)
+	binary.LittleEndian.PutUint32(buf[28:32], 0)
 	return buf
 }

@@ -258,7 +258,14 @@ func (e *engine) handleRender() {
 								s.PrepareBloom()
 							}
 							stopPrepareBloom()
-
+							stopPrepareTAA := func() {}
+							if e.profilingEnabled && e.profiler != nil {
+								stopPrepareTAA = e.profiler.Section("PrepareTAA")
+							}
+							for _, s := range activeScenes {
+								s.PrepareTAA()
+							}
+							stopPrepareTAA()
 							frameRenderer.EndComputeFrame()
 						}
 
