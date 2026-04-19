@@ -9,6 +9,7 @@ import (
 	game_object_mocks "github.com/Carmen-Shannon/oxy-go/engine/game_object/mocks"
 	"github.com/Carmen-Shannon/oxy-go/engine/physics"
 	renderer_mocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/mocks"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
@@ -333,5 +334,26 @@ func (suite *sceneTest) TestBeginHDRFrame() {
 		err := suite.scene.BeginHDRFrame()
 		suite.Error(err)
 		suite.True(strings.Contains(err.Error(), "composition not initialized"))
+	})
+}
+
+func (suite *sceneTest) TestPrepareTAA() {
+	suite.Run("no-ops without panic when taa not enabled", func() {
+		suite.NotPanics(func() {
+			suite.scene.PrepareTAA()
+		})
+	})
+}
+
+func (suite *sceneTest) TestWithTAAHandler() {
+	suite.Run("does not panic when setting a custom taa handler", func() {
+		cam := camera_mocks.NewMockCamera(suite.T())
+		cam.EXPECT().BindGroupProvider().Return(nil).Maybe()
+		r := renderer_mocks.NewMockRenderer(suite.T())
+		r.EXPECT().SetInjections(mock.Anything).Return().Maybe()
+		r.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0, nil).Maybe()
+		handler := postprocessing.NewTAAHandler(postprocessing.WithTAAScreenSize(800, 600))
+		s := scene.NewScene("taa-test", cam, r, scene.WithTAAHandler(handler))
+		suite.NotNil(s)
 	})
 }

@@ -778,6 +778,28 @@ func (suite *rendererImplTest) TestCreateHiZTextures() {
 	})
 }
 
+func (suite *rendererImplTest) TestCreateTAATextures() {
+	suite.Run("should delegate to the backend and return results", func() {
+		suite.backendMock.EXPECT().CreateTAATextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, nil).Once()
+		view0, tex0, view1, tex1, err := suite.r.CreateTAATextures(1920, 1080)
+		suite.NoError(err)
+		suite.Nil(view0)
+		suite.Nil(tex0)
+		suite.Nil(view1)
+		suite.Nil(tex1)
+	})
+}
+
+func (suite *rendererImplTest) TestCreateSharpenTexture() {
+	suite.Run("should delegate to the backend and return results", func() {
+		suite.backendMock.EXPECT().CreateSharpenTexture(mock.Anything, mock.Anything).Return(nil, nil, nil).Once()
+		view, tex, err := suite.r.CreateSharpenTexture(1920, 1080)
+		suite.NoError(err)
+		suite.Nil(view)
+		suite.Nil(tex)
+	})
+}
+
 // --- Builder option functions ---
 
 func (suite *rendererImplTest) TestWithPipeline() {

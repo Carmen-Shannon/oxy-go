@@ -48,6 +48,13 @@ func (suite *taaHandlerTest) TestNewTAAHandler() {
 		)
 		suite.Equal(float32(0.5), h.JitterScale())
 	})
+
+	suite.Run("should apply history rectification scale option", func() {
+		h := postprocessing.NewTAAHandler(
+			postprocessing.WithTAAHistoryRectificationScale(2.0),
+		)
+		suite.Equal(float32(2.0), h.HistoryRectificationScale())
+	})
 }
 
 func (suite *taaHandlerTest) TestAdvanceFrame() {
@@ -158,5 +165,38 @@ func (suite *taaHandlerTest) TestJitterScale() {
 	suite.Run("should allow setting jitter scale to zero", func() {
 		suite.handler.SetJitterScale(0)
 		suite.Equal(float32(0), suite.handler.JitterScale())
+	})
+}
+
+func (suite *taaHandlerTest) TestRawHistoryOnly() {
+	suite.Run("should default to false", func() {
+		suite.False(suite.handler.RawHistoryOnly())
+	})
+
+	suite.Run("should return true after setting to true", func() {
+		suite.handler.SetRawHistoryOnly(true)
+		suite.True(suite.handler.RawHistoryOnly())
+	})
+
+	suite.Run("should return false after setting back to false", func() {
+		suite.handler.SetRawHistoryOnly(true)
+		suite.handler.SetRawHistoryOnly(false)
+		suite.False(suite.handler.RawHistoryOnly())
+	})
+}
+
+func (suite *taaHandlerTest) TestHistoryRectificationScale() {
+	suite.Run("should default to 1.0", func() {
+		suite.Equal(float32(1.0), suite.handler.HistoryRectificationScale())
+	})
+
+	suite.Run("should update via SetHistoryRectificationScale", func() {
+		suite.handler.SetHistoryRectificationScale(2.5)
+		suite.Equal(float32(2.5), suite.handler.HistoryRectificationScale())
+	})
+
+	suite.Run("should allow setting to zero", func() {
+		suite.handler.SetHistoryRectificationScale(0)
+		suite.Equal(float32(0), suite.handler.HistoryRectificationScale())
 	})
 }

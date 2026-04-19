@@ -83,6 +83,31 @@ func (suite *gpuTypesTest) TestGPUTAAParams() {
 		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[156:160])) // HistoryRectificationScale (0)
 		suite.Equal(uint32(0), binary.LittleEndian.Uint32(buf[160:164])) // RawHistoryOnly (0)
 	})
+
+	suite.Run("Marshal should encode non-zero HistoryRectificationScale and RawHistoryOnly", func() {
+		var inv [16]float32
+		var prev [16]float32
+		for i := range inv {
+			inv[i] = float32(i + 1)
+			prev[i] = float32(i + 17)
+		}
+
+		p := &postprocessing.GPUTAAParams{
+			InvCurrViewProj:           inv,
+			PrevViewProj:              prev,
+			JitterCurr:                [2]float32{0.25, -0.5},
+			JitterPrev:                [2]float32{-0.125, 0.75},
+			ScreenWidth:               1920,
+			ScreenHeight:              1080,
+			BlendFactor:               0.1,
+			HistoryRectificationScale: 2.5,
+			RawHistoryOnly:            1.0,
+		}
+		buf := p.Marshal()
+		suite.Equal(176, len(buf))
+		suite.Equal(math.Float32bits(2.5), binary.LittleEndian.Uint32(buf[156:160]))
+		suite.Equal(math.Float32bits(1.0), binary.LittleEndian.Uint32(buf[160:164]))
+	})
 }
 
 func (suite *gpuTypesTest) TestGPUSSAOParams() {

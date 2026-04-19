@@ -15173,3 +15173,315 @@ func (suite *sceneImplTest) TestResizePostProcessingSSRCompositionCombinedPanic(
 		suite.Panics(func() { suite.scene.resizePostProcessing(800, 600) })
 	})
 }
+
+func (suite *sceneImplTest) TestInitTAA() {
+	makeBase := func() (*gbuffer_mocks.MockGBufferHandler, *postprocessing_mocks.MockCompositionHandler) {
+		gbMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
+		compMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		suite.scene.gBufferHandler = gbMock
+		suite.scene.compositionHandler = compMock
+		suite.scene.screenWidth = 800
+		suite.scene.screenHeight = 600
+		compMock.EXPECT().LuminanceWorkgroupSize().Return(256).Maybe()
+		suite.scene.buildInjectionMap()
+		gbMock.EXPECT().Enabled().Return(true).Maybe()
+		compMock.EXPECT().Enabled().Return(true).Maybe()
+		gbMock.EXPECT().SetSlot(mock.Anything).Maybe()
+		gbMock.EXPECT().DepthTextureView().Return(&wgpu.TextureView{}).Maybe()
+		compMock.EXPECT().SetSlot(mock.Anything).Maybe()
+		compMock.EXPECT().HDRTextureView().Return(&wgpu.TextureView{}).Maybe()
+		return gbMock, compMock
+	}
+
+	makeCreates := func() {
+		suite.rendererMock.EXPECT().CreateTAATextures(800, 600).Return(
+			&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil,
+		).Once()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateSharpenTexture(800, 600).Return(
+			&wgpu.TextureView{}, &wgpu.Texture{}, nil,
+		).Once()
+	}
+
+	suite.Run("taaHandler nil returns early", func() {
+		suite.scene.taaHandler = nil
+		suite.NotPanics(func() { suite.scene.initTAA() })
+	})
+
+	suite.Run("gbHandler nil returns early", func() {
+		suite.scene.gBufferHandler = nil
+		suite.NotPanics(func() { suite.scene.initTAA() })
+	})
+
+	suite.Run("compHandler nil returns early", func() {
+		suite.scene.compositionHandler = nil
+		suite.NotPanics(func() { suite.scene.initTAA() })
+	})
+
+	suite.Run("gbHandler not enabled returns early", func() {
+		gbMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
+		compMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		suite.scene.gBufferHandler = gbMock
+		suite.scene.compositionHandler = compMock
+		gbMock.EXPECT().Enabled().Return(false).Once()
+		suite.NotPanics(func() { suite.scene.initTAA() })
+		_ = compMock
+	})
+
+	suite.Run("compHandler not enabled returns early", func() {
+		gbMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
+		compMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		suite.scene.gBufferHandler = gbMock
+		suite.scene.compositionHandler = compMock
+		gbMock.EXPECT().Enabled().Return(true).Once()
+		compMock.EXPECT().Enabled().Return(false).Once()
+		suite.NotPanics(func() { suite.scene.initTAA() })
+	})
+
+	suite.Run("zero screenWidth returns early", func() {
+		gbMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
+		compMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		suite.scene.gBufferHandler = gbMock
+		suite.scene.compositionHandler = compMock
+		gbMock.EXPECT().Enabled().Return(true).Once()
+		compMock.EXPECT().Enabled().Return(true).Once()
+		suite.scene.screenWidth = 0
+		suite.scene.screenHeight = 600
+		suite.NotPanics(func() { suite.scene.initTAA() })
+	})
+
+	suite.Run("zero screenHeight returns early", func() {
+		gbMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
+		compMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		suite.scene.gBufferHandler = gbMock
+		suite.scene.compositionHandler = compMock
+		gbMock.EXPECT().Enabled().Return(true).Once()
+		compMock.EXPECT().Enabled().Return(true).Once()
+		suite.scene.screenWidth = 800
+		suite.scene.screenHeight = 0
+		suite.NotPanics(func() { suite.scene.initTAA() })
+	})
+
+	suite.Run("CreateTAATextures error panics", func() {
+		makeBase()
+		suite.rendererMock.EXPECT().CreateTAATextures(800, 600).Return(
+			nil, nil, nil, nil, errors.New("tex fail"),
+		).Once()
+		suite.Panics(func() { suite.scene.initTAA() })
+	})
+
+	suite.Run("CreateLinearSampler error panics", func() {
+		makeBase()
+		suite.rendererMock.EXPECT().CreateTAATextures(800, 600).Return(
+			&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil,
+		).Once()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return(nil, errors.New("samp fail")).Once()
+		suite.Panics(func() { suite.scene.initTAA() })
+	})
+
+	suite.Run("CreateSharpenTexture error panics", func() {
+		makeBase()
+		suite.rendererMock.EXPECT().CreateTAATextures(800, 600).Return(
+			&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil,
+		).Once()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateSharpenTexture(800, 600).Return(
+			nil, nil, errors.New("sharp fail"),
+		).Once()
+		suite.Panics(func() { suite.scene.initTAA() })
+	})
+
+	suite.Run("RegisterPipelines resolve error panics", func() {
+		makeBase()
+		makeCreates()
+		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(errors.New("resolve pipe fail")).Once()
+		suite.Panics(func() { suite.scene.initTAA() })
+	})
+
+	suite.Run("RegisterPipelines sharpen error panics", func() {
+		makeBase()
+		makeCreates()
+		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Once()
+		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(errors.New("sharpen pipe fail")).Once()
+		suite.Panics(func() { suite.scene.initTAA() })
+	})
+
+	suite.Run("InitBindGroup resolve slot 0 error panics", func() {
+		makeBase()
+		makeCreates()
+		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Twice()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("bgp0 fail")).Once()
+		suite.Panics(func() { suite.scene.initTAA() })
+	})
+
+	suite.Run("InitBindGroup resolve slot 1 error panics", func() {
+		makeBase()
+		makeCreates()
+		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Twice()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("bgp1 fail")).Once()
+		suite.Panics(func() { suite.scene.initTAA() })
+	})
+
+	suite.Run("InitBindGroup CAS slot 0 error panics", func() {
+		makeBase()
+		makeCreates()
+		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Twice()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Twice()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("cas0 fail")).Once()
+		suite.Panics(func() { suite.scene.initTAA() })
+	})
+
+	suite.Run("InitBindGroup CAS slot 1 error panics", func() {
+		makeBase()
+		makeCreates()
+		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Twice()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("cas1 fail")).Once()
+		suite.Panics(func() { suite.scene.initTAA() })
+	})
+
+	suite.Run("composition BGP nil returns early after setting enabled", func() {
+		_, compMock := makeBase()
+		makeCreates()
+		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Twice()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(4)
+		compMock.EXPECT().Bgp("composition").Return(nil).Once()
+		suite.NotPanics(func() { suite.scene.initTAA() })
+		suite.True(suite.scene.taaHandler.Enabled())
+	})
+
+	suite.Run("InitBindGroup composition slot 0 error panics", func() {
+		_, compMock := makeBase()
+		makeCreates()
+		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Twice()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(4)
+		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		compMock.EXPECT().Bgp("composition").Return(compBGPMock).Once()
+		compBGPMock.EXPECT().SetSlot(mock.Anything).Maybe()
+		compBGPMock.EXPECT().SetTextureView(mock.Anything, mock.Anything).Maybe()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("comp0 fail")).Once()
+		suite.Panics(func() { suite.scene.initTAA() })
+	})
+
+	suite.Run("InitBindGroup composition slot 1 error panics", func() {
+		_, compMock := makeBase()
+		makeCreates()
+		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Twice()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(4)
+		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		compMock.EXPECT().Bgp("composition").Return(compBGPMock).Once()
+		compBGPMock.EXPECT().SetSlot(mock.Anything).Maybe()
+		compBGPMock.EXPECT().SetTextureView(mock.Anything, mock.Anything).Maybe()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("comp1 fail")).Once()
+		suite.Panics(func() { suite.scene.initTAA() })
+	})
+
+	suite.Run("full happy path sets enabled and rebinds composition", func() {
+		_, compMock := makeBase()
+		makeCreates()
+		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Twice()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(4)
+		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		compMock.EXPECT().Bgp("composition").Return(compBGPMock).Once()
+		compBGPMock.EXPECT().SetSlot(mock.Anything).Maybe()
+		compBGPMock.EXPECT().SetTextureView(mock.Anything, mock.Anything).Maybe()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Twice()
+		suite.NotPanics(func() { suite.scene.initTAA() })
+		suite.True(suite.scene.taaHandler.Enabled())
+	})
+}
+
+func (suite *sceneImplTest) TestReleaseResolutionDependentResourcesTAA() {
+	suite.Run("releases TAA textures and bind groups when enabled", func() {
+		taaMock := postprocessing_mocks.NewMockTAAHandler(suite.T())
+		suite.scene.taaHandler = taaMock
+		taaMock.EXPECT().Enabled().Return(true).Once()
+		taaMock.EXPECT().SetSlot(mock.Anything).Maybe()
+		taaMock.EXPECT().TAATextureView().Return(nil).Maybe()
+		taaMock.EXPECT().TAATexture().Return(nil).Maybe()
+		taaMock.EXPECT().SetTAATextureView(mock.Anything).Maybe()
+		taaMock.EXPECT().SetTAATexture(mock.Anything).Maybe()
+		taaMock.EXPECT().Bgp(mock.Anything).Return(nil).Maybe()
+		taaMock.EXPECT().SharpenTextureView().Return(nil).Maybe()
+		taaMock.EXPECT().SharpenTexture().Return(nil).Maybe()
+		taaMock.EXPECT().SetSharpenTextureView(mock.Anything).Maybe()
+		taaMock.EXPECT().SetSharpenTexture(mock.Anything).Maybe()
+		suite.NotPanics(func() { suite.scene.releaseResolutionDependentResources() })
+	})
+}
+
+func (suite *sceneImplTest) TestResizePostProcessingTAAEnabled() {
+	suite.Run("calls initTAA when taaHandler is enabled", func() {
+		lhMock := light_mocks.NewMockLightingHandler(suite.T())
+		gbMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
+		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		cshMock := light_mocks.NewMockContactShadowHandler(suite.T())
+		shMock := light_mocks.NewMockShadowHandler(suite.T())
+		compMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+
+		suite.scene.gBufferHandler = gbMock
+		suite.scene.ssaoHandler = ssaoMock
+		suite.scene.compositionHandler = compMock
+		suite.scene.ssrHandler = ssrMock
+		suite.scene.lightHandler = lhMock
+		suite.scene.taaHandler = postprocessing.NewTAAHandler()
+		suite.scene.taaHandler.SetEnabled(true)
+		suite.scene.screenWidth = 800
+		suite.scene.screenHeight = 600
+		compMock.EXPECT().LuminanceWorkgroupSize().Return(256).Maybe()
+		lhMock.EXPECT().TileSize().Return(16).Maybe()
+		lhMock.EXPECT().MaxLightsPerTile().Return(64).Maybe()
+		ssaoMock.EXPECT().MaxSamples().Return(16).Maybe()
+		lhMock.EXPECT().ShadowHandler().Return(shMock).Maybe()
+		shMock.EXPECT().PCFSamples().Return(16).Maybe()
+		shMock.EXPECT().PCFSamplesSpot().Return(16).Maybe()
+		suite.scene.buildInjectionMap()
+		suite.scene.postProcessingInitialized = true
+
+		lhMock.EXPECT().ContactShadowHandler().Return(cshMock).Maybe()
+		lhMock.EXPECT().Bgp("ssao_lit").Return(nil).Maybe()
+
+		gbEnabledCount := 0
+		gbMock.EXPECT().Enabled().RunAndReturn(func() bool {
+			gbEnabledCount++
+			return gbEnabledCount >= 3
+		}).Maybe()
+		ssaoMock.EXPECT().Enabled().Return(false).Maybe()
+		cshMock.EXPECT().Enabled().Return(false).Maybe()
+		shMock.EXPECT().CSMAtlasTexture().Return(nil).Maybe()
+		compEnabledCount := 0
+		compMock.EXPECT().Enabled().RunAndReturn(func() bool {
+			compEnabledCount++
+			return compEnabledCount >= 3
+		}).Maybe()
+		ssrMock.EXPECT().Enabled().Return(false).Maybe()
+
+		ssaoMock.EXPECT().BlurredTextureView().Return(nil).Maybe()
+		ssaoMock.EXPECT().LinearSampler().Return(nil).Maybe()
+
+		gbMock.EXPECT().SetSlot(mock.Anything).Maybe()
+		gbMock.EXPECT().DepthTextureView().Return(&wgpu.TextureView{}).Maybe()
+		compMock.EXPECT().SetSlot(mock.Anything).Maybe()
+		compMock.EXPECT().HDRTextureView().Return(&wgpu.TextureView{}).Maybe()
+		compMock.EXPECT().Bgp("composition").Return(nil).Maybe()
+
+		suite.rendererMock.EXPECT().WaitIdle().Return().Once()
+		suite.rendererMock.EXPECT().InitTextureView(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+		suite.rendererMock.EXPECT().InitSampler(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+		suite.rendererMock.EXPECT().CreateTAATextures(800, 600).Return(
+			&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil,
+		).Once()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateSharpenTexture(800, 600).Return(
+			&wgpu.TextureView{}, &wgpu.Texture{}, nil,
+		).Once()
+		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Maybe()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
+		suite.NotPanics(func() { suite.scene.resizePostProcessing(800, 600) })
+		suite.True(suite.scene.taaHandler.Enabled())
+	})
+}
