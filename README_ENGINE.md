@@ -136,11 +136,12 @@ Phase D — HDR lit draw:
   ── scene.DrawCalls()                                 for each active scene
   renderer.EndFrame()
 
-Phase E — Post-process compute (SSR, luminance, bloom):
+Phase E — Post-process compute (SSR, luminance, bloom, TAA):
   renderer.BeginComputeFrame()
   ── scene.PrepareSSR()                                for each active scene
   ── scene.PrepareLuminance(dt)                        for each active scene
   ── scene.PrepareBloom()                              for each active scene
+  ── scene.PrepareTAA()                                for each active scene
   renderer.EndComputeFrame()
 
 Phase F — Composition and present:
@@ -160,6 +161,7 @@ Post-frame:
 - All command buffers from phases A–F are accumulated and submitted in a single `FlushFrame()` call to minimise `vkQueueSubmit` overhead.
 - `PrepareLights()` must be called **after** `PrepareShadows()` because shadow slot assignments must be populated before the light buffer is marshalled.
 - `PrepareSSR()` must be called **after** `DrawCalls()` because SSR reads the populated HDR texture.
+- `PrepareTAA()` must be called **after** `PrepareBloom()` and before composition (`AcquireCompositionFrame()` / `PrepareComposition()`).
 
 All active scenes sharing the same renderer are rendered within a single render pass, enabling layered compositing by z-index order.
 

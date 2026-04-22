@@ -1438,6 +1438,15 @@ func (b *wgpuRendererBackendImpl) InitTextureView(provider bind_group_provider.B
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	maxDim := stagingData.Width
+	if stagingData.Height > maxDim {
+		maxDim = stagingData.Height
+	}
+	mipLevelCount := uint32(1)
+	for dim := maxDim; dim > 1; dim /= 2 {
+		mipLevelCount++
+	}
+
 	format := wgpu.TextureFormatRGBA8UnormSrgb
 	if stagingData.Linear {
 		format = wgpu.TextureFormatRGBA8Unorm
@@ -1453,32 +1462,92 @@ func (b *wgpuRendererBackendImpl) InitTextureView(provider bind_group_provider.B
 			DepthOrArrayLayers: 1,
 		},
 		Format:        format,
-		MipLevelCount: 1,
+		MipLevelCount: mipLevelCount,
 		SampleCount:   1,
 	})
 	if err != nil {
 		return err
 	}
 
-	b.queue.WriteTexture(
-		&wgpu.ImageCopyTexture{
-			Texture:  tex,
-			MipLevel: 0,
-			Origin:   wgpu.Origin3D{},
-			Aspect:   wgpu.TextureAspectAll,
-		},
-		stagingData.Pixels,
-		&wgpu.TextureDataLayout{
-			Offset:       0,
-			BytesPerRow:  stagingData.Width * 4,
-			RowsPerImage: stagingData.Height,
-		},
-		&wgpu.Extent3D{
-			Width:              stagingData.Width,
-			Height:             stagingData.Height,
-			DepthOrArrayLayers: 1,
-		},
-	)
+	levelPixels := stagingData.Pixels
+	levelWidth := stagingData.Width
+	levelHeight := stagingData.Height
+
+	for level := uint32(0); level < mipLevelCount; level++ {
+		b.queue.WriteTexture(
+			&wgpu.ImageCopyTexture{
+				Texture:  tex,
+				MipLevel: level,
+				Origin:   wgpu.Origin3D{},
+				Aspect:   wgpu.TextureAspectAll,
+			},
+			levelPixels,
+			&wgpu.TextureDataLayout{
+				Offset:       0,
+				BytesPerRow:  levelWidth * 4,
+				RowsPerImage: levelHeight,
+			},
+			&wgpu.Extent3D{
+				Width:              levelWidth,
+				Height:             levelHeight,
+				DepthOrArrayLayers: 1,
+			},
+		)
+
+		if level+1 == mipLevelCount {
+			break
+		}
+
+		nextWidth := levelWidth / 2
+		if nextWidth == 0 {
+			nextWidth = 1
+		}
+		nextHeight := levelHeight / 2
+		if nextHeight == 0 {
+			nextHeight = 1
+		}
+
+		nextPixels := make([]byte, nextWidth*nextHeight*4)
+		for y := uint32(0); y < nextHeight; y++ {
+			for x := uint32(0); x < nextWidth; x++ {
+				var r uint32
+				var g uint32
+				var bl uint32
+				var a uint32
+				var sampleCount uint32
+
+				for oy := uint32(0); oy < 2; oy++ {
+					sy := y*2 + oy
+					if sy >= levelHeight {
+						continue
+					}
+					for ox := uint32(0); ox < 2; ox++ {
+						sx := x*2 + ox
+						if sx >= levelWidth {
+							continue
+						}
+
+						srcIdx := (sy*levelWidth + sx) * 4
+						r += uint32(levelPixels[srcIdx])
+						g += uint32(levelPixels[srcIdx+1])
+						bl += uint32(levelPixels[srcIdx+2])
+						a += uint32(levelPixels[srcIdx+3])
+						sampleCount++
+					}
+				}
+
+				dstIdx := (y*nextWidth + x) * 4
+				nextPixels[dstIdx] = byte(r / sampleCount)
+				nextPixels[dstIdx+1] = byte(g / sampleCount)
+				nextPixels[dstIdx+2] = byte(bl / sampleCount)
+				nextPixels[dstIdx+3] = byte(a / sampleCount)
+			}
+		}
+
+		levelPixels = nextPixels
+		levelWidth = nextWidth
+		levelHeight = nextHeight
+	}
 
 	view, err := tex.CreateView(nil)
 	if err != nil {

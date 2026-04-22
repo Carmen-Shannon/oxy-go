@@ -90,6 +90,7 @@ struct MaterialParams {
 //@oxy:inject LIGHT_TYPE_POINT u32 light_type_point
 //@oxy:inject LIGHT_TYPE_SPOT u32 light_type_spot
 //@oxy:inject TILE_SIZE u32 tile_size
+const SPECULAR_AA_STRENGTH: f32 = 0.25;
 
 // ── Attenuation ────────────────────────────────────────────────────
 fn attenuation(distance: f32, light_range: f32) -> f32 {
@@ -367,14 +368,17 @@ fn evaluate_light(
 fn fs_main(in: FragmentInput) -> @location(0) vec4<f32> {
     let tex_color = textureSample(diffuse_texture, diffuse_sampler, in.uv);
 
+    let normal_sample = textureSample(normal_texture, normal_sampler, in.uv).rgb;
+    let mapped_normal = normal_sample * 2.0 - 1.0;
+    let mapped_normal_dx = dpdx(mapped_normal);
+    let mapped_normal_dy = dpdy(mapped_normal);
+    let normal_variance = max(dot(mapped_normal_dx, mapped_normal_dx), dot(mapped_normal_dy, mapped_normal_dy));
+
     if (tex_color.a < material_params.alpha_cutoff) {
         discard;
     }
 
     let albedo = tex_color.rgb * in.color.rgb;
-
-    let normal_sample = textureSample(normal_texture, normal_sampler, in.uv).rgb;
-    let mapped_normal = normal_sample * 2.0 - 1.0;
 
     var N = normalize(in.world_normal);
     if !in.front_facing {
@@ -386,7 +390,8 @@ fn fs_main(in: FragmentInput) -> @location(0) vec4<f32> {
     var normal = normalize(TBN * mapped_normal);
 
     let mr_sample = textureSample(metallic_roughness_texture, metallic_roughness_sampler, in.uv);
-    let roughness = mr_sample.g;
+    let base_roughness = mr_sample.g;
+    let roughness = saturate(sqrt(base_roughness * base_roughness + normal_variance * SPECULAR_AA_STRENGTH));
     let metallic = mr_sample.b;
 
     let view_dir = normalize(camera.camera_position - in.world_position);
@@ -417,18 +422,18 @@ fn fs_main(in: FragmentInput) -> @location(0) vec4<f32> {
         if (all(contribution < vec3<f32>(0.001))) { continue; }
 
         if light.light_type == LIGHT_TYPE_DIRECTIONAL && light.casts_shadows == 1u {
-            contribution *= sample_shadow_csm(in.world_position, normal, light.direction, cam_depth);
+            contribution *= sample_shadow_csm(in.world_position, N, light.direction, cam_depth);
             contribution *= contact_shadow;
         }
 
         if light.light_type == LIGHT_TYPE_SPOT && light.shadow_index != 0xFFFFFFFFu {
             let entry = light_shadow_entries[light.shadow_index];
             let spot_light_dir = normalize(light.position - in.world_position);
-            contribution *= sample_shadow_spot(in.world_position, entry, normal, spot_light_dir);
+            contribution *= sample_shadow_spot(in.world_position, entry, N, spot_light_dir);
         }
 
         if light.light_type == LIGHT_TYPE_POINT && light.shadow_index != 0xFFFFFFFFu {
-            contribution *= sample_shadow_point(in.world_position, light.position, light.shadow_index, normal);
+            contribution *= sample_shadow_point(in.world_position, light.position, light.shadow_index, N);
         }
 
         total_light += contribution;

@@ -178,6 +178,13 @@ func (suite *taaHandlerTest) TestJitterScale() {
 	})
 }
 
+func (suite *taaHandlerTest) TestBlendFactor() {
+	suite.Run("should update blend factor via SetBlendFactor", func() {
+		suite.handler.SetBlendFactor(0.35)
+		suite.Equal(float32(0.35), suite.handler.BlendFactor())
+	})
+}
+
 func (suite *taaHandlerTest) TestRawHistoryOnly() {
 	suite.Run("should default to false", func() {
 		suite.False(suite.handler.RawHistoryOnly())

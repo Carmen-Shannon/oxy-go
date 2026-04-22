@@ -132,7 +132,8 @@ All lighting/shadow/culling initialization methods (`initLighting`, `initShadowM
 | `PrepareContactShadows()`         | Dispatches the screen-space contact shadow ray march compute pass                                                                                                                 |
 | `PrepareSSR()`                    | Dispatches the Hi-Z SSR compute pass                                                                                                                                              |
 | `PrepareLuminance(dt float32)`    | Dispatches the GPU luminance compute pass to update the adapted exposure buffer. Must be called after `DrawCalls` and after `PrepareSSR`. No-op when auto-exposure is disabled.   |
-| `PrepareBloom()`                  | Dispatches the bloom downsample and upsample compute passes. Must be called after `PrepareLuminance` and before `PrepareComposition`.                                             |
+| `PrepareBloom()`                  | Dispatches the bloom downsample and upsample compute passes. Must be called after `PrepareLuminance` and before `PrepareTAA`.                                                     |
+| `PrepareTAA()`                    | Dispatches TAA resolve, blending current HDR with history using motion-vector reprojection and neighborhood variance clamping. Must run after `PrepareBloom` and before `PrepareComposition`. No-op if TAA is uninitialized or camera is nil. |
 | `AcquireCompositionFrame() error` | Acquires the swapchain image for the composition pass. Must be called immediately before `PrepareComposition` each frame.                                                         |
 | `PrepareComposition()`            | Runs the fullscreen composition pass: ACES tone mapping and gamma correction, writes the final LDR result to the swapchain.                                                       |
 | `BeginHDRFrame() error`           | Opens the HDR render pass targeting the composition handler's textures. Must be called before `DrawCalls` each frame.                                                             |
@@ -154,8 +155,9 @@ The following sequence matches the engine's `handleRender` call order each frame
 11. `PrepareSSR` — SSR Hi-Z ray march compute shader
 12. `PrepareLuminance` — luminance compute for auto-exposure adaptation
 13. `PrepareBloom` — bloom downsample/upsample compute chain
-14. `AcquireCompositionFrame` — acquire swapchain image
-15. `PrepareComposition` — ACES tone mapping, write LDR to swapchain
+14. `PrepareTAA` — temporal resolve compute pass (history reprojection + clamping)
+15. `AcquireCompositionFrame` — acquire swapchain image
+16. `PrepareComposition` — ACES tone mapping, write LDR to swapchain
 
 ---
 
@@ -184,12 +186,14 @@ A typical frame follows this order:
 
 7.6 (optional) Bloom compute         — `PrepareBloom()` dispatches progressive downsample/upsample blur chain (13-tap box-tent down, 9-tap tent up) on bright HDR pixels. Runs its own compute frame. No-op when bloom is disabled.
 
+7.7 (optional) TAA compute           — `PrepareTAA()` dispatches the TAA resolve shader, blending the current HDR frame with temporal history using motion-vector reprojection and neighborhood variance clamping. Runs after bloom and before composition. No-op when TAA is not initialized or the camera is nil.
+
 8. (internal) Composition pass       — full-screen HDR→LDR tone mapping + SSR blend + bloom blend to swapchain
 
 9. renderer.Present()
 ```
 
-Steps 2–8 are handled internally when lighting is enabled via `WithLighting` and lights have been added. For unlit scenes these steps are skipped automatically. GI steps (4–5, 7–7.5, 8) are only executed when the corresponding sub-handlers are present on the `LightingHandler`.
+Steps 2–8 are handled internally when lighting is enabled via `WithLighting` and lights have been added. For unlit scenes these steps are skipped automatically. GI steps (4–5, 7–7.7, 8) are only executed when the corresponding sub-handlers are present on the `LightingHandler`.
 
 ---
 

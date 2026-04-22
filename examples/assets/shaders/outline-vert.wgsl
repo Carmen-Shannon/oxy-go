@@ -10,7 +10,7 @@
 // mesh are visible, creating a solid outline / silhouette around the model.
 
 //@oxy:inject MAX_BONES u32 max_bones
-const FLOATS_PER_INSTANCE: u32 = (1u + MAX_BONES) * 4u;
+const FLOATS_PER_INSTANCE: u32 = 5u + MAX_BONES * 4u;
 
 // Outline thickness in clip-space units (scaled by w for perspective).
 // Increase for a thicker outline; decrease for a thinner one.
@@ -70,7 +70,7 @@ fn vs_main(
 ) -> VertexOutput {
     let base = instance_idx * FLOATS_PER_INSTANCE;
     let model_matrix = read_mat4(base);
-    let bone_base = base + 4u;
+    let bone_base = base + 5u;
 
     let indices = vertex.bone_indices;
     let weights = vertex.bone_weights;

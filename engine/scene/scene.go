@@ -2356,6 +2356,32 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 			s.physicsSyncWrites = s.physicsSyncWrites[:0]
 		}
 
+		bodyCount := uint32(ph.BodiesCount())
+
+		// physDispatchGroups computes the number of work groups needed to cover
+		// itemCount invocations for the shader behind the given pipeline key.
+		// The workgroup size is read from the parsed WGSL source, not hardcoded.
+		physDispatchGroups := func(pipeKey string, itemCount uint32) [3]uint32 {
+			pipe := s.r.Pipeline(pipeKey)
+			if pipe == nil {
+				return [3]uint32{1, 1, 1}
+			}
+			shdr := pipe.Shader(shader.ShaderTypeCompute)
+			if shdr == nil {
+				return [3]uint32{1, 1, 1}
+			}
+			wgSize := shdr.WorkgroupSize()
+			xSize := wgSize[0]
+			if xSize == 0 {
+				xSize = 1
+			}
+			groups := (itemCount + xSize - 1) / xSize
+			if groups == 0 {
+				groups = 1
+			}
+			return [3]uint32{groups, 1, 1}
+		}
+
 		if substeps > 0 {
 			// Write globals uniform once — it is constant across all substeps
 			// since fixedDt does not change within a frame.
@@ -2370,32 +2396,7 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 				s.r.WriteBuffers(physWrites)
 			}
 
-			// physDispatchGroups computes the number of work groups needed to cover
-			// itemCount invocations for the shader behind the given pipeline key.
-			// The workgroup size is read from the parsed WGSL source, not hardcoded.
-			physDispatchGroups := func(pipeKey string, itemCount uint32) [3]uint32 {
-				pipe := s.r.Pipeline(pipeKey)
-				if pipe == nil {
-					return [3]uint32{1, 1, 1}
-				}
-				shdr := pipe.Shader(shader.ShaderTypeCompute)
-				if shdr == nil {
-					return [3]uint32{1, 1, 1}
-				}
-				wgSize := shdr.WorkgroupSize()
-				xSize := wgSize[0]
-				if xSize == 0 {
-					xSize = 1
-				}
-				groups := (itemCount + xSize - 1) / xSize
-				if groups == 0 {
-					groups = 1
-				}
-				return [3]uint32{groups, 1, 1}
-			}
-
 			particleCount := uint32(ph.ParticleCount())
-			bodyCount := uint32(ph.BodiesCount())
 
 			// Pre-build AABB atomics reset payload (6 × u32):
 			//   indices 0–2 (min): 0xFFFFFFFF (largest sortable uint → will be atomicMin'd down)
@@ -2449,28 +2450,6 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 				})
 			}
 
-			// After all substeps, sync physics results back to each Animator's
-			// AnimationData buffer. Each sync group dispatches the sync shader with
-			// its own BGP that binds the correct AnimationData buffer and per-group
-			// sync_map (sentinel-filtered so non-member bodies are skipped).
-			if len(s.physicsSyncGroup) > 0 {
-				syncKey := ph.PipelineKey("sync")
-				syncWG := physDispatchGroups(syncKey, bodyCount)
-				syncDispatches := make([]renderer.ComputeDispatch, 0, len(s.physicsSyncGroup))
-				for i := 0; i < len(s.physicsSyncGroup); i++ {
-					if bgp, ok := s.physicsSyncGroup[i]; ok {
-						syncDispatches = append(syncDispatches, renderer.ComputeDispatch{
-							PipelineKey:    syncKey,
-							Providers:      []renderer.ComputeGroupProvider{{Group: 0, Provider: bgp}},
-							WorkGroupCount: syncWG,
-						})
-					}
-				}
-				if len(syncDispatches) > 0 {
-					s.r.DispatchComputeBatch(syncDispatches)
-				}
-			}
-
 			// If game logic requested a readback, encode a GPU→GPU copy of the bodies
 			// buffer into the staging buffer. The next frame will map and process it.
 			if ph.ConsumeReadbackRequest() {
@@ -2483,6 +2462,27 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 			// No substeps this frame (accumulator hasn't reached fixedDt yet),
 			// but we still need to flush registration/removal writes.
 			s.r.WriteBuffers(physWrites)
+		}
+
+		// Sync physics results back to each Animator's AnimationData buffer.
+		// This must run every frame (even when substeps == 0) so both frame-slot
+		// buffers stay coherent under ping-pong scheduling.
+		if len(s.physicsSyncGroup) > 0 && bodyCount > 0 {
+			syncKey := ph.PipelineKey("sync")
+			syncWG := physDispatchGroups(syncKey, bodyCount)
+			syncDispatches := make([]renderer.ComputeDispatch, 0, len(s.physicsSyncGroup))
+			for i := 0; i < len(s.physicsSyncGroup); i++ {
+				if bgp, ok := s.physicsSyncGroup[i]; ok {
+					syncDispatches = append(syncDispatches, renderer.ComputeDispatch{
+						PipelineKey:    syncKey,
+						Providers:      []renderer.ComputeGroupProvider{{Group: 0, Provider: bgp}},
+						WorkGroupCount: syncWG,
+					})
+				}
+			}
+			if len(syncDispatches) > 0 {
+				s.r.DispatchComputeBatch(syncDispatches)
+			}
 		}
 	}
 

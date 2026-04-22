@@ -265,7 +265,7 @@ A typical frame follows this order:
 5.  BeginHDRFrame(colorView, resolveView, depthView, sampleCount)
     DrawCall(...) / DrawCallIndirect(...)  — main lit render pass (to offscreen HDR texture)
     EndFrame()
-6.  BeginComputeFrame()                  — post-HDR compute (SSR ray march, luminance, bloom)
+6.  BeginComputeFrame()                  — post-HDR compute (SSR ray march, luminance, bloom, TAA resolve)
     DispatchComputeBatch(...)
     EndComputeFrame()
 7.  BeginCompositionFrame()              — full-screen HDR → LDR tone-mapping + SSR blend
