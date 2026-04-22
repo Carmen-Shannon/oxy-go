@@ -52,13 +52,14 @@ When `MSAAOff` is selected, the render pass draws directly to the swapchain surf
 
 The `NewRenderer` constructor accepts variadic `RendererBuilderOption` functions:
 
-| Option                             | Description                                                                |
-| ---------------------------------- | -------------------------------------------------------------------------- |
-| `WithPipeline(key, p)`             | Pre-registers a single Pipeline in the cache under `key`.                  |
-| `WithPipelines(map)`               | Replaces the pipeline cache with the provided map.                         |
-| `WithPresentMode(mode)`            | Sets the surface present mode (VSync or Uncapped).                         |
-| `WithMSAA(count)`                  | Sets the MSAA sample count (default `MSAA4x`). Use `MSAAOff` to disable.   |
-| `WithForceSoftwareRenderer(force)` | Forces a CPU/software fallback adapter (requires SwiftShader or lavapipe). |
+| Option                                | Description                                                                                                                               |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `WithPipeline(key, p)`                | Pre-registers a single Pipeline in the cache under `key`.                                                                                 |
+| `WithPipelines(map)`                  | Replaces the pipeline cache with the provided map.                                                                                        |
+| `WithPresentMode(mode)`               | Sets the surface present mode (VSync or Uncapped).                                                                                        |
+| `WithMSAA(count)`                     | Sets the MSAA sample count (default `MSAA4x`). Use `MSAAOff` to disable.                                                                  |
+| `WithForceSoftwareRenderer(force)`    | Forces a CPU/software fallback adapter (requires SwiftShader or lavapipe).                                                                |
+| `WithGPUSerializedProfiling(enabled)` | Enables GPU serialized profiling mode — each phase submits and polls separately. For diagnostic use only; eliminates GPU/CPU parallelism. |
 
 ---
 
@@ -127,12 +128,21 @@ The `Renderer` interface embeds `common.Delegate[Renderer]`, exposing `SetDelega
 
 #### ComputeDispatch
 
-`ComputeDispatch` groups a compute pipeline key, its bind group provider, and the workgroup dispatch dimensions for use with `DispatchComputeBatch`.
+`ComputeGroupProvider` pairs a WGSL group index with the `BindGroupProvider` that supplies the bind group for that slot.
+
+```go
+type ComputeGroupProvider struct {
+    Group    uint32
+    Provider bind_group_provider.BindGroupProvider
+}
+```
+
+`ComputeDispatch` groups a compute pipeline key, an ordered list of group providers, and the workgroup dispatch dimensions for use with `DispatchComputeBatch`.
 
 ```go
 type ComputeDispatch struct {
     PipelineKey    string
-    Provider       bind_group_provider.BindGroupProvider
+    Providers      []ComputeGroupProvider
     WorkGroupCount [3]uint32
 }
 ```
@@ -151,15 +161,26 @@ type ComputeDispatch struct {
 
 The shadow frame renders depth-only passes into a `Depth32Float` atlas for directional CSM and spot/point lights.
 
-| Method                                                                                                                                                                                                             | Description                                                      |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
-| `RegisterShadowDepthPipeline(p pipeline.Pipeline) error`                                                                                                                                                           | Registers a depth-only pipeline for shadow rendering             |
-| `CreateShadowDepthTexture(width, height int) (depthView *wgpu.TextureView, depthTex *wgpu.Texture, err error)`                                                                                                     | Allocates a `Depth32Float` atlas texture                         |
-| `CreateComparisonSampler() (*wgpu.Sampler, error)`                                                                                                                                                                 | Creates a hardware depth comparison sampler                      |
-| `BeginShadowDepthPass(depthView *wgpu.TextureView, x, y, width, height uint32, clear bool)`                                                                                                                        | Begins a single shadow atlas tile depth pass                     |
-| `ShadowDrawCall(pipelineKey string, bindGroups []bind_group_provider.BindGroupProvider, vertexBuffers []*wgpu.Buffer, indexBuffer *wgpu.Buffer, indexCount uint32) error`                                          | Issues a shadow draw call                                        |
-| `ShadowDrawCallIndirect(pipelineKey string, bindGroups []bind_group_provider.BindGroupProvider, vertexBuffers []*wgpu.Buffer, indexBuffer *wgpu.Buffer, indirectBuffer *wgpu.Buffer, indirectOffset uint64) error` | Issues an indirect shadow draw call                              |
-| `EndShadowFrame()`                                                                                                                                                                                                 | Ends the shadow frame and submits its command buffer immediately |
+| Method                                                                                                                                                                                  | Description                                                                                                         |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `RegisterShadowDepthPipeline(p pipeline.Pipeline) error`                                                                                                                                | Registers a depth-only pipeline for shadow rendering.                                                               |
+| `CreateShadowDepthTexture(width, height int) (depthView *wgpu.TextureView, depthTex *wgpu.Texture, err error)`                                                                          | Allocates a `Depth32Float` atlas texture.                                                                           |
+| `CreateComparisonSampler() (*wgpu.Sampler, error)`                                                                                                                                      | Creates a hardware depth comparison sampler for PCF lookups.                                                        |
+| `CreateLinearSampler() (*wgpu.Sampler, error)`                                                                                                                                          | Creates a standard linear filtering sampler for post-processing passes (SSAO, SSR, composition).                    |
+| `BeginShadowFrame() error`                                                                                                                                                              | Creates a command encoder for batching shadow depth passes. Aliases the shared geometry encoder when one is active. |
+| `ShadowDrawCall(pipelineKey string, meshProvider bind_group_provider.BindGroupProvider, instanceCount uint32, bindGroups []bind_group_provider.BindGroupProvider) error`                | Issues an instanced shadow draw call within the current shadow pass.                                                |
+| `ShadowDrawCallIndirect(pipelineKey string, meshProvider bind_group_provider.BindGroupProvider, indirectBuffer *wgpu.Buffer, bindGroups []bind_group_provider.BindGroupProvider) error` | Issues an indirect shadow draw call; instance count is read from `indirectBuffer` on the GPU.                       |
+| `EndShadowFrame()`                                                                                                                                                                      | Finishes the shadow command encoder and submits to the GPU queue.                                                   |
+
+#### Shadow Atlas Pass (single-pass, viewport switching)
+
+All tiles for one atlas share a single render pass. The pass is opened once with `BeginShadowAtlasPass`, then `SetShadowViewport` is called before each tile's draw calls to constrain rasterization to that tile's region.
+
+| Method                                              | Description                                                                                                                   |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `BeginShadowAtlasPass(depthView *wgpu.TextureView)` | Opens a single depth-only render pass for the full atlas, clearing depth to 1.0. Must be called after `BeginShadowFrame`.     |
+| `SetShadowViewport(x, y, width, height uint32)`     | Sets the viewport and scissor rect on the open atlas pass, constraining rasterization to the specified tile region in texels. |
+| `EndShadowAtlasPass()`                              | Closes the shadow atlas render pass after all tiles for this atlas have been drawn.                                           |
 
 ### G-Buffer Frame
 
@@ -171,8 +192,8 @@ The shadow frame renders depth-only passes into a `Depth32Float` atlas for direc
 | `EndGeometryFrame()`                                                                                                                                                                                                  | Ends the batched geometry frame and submits the accumulated shadow + G-Buffer command buffer                                                                            |
 | `BeginGBufferFrame() error`                                                                                                                                                                                           | Creates a command encoder for the G-Buffer pass.                                                                                                                        |
 | `BeginGBufferPass(normView, albedoView, depthView *wgpu.TextureView)`                                                                                                                                                 | Begins a G-Buffer draw pass using the three MRT views                                                                                                                   |
-| `GBufferDrawCall(pipelineKey string, bindGroups []bind_group_provider.BindGroupProvider, vertexBuffers []*wgpu.Buffer, indexBuffer *wgpu.Buffer, indexCount uint32) error`                                            | Issues a G-Buffer draw call                                                                                                                                             |
-| `GBufferDrawCallIndirect(pipelineKey string, bindGroups []bind_group_provider.BindGroupProvider, vertexBuffers []*wgpu.Buffer, indexBuffer *wgpu.Buffer, indirectBuffer *wgpu.Buffer, indirectOffset uint64) error`   | Issues an indirect G-Buffer draw call                                                                                                                                   |
+| `GBufferDrawCall(pipelineKey string, meshProvider bind_group_provider.BindGroupProvider, instanceCount uint32, bindGroups []bind_group_provider.BindGroupProvider) error`                                             | Issues an instanced G-Buffer draw call.                                                                                                                                 |
+| `GBufferDrawCallIndirect(pipelineKey string, meshProvider bind_group_provider.BindGroupProvider, indirectBuffer *wgpu.Buffer, bindGroups []bind_group_provider.BindGroupProvider) error`                              | Issues an indirect G-Buffer draw call; instance count is read from `indirectBuffer` on the GPU.                                                                         |
 | `EndGBufferPass()`                                                                                                                                                                                                    | Ends the G-Buffer render pass.                                                                                                                                          |
 | `EndGBufferFrame()`                                                                                                                                                                                                   | Finishes and submits the G-Buffer command buffer.                                                                                                                       |
 
@@ -192,14 +213,20 @@ The shadow frame renders depth-only passes into a `Depth32Float` atlas for direc
 | `CompositionDrawCall(pipelineKey string, bindGroups []bind_group_provider.BindGroupProvider) error`                                                                         | Issues a full-screen composition draw call                                                                                                                                      |
 | `EndCompositionPass()`                                                                                                                                                      | Ends the composition draw pass                                                                                                                                                  |
 | `EndCompositionFrame()`                                                                                                                                                     | Ends the composition frame and accumulates its command buffer                                                                                                                   |
-| `FlushFrame()`                                                                                                                                                              | Submits all accumulated per-frame command buffers (geometry, compute, HDR, composition) in a single batched `Queue.Submit` call                                                 |
+| `FlushFrame() wgpu.SubmissionIndex`                                                                                                                                         | Submits all accumulated per-frame command buffers (geometry, compute, HDR, composition) in a single batched `Queue.Submit` call. Returns the submission index.                  |
+| `WaitIdle()`                                                                                                                                                                | Blocks until all in-flight GPU work has completed. Must be called before releasing GPU resources (e.g., on window resize).                                                      |
 
 ### Configuration
 
-| Method                          | Description                                                              |
-| ------------------------------- | ------------------------------------------------------------------------ |
-| `SetRenderTargetFormat(format)` | Overrides the color attachment format (e.g. RGBA16Float for HDR passes). |
-| `SampleCount() uint32`          | Returns the current MSAA sample count.                                   |
+| Method                                        | Description                                                                                                                                                                                                                                      |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `SetRenderTargetFormat(format)`               | Overrides the color attachment format (e.g. RGBA16Float for HDR passes).                                                                                                                                                                         |
+| `SetInjections(injections map[string]string)` | Sets the WGSL injection map used by the shader pre-processor for `@oxy:inject` annotations.                                                                                                                                                      |
+| `SampleCount() uint32`                        | Returns the current MSAA sample count.                                                                                                                                                                                                           |
+| `MaxTextureDimension2D() uint32`              | Returns the device maximum 2D texture dimension, raised to the adapter's reported limit when above the WebGPU default.                                                                                                                           |
+| `CurrentFrameSlot() int`                      | Returns the index of the frame slot currently being encoded (0 or 1).                                                                                                                                                                            |
+| `GPUTimings() map[string]float64`             | Always returns `nil`. GPU timestamp readback via `MapAsync` is permanently disabled due to a bug in the underlying wgpu fork. `WriteTimestamp` and `ResolveQuerySet` calls are retained (harmless) but the readback step is permanently omitted. |
+| `SyncGPUTimestamps()`                         | Retained for interface compatibility. Performs a frames-in-flight fence via `Device.Poll`; GPU timestamp readback via `MapAsync` is permanently disabled.                                                                                        |
 
 ### Display
 
@@ -215,28 +242,42 @@ The shadow frame renders depth-only passes into a `Depth32Float` atlas for direc
 A typical frame follows this order:
 
 ```
-1. WriteBuffers(...)                 — upload per-frame uniform data
-2. BeginComputeFrame()               — compute passes (e.g., light culling, SSAO, SSR, Hi-Z)
-   DispatchComputeBatch(...)
-   EndComputeFrame()
-3. **Shadow pass** — `BeginShadowDepthPass(depthView, x, y, width, height, clear)`: renders depth-only into the shadow atlas for each cascade/light.
-4. BeginGBufferFrame()               — G-Buffer MRT pre-pass
-   BeginGBufferPass(posView, normView, albView, depthView)
-   DrawCall(...)
-   EndGBufferPass()
-   EndGBufferFrame()
-5. (compute) SSAO + bilateral blur   — dispatched via DispatchComputeBatch
-6. BeginFrame() / BeginHDRFrame()    — main lit render pass (to swapchain or HDR texture)
-   DrawCall(...) / DrawCallIndirect(...)
-   EndFrame()
-7. (compute) SSR Hi-Z + ray march    — dispatched via DispatchComputeBatch
-8. Composition pass (BeginFrame)      — full-screen HDR → LDR tone mapping + SSR blend
-   DrawCall(...)
-   EndFrame()
-9. Present()                          — flip to display
+1.  WriteBuffers(...)                    — upload per-frame uniform data
+2.  BeginComputeFrame()                  — pre-geometry compute passes (Hi-Z downsample, light culling)
+    DispatchComputeBatch(...)
+    EndComputeFrame()
+3.  BeginGeometryFrame()                 — opens shared geometry command encoder
+      BeginShadowFrame()                 — shadow depth passes
+        BeginShadowAtlasPass(depthView)  — one pass per atlas; clears depth to 1.0
+          SetShadowViewport(x, y, w, h)  — constrain to each cascade / light tile
+          ShadowDrawCall(...)            — depth-only draw per cascade / light face
+        EndShadowAtlasPass()
+      EndShadowFrame()
+      BeginGBufferFrame()                — G-Buffer MRT pre-pass
+        BeginGBufferPass(norm, alb, dep)
+        GBufferDrawCall(...) / GBufferDrawCallIndirect(...)
+        EndGBufferPass()
+      EndGBufferFrame()
+    EndGeometryFrame()                   — submits merged shadow + G-Buffer command buffer
+4.  BeginComputeFrame()                  — post-geometry compute (SSAO, contact shadows)
+    DispatchComputeBatch(...)
+    EndComputeFrame()
+5.  BeginHDRFrame(colorView, resolveView, depthView, sampleCount)
+    DrawCall(...) / DrawCallIndirect(...)  — main lit render pass (to offscreen HDR texture)
+    EndFrame()
+6.  BeginComputeFrame()                  — post-HDR compute (SSR ray march, luminance, bloom, TAA resolve)
+    DispatchComputeBatch(...)
+    EndComputeFrame()
+7.  BeginCompositionFrame()              — full-screen HDR → LDR tone-mapping + SSR blend
+    BeginCompositionPass()
+    CompositionDrawCall(...)
+    EndCompositionPass()
+    EndCompositionFrame()
+8.  FlushFrame()                         — single batched Queue.Submit for all accumulated buffers
+9.  Present()                            — flip to display
 ```
 
-Steps 3–8 are only executed when lighting/GI sub-handlers are active. For unlit scenes, only steps 1, 2, 6, and 9 run.
+Steps 3–8 are only executed when lighting/GI sub-handlers are active. For unlit scenes, only steps 1, 2, 5, and 9 run.
 
 ---
 
@@ -244,15 +285,79 @@ Steps 3–8 are only executed when lighting/GI sub-handlers are active. For unli
 
 The renderer package contains the following sub-packages, each documented separately:
 
-| Sub-Package            | Description                                                                               | Documentation                            |
-| ---------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `animator/`            | GPU compute animation backends (simple transform and skeletal)                            | [README_ANIMATOR.md](README_ANIMATOR.md) |
-| `bind_group_provider/` | Bind group creation, buffer and texture storage per draw entity                           | [README_BGP.md](README_BGP.md)           |
-| `material/`            | Material GPU types, overlay modes, and effect parameters                                  | [README_MATERIAL.md](README_MATERIAL.md) |
-| `pipeline/`            | Render and compute pipeline configuration and GPU object management                       | [README_PIPELINE.md](README_PIPELINE.md) |
-| `shader/`              | Shader loading, WGSL parsing, annotation pre-processing, and bind group layout generation | [README_SHADER.md](README_SHADER.md)     |
+| Sub-Package            | Description                                                                               | Documentation                                      |
+| ---------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `animator/`            | GPU compute animation backends (simple transform and skeletal)                            | [README_ANIMATOR.md](README_ANIMATOR.md)           |
+| `bind_group_provider/` | Bind group creation, buffer and texture storage per draw entity                           | [README_BGP.md](README_BGP.md)                     |
+| `gbuffer/`             | G-Buffer MRT handler for geometry pre-pass (normals, albedo, depth)                       | [GBuffer Package](#gbuffer-package)                |
+| `material/`            | Material GPU types, overlay modes, and effect parameters                                  | [README_MATERIAL.md](README_MATERIAL.md)           |
+| `pipeline/`            | Render and compute pipeline configuration and GPU object management                       | [README_PIPELINE.md](README_PIPELINE.md)           |
+| `postprocessing/`      | Screen-space post-processing handlers (SSAO, Composition, SSR, TAA)                       | [README_POSTPROCESSOR.md](README_POSTPROCESSOR.md) |
+| `shader/`              | Shader loading, WGSL parsing, annotation pre-processing, and bind group layout generation | [README_SHADER.md](README_SHADER.md)               |
 
 ---
+
+## GBuffer Package
+
+**Package path:** `github.com/Carmen-Shannon/oxy-go/engine/renderer/gbuffer`
+
+The `gbuffer` package manages the multiple render target (MRT) textures written during the geometry pre-pass. Downstream screen-space effects (SSAO, SSR, contact shadows) read from these textures.
+
+**Constructor:** `NewGBufferHandler(opts ...GBufferHandlerOption) GBufferHandler`
+
+### Builder Options
+
+| Option           | Parameters          | Default | Description                                          |
+| ---------------- | ------------------- | ------- | ---------------------------------------------------- |
+| `WithScreenSize` | `width, height int` | 0, 0    | Initial screen dimensions for G-Buffer texture alloc |
+
+### GBufferHandler Interface (22 methods)
+
+| Method                                            | Description                                    |
+| ------------------------------------------------- | ---------------------------------------------- |
+| `Enabled() bool` / `SetEnabled(bool)`             | Whether GPU resources are initialized          |
+| `SetSlot(slot int)`                               | Sets the active double-buffer slot             |
+| `ScreenWidth() int` / `ScreenHeight() int`        | Current screen dimensions                      |
+| `NormalTexture()` / `SetNormalTexture`            | Normals + roughness MRT texture (RGBA16Float)  |
+| `NormalTextureView()` / `SetNormalTextureView`    | View for normal texture                        |
+| `AlbedoTexture()` / `SetAlbedoTexture`            | Albedo + metallic MRT texture (RGBA8Unorm)     |
+| `AlbedoTextureView()` / `SetAlbedoTextureView`    | View for albedo texture                        |
+| `DepthTexture()` / `SetDepthTexture`              | Shared depth texture (Depth24Plus)             |
+| `DepthTextureView()` / `SetDepthTextureView`      | View for depth texture                         |
+| `PipelineKey(name)` / `SetPipelineKey(name, key)` | Pipeline key storage                           |
+| `PipelineKeys() map[string]string`                | Returns all pipeline keys                      |
+| `Resize(width, height int)`                       | Updates stored screen dimensions (no GPU work) |
+
+All texture getters/setters are double-buffered (2-slot arrays indexed by the active slot set via `SetSlot`).
+
+### MRT Textures
+
+| Texture | Format      | Contents                                         |
+| ------- | ----------- | ------------------------------------------------ |
+| Normal  | RGBA16Float | World normal XYZ (packed [0,1]) + roughness in W |
+| Albedo  | RGBA8Unorm  | Albedo RGB + metallic in A                       |
+| Depth   | Depth24Plus | Shared depth for the pre-pass                    |
+
+### GPU Type: `GPUGBufferOutput` (48 bytes)
+
+| Field      | Type         | Offset | Description          |
+| ---------- | ------------ | ------ | -------------------- |
+| `Position` | `[4]float32` | 0      | World-space position |
+| `Normal`   | `[4]float32` | 16     | World-space normal   |
+| `Albedo`   | `[4]float32` | 32     | Albedo color         |
+
+Methods: `Size() int`, `Marshal() []byte`
+
+Embedded WGSL source: `GPUGBufferOutputSource` (`assets/gbuffer-output.wgsl`)
+
+### Files
+
+| File                         | Contents                                                           |
+| ---------------------------- | ------------------------------------------------------------------ |
+| `gbuffer_handler.go`         | `GBufferHandler` interface                                         |
+| `gbuffer_handler_impl.go`    | Unexported `gBufferHandlerImpl` struct                             |
+| `gbuffer_handler_builder.go` | `GBufferHandlerOption` type, `WithScreenSize`, `NewGBufferHandler` |
+| `gpu_types.go`               | `GPUGBufferOutput` struct and embedded WGSL source                 |
 
 ---
 

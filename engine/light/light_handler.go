@@ -155,34 +155,6 @@ type LightingHandler interface {
 	//   - height: the new screen height in pixels
 	Resize(width, height int)
 
-	// GBufferHandler returns the GBufferHandler attached to this lighting
-	// subsystem, or nil if no G-Buffer pre-pass is configured.
-	//
-	// Returns:
-	//   - GBufferHandler: the G-Buffer handler, or nil
-	GBufferHandler() GBufferHandler
-
-	// SSAOHandler returns the SSAOHandler attached to this lighting
-	// subsystem, or nil if SSAO is not configured.
-	//
-	// Returns:
-	//   - SSAOHandler: the SSAO handler, or nil
-	SSAOHandler() SSAOHandler
-
-	// CompositionHandler returns the CompositionHandler attached to this lighting
-	// subsystem, or nil if composition/tone mapping is not configured.
-	//
-	// Returns:
-	//   - CompositionHandler: the composition handler, or nil
-	CompositionHandler() CompositionHandler
-
-	// SSRHandler returns the SSRHandler attached to this lighting
-	// subsystem, or nil if screen-space reflections are not configured.
-	//
-	// Returns:
-	//   - SSRHandler: the SSR handler, or nil
-	SSRHandler() SSRHandler
-
 	// ShadowHandler returns the ShadowHandler attached to this lighting
 	// subsystem, managing shadow frustum configuration, PCF parameters,
 	// and CSM GPU resources.
@@ -249,10 +221,6 @@ func (h *lightingHandlerImpl) TileSize() int                                    
 func (h *lightingHandlerImpl) MaxLightsPerTile() int                                  { return h.maxLightsPerTile }
 func (h *lightingHandlerImpl) MaxGPULights() int                                      { return h.maxGPULights }
 func (h *lightingHandlerImpl) SetMaxGPULights(max int)                                { h.maxGPULights = max }
-func (h *lightingHandlerImpl) GBufferHandler() GBufferHandler                         { return h.gBufferHandler }
-func (h *lightingHandlerImpl) SSAOHandler() SSAOHandler                               { return h.ssaoHandler }
-func (h *lightingHandlerImpl) CompositionHandler() CompositionHandler                 { return h.compositionHandler }
-func (h *lightingHandlerImpl) SSRHandler() SSRHandler                                 { return h.ssrHandler }
 func (h *lightingHandlerImpl) ShadowHandler() ShadowHandler                           { return h.shadowHandler }
 
 func (h *lightingHandlerImpl) ContactShadowHandler() ContactShadowHandler {

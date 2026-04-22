@@ -340,6 +340,7 @@ func (suite *engineTest) TestHandleRender() {
 		suite.sceneMock.EXPECT().PrepareSSR().Return().Maybe()
 		suite.sceneMock.EXPECT().PrepareLuminance(mock.AnythingOfType("float32")).Return().Maybe()
 		suite.sceneMock.EXPECT().PrepareBloom().Return().Maybe()
+		suite.sceneMock.EXPECT().PrepareTAA().Return().Maybe()
 		rendererMock.EXPECT().SyncGPUTimestamps().Return().Maybe()
 		rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
 		suite.sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
@@ -627,6 +628,7 @@ func (suite *engineTest) TestHandleRender() {
 		suite.sceneMock.EXPECT().PrepareSSR().Return().Maybe()
 		suite.sceneMock.EXPECT().PrepareLuminance(mock.AnythingOfType("float32")).Return().Maybe()
 		suite.sceneMock.EXPECT().PrepareBloom().Return().Maybe()
+		suite.sceneMock.EXPECT().PrepareTAA().Return().Maybe()
 		suite.sceneMock.EXPECT().AcquireCompositionFrame().Return(nil).Maybe()
 		suite.sceneMock.EXPECT().PrepareComposition().Return().Maybe()
 		rendererMock.EXPECT().FlushFrame().Return(wgpu.SubmissionIndex(0)).Maybe()
@@ -717,6 +719,7 @@ func (suite *engineTest) TestHandleRender() {
 		suite.sceneMock.EXPECT().PrepareSSR().Return().Maybe()
 		suite.sceneMock.EXPECT().PrepareLuminance(mock.AnythingOfType("float32")).Return().Maybe()
 		suite.sceneMock.EXPECT().PrepareBloom().Return().Maybe()
+		suite.sceneMock.EXPECT().PrepareTAA().Return().Maybe()
 		suite.sceneMock.EXPECT().AcquireCompositionFrame().Return(fmt.Errorf("surface lost")).Maybe()
 		rendererMock.EXPECT().FlushFrame().Return(wgpu.SubmissionIndex(0)).Maybe()
 

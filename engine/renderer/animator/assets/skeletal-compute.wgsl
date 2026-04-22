@@ -342,6 +342,13 @@ fn write_mat4(base: u32, m: mat4x4<f32>) {
     output_transforms[base + 14u] = m[3].z; output_transforms[base + 15u] = m[3].w;
 }
 
+fn write_instance_flags(base: u32, flags: u32) {
+    output_transforms[base + 0u] = bitcast<f32>(flags);
+    output_transforms[base + 1u] = 0.0;
+    output_transforms[base + 2u] = 0.0;
+    output_transforms[base + 3u] = 0.0;
+}
+
 // Returns true if the model-space AABB (transformed to world space by model_mat) is
 // fully occluded by the previous frame's Hi-Z depth pyramid. Returns false (never occludes)
 // when globals.hiz_mip_count == 0 (Hi-Z not yet initialized).
@@ -432,12 +439,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         // Visible — atomically claim an output slot
         let out_slot = atomicAdd(&indirect_args.instance_count, 1u);
 
-        // Per-instance output stride in floats: (1 model matrix + MAX_BONES bone matrices) × 16 floats
-        let stride = (1u + MAX_BONES) * 16u;
+        // Per-instance output stride in floats: 1 model matrix (16) + 1 flag vec4 (4) + MAX_BONES bone matrices (16 each).
+        let stride = 20u + MAX_BONES * 16u;
         let out_base = out_slot * stride;
 
         // Write compacted model matrix first
         write_mat4(out_base, model_matrix);
+        write_instance_flags(out_base + 16u, anim.instance_flags);
 
         // Write compacted bone skinning matrices (world × inverse_bind)
         for (var bone_idx = 0u; bone_idx < globals.bone_count; bone_idx = bone_idx + 1u) {
@@ -452,12 +460,12 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 world_matrix = scratch_matrices[scratch_index(instance_idx, 0u, bone_idx)];
             }
             let final_matrix = world_matrix * bone_data[bone_idx].inverse_bind_matrix;
-            write_mat4(out_base + (1u + bone_idx) * 16u, final_matrix);
+            write_mat4(out_base + 20u + bone_idx * 16u, final_matrix);
         }
 
         // Pad remaining bone slots with identity so the vertex shader stride is consistent
         for (var b = globals.bone_count; b < MAX_BONES; b = b + 1u) {
-            let off = out_base + (1u + b) * 16u;
+            let off = out_base + 20u + b * 16u;
             output_transforms[off +  0u] = 1.0; output_transforms[off +  1u] = 0.0;
             output_transforms[off +  2u] = 0.0; output_transforms[off +  3u] = 0.0;
             output_transforms[off +  4u] = 0.0; output_transforms[off +  5u] = 1.0;

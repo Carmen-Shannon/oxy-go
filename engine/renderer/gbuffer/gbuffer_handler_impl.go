@@ -1,4 +1,4 @@
-package light
+package gbuffer
 
 import "github.com/cogentcore/webgpu/wgpu"
 
@@ -19,9 +19,7 @@ type gBufferHandlerImpl struct {
 	albedoTextures     [2]*wgpu.Texture
 	albedoTextureViews [2]*wgpu.TextureView
 
-	// Shared depth texture for the G-Buffer pass. When nil, the G-Buffer
-	// pass creates its own depth texture; otherwise it reuses the depth
-	// texture from the main render pass.
+	// Shared depth texture for the G-Buffer pass.
 	depthTextures     [2]*wgpu.Texture
 	depthTextureViews [2]*wgpu.TextureView
 }

@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/Carmen-Shannon/oxy-go/common"
+	"github.com/Carmen-Shannon/oxy-go/engine/lod"
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/material"
@@ -54,6 +55,7 @@ func (l *loader) importedToModel(imported *model.ImportedModel) (model.Model, er
 	indexOffset := uint32(0)
 
 	var allVertices []model.GPUSkinnedVertex
+	var allIndices []uint32
 	for _, mesh := range imported.Meshes {
 		allVertices = append(allVertices, mesh.Vertices...)
 
@@ -72,6 +74,7 @@ func (l *loader) importedToModel(imported *model.ImportedModel) (model.Model, er
 		for i, idx := range mesh.Indices {
 			adjusted[i] = idx + indexOffset
 		}
+		allIndices = append(allIndices, adjusted...)
 		allIndexBytes = append(allIndexBytes, common.SliceToBytes(adjusted)...)
 
 		totalIndices += len(mesh.Indices)
@@ -81,12 +84,67 @@ func (l *loader) importedToModel(imported *model.ImportedModel) (model.Model, er
 	boundingRadius := model.ComputeBoundingRadius(allVertices)
 	boundingMin, boundingMax := model.ComputeBoundingAABB(allVertices)
 
+	// Generate LOD levels via vertex clustering.
+	var lodOpts []model.ModelBuilderOption
+	if len(allIndices)/3 >= 16 {
+		lod1Verts, lod1Indices := lod.Decimate(allVertices, allIndices, 0.50)
+
+		// Only include LOD levels that produced valid (non-degenerate) triangles.
+		if len(lod1Indices) >= 3 {
+			var lod1VBytes []byte
+			if skinned {
+				lod1VBytes = common.SliceToBytes(lod1Verts)
+			} else {
+				gpuVerts1 := make([]model.GPUVertex, len(lod1Verts))
+				for i, v := range lod1Verts {
+					gpuVerts1[i] = v.GPUVertex
+				}
+				lod1VBytes = common.SliceToBytes(gpuVerts1)
+			}
+			lod1IBytes := common.SliceToBytes(lod1Indices)
+			lod1Provider := bind_group_provider.NewBindGroupProvider(imported.Name + "_mesh_lod1")
+
+			lodVData := [][]byte{lod1VBytes}
+			lodIData := [][]byte{lod1IBytes}
+			lodICounts := []int{len(lod1Indices)}
+			lodProviders := []bind_group_provider.BindGroupProvider{lod1Provider}
+
+			lod2Verts, lod2Indices := lod.Decimate(allVertices, allIndices, 0.25)
+			if len(lod2Indices) >= 3 {
+				var lod2VBytes []byte
+				if skinned {
+					lod2VBytes = common.SliceToBytes(lod2Verts)
+				} else {
+					gpuVerts2 := make([]model.GPUVertex, len(lod2Verts))
+					for i, v := range lod2Verts {
+						gpuVerts2[i] = v.GPUVertex
+					}
+					lod2VBytes = common.SliceToBytes(gpuVerts2)
+				}
+				lod2IBytes := common.SliceToBytes(lod2Indices)
+				lod2Provider := bind_group_provider.NewBindGroupProvider(imported.Name + "_mesh_lod2")
+
+				lodVData = append(lodVData, lod2VBytes)
+				lodIData = append(lodIData, lod2IBytes)
+				lodICounts = append(lodICounts, len(lod2Indices))
+				lodProviders = append(lodProviders, lod2Provider)
+			}
+
+			lodOpts = append(lodOpts,
+				model.WithLODVertexData(lodVData...),
+				model.WithLODIndexData(lodIData...),
+				model.WithLODIndexCounts(lodICounts...),
+				model.WithLODMeshProviders(lodProviders...),
+			)
+		}
+	}
+
 	// Create BindGroupProvider for mesh data (GPU buffers created later by Scene)
 	provider := bind_group_provider.NewBindGroupProvider(
 		imported.Name + "_mesh",
 	)
 
-	mdl := model.NewModel(
+	opts := []model.ModelBuilderOption{
 		model.WithName(imported.Name),
 		model.WithSkinned(skinned),
 		model.WithVertexData(allVertexBytes),
@@ -99,7 +157,9 @@ func (l *loader) importedToModel(imported *model.ImportedModel) (model.Model, er
 		model.WithBoundingRadius(boundingRadius),
 		model.WithBoundingMin(boundingMin),
 		model.WithBoundingMax(boundingMax),
-	)
+	}
+	opts = append(opts, lodOpts...)
+	mdl := model.NewModel(opts...)
 
 	// Convert imported materials into Material objects (CPU-only; GPU init deferred to Scene).
 	renderMats := make([]material.Material, len(imported.Materials))
@@ -172,6 +232,7 @@ func (l *loader) importedToModels(imported *model.ImportedModel) ([]model.Model,
 		var allVertexBytes []byte
 		var allIndexBytes []byte
 		var allVertices []model.GPUSkinnedVertex
+		var allIndices []uint32
 		totalIndices := 0
 		indexOffset := uint32(0)
 
@@ -192,6 +253,7 @@ func (l *loader) importedToModels(imported *model.ImportedModel) ([]model.Model,
 			for i, idx := range mesh.Indices {
 				adjusted[i] = idx + indexOffset
 			}
+			allIndices = append(allIndices, adjusted...)
 			allIndexBytes = append(allIndexBytes, common.SliceToBytes(adjusted)...)
 			totalIndices += len(mesh.Indices)
 			indexOffset += uint32(len(mesh.Vertices))
@@ -213,6 +275,61 @@ func (l *loader) importedToModels(imported *model.ImportedModel) ([]model.Model,
 				}
 			}
 		}
+		// Generate LOD levels via vertex clustering.
+		var lodOpts []model.ModelBuilderOption
+		if len(allIndices)/3 >= 16 {
+			lod1Verts, lod1Indices := lod.Decimate(allVertices, allIndices, 0.50)
+
+			// Only include LOD levels that produced valid (non-degenerate) triangles.
+			if len(lod1Indices) >= 3 {
+				var lod1VBytes []byte
+				if skinned {
+					lod1VBytes = common.SliceToBytes(lod1Verts)
+				} else {
+					gpuVerts1 := make([]model.GPUVertex, len(lod1Verts))
+					for i, v := range lod1Verts {
+						gpuVerts1[i] = v.GPUVertex
+					}
+					lod1VBytes = common.SliceToBytes(gpuVerts1)
+				}
+				lod1IBytes := common.SliceToBytes(lod1Indices)
+				lod1Provider := bind_group_provider.NewBindGroupProvider(fmt.Sprintf("%s_mat_%d_mesh_lod1", imported.Name, mi))
+
+				lodVData := [][]byte{lod1VBytes}
+				lodIData := [][]byte{lod1IBytes}
+				lodICounts := []int{len(lod1Indices)}
+				lodProviders := []bind_group_provider.BindGroupProvider{lod1Provider}
+
+				lod2Verts, lod2Indices := lod.Decimate(allVertices, allIndices, 0.25)
+				if len(lod2Indices) >= 3 {
+					var lod2VBytes []byte
+					if skinned {
+						lod2VBytes = common.SliceToBytes(lod2Verts)
+					} else {
+						gpuVerts2 := make([]model.GPUVertex, len(lod2Verts))
+						for i, v := range lod2Verts {
+							gpuVerts2[i] = v.GPUVertex
+						}
+						lod2VBytes = common.SliceToBytes(gpuVerts2)
+					}
+					lod2IBytes := common.SliceToBytes(lod2Indices)
+					lod2Provider := bind_group_provider.NewBindGroupProvider(fmt.Sprintf("%s_mat_%d_mesh_lod2", imported.Name, mi))
+
+					lodVData = append(lodVData, lod2VBytes)
+					lodIData = append(lodIData, lod2IBytes)
+					lodICounts = append(lodICounts, len(lod2Indices))
+					lodProviders = append(lodProviders, lod2Provider)
+				}
+
+				lodOpts = append(lodOpts,
+					model.WithLODVertexData(lodVData...),
+					model.WithLODIndexData(lodIData...),
+					model.WithLODIndexCounts(lodICounts...),
+					model.WithLODMeshProviders(lodProviders...),
+				)
+			}
+		}
+
 		provider := bind_group_provider.NewBindGroupProvider(
 			fmt.Sprintf("%s_mat_%d_mesh", imported.Name, mi),
 		)
@@ -233,7 +350,7 @@ func (l *loader) importedToModels(imported *model.ImportedModel) ([]model.Model,
 			material.WithPipelineKey(imported.Name),
 		)
 
-		mdl := model.NewModel(
+		opts := []model.ModelBuilderOption{
 			model.WithName(imported.Name),
 			model.WithSkinned(skinned),
 			model.WithVertexData(allVertexBytes),
@@ -246,7 +363,9 @@ func (l *loader) importedToModels(imported *model.ImportedModel) ([]model.Model,
 			model.WithBoundingRadius(boundingRadius),
 			model.WithBoundingMin(boundingMin),
 			model.WithBoundingMax(boundingMax),
-		)
+		}
+		opts = append(opts, lodOpts...)
+		mdl := model.NewModel(opts...)
 		mdl.SetRenderMaterials([]material.Material{mat})
 
 		result = append(result, mdl)

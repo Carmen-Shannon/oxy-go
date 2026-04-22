@@ -29,10 +29,6 @@ func (suite *lightingHandlerTest) TestNewLightingHandler() {
 			light.WithTileSize(32),
 			light.WithMaxLightsPerTile(128),
 			light.WithMaxGPULights(512),
-			light.WithGBufferHandler(light.NewGBufferHandler()),
-			light.WithSSAOHandler(light.NewSSAOHandler()),
-			light.WithCompositionHandler(light.NewCompositionHandler()),
-			light.WithSSRHandler(light.NewSSRHandler()),
 			light.WithShadowHandler(light.NewShadowHandler()),
 			light.WithContactShadowHandler(light.NewContactShadowHandler()),
 		)
@@ -65,36 +61,6 @@ func (suite *lightingHandlerTest) TestWithMaxGPULights() {
 	suite.Run("should apply max GPU lights option", func() {
 		h := light.NewLightingHandler(light.WithMaxGPULights(512))
 		suite.Equal(512, h.MaxGPULights())
-	})
-}
-
-func (suite *lightingHandlerTest) TestWithGBufferHandler() {
-	suite.Run("should apply custom GBuffer handler", func() {
-		h := light.NewLightingHandler(
-			light.WithGBufferHandler(light.NewGBufferHandler(light.WithGBufferScreenSize(800, 600))),
-		)
-		suite.NotNil(h.GBufferHandler())
-	})
-}
-
-func (suite *lightingHandlerTest) TestWithSSAOHandler() {
-	suite.Run("should apply custom SSAO handler", func() {
-		h := light.NewLightingHandler(light.WithSSAOHandler(light.NewSSAOHandler()))
-		suite.NotNil(h.SSAOHandler())
-	})
-}
-
-func (suite *lightingHandlerTest) TestWithCompositionHandler() {
-	suite.Run("should apply custom composition handler", func() {
-		h := light.NewLightingHandler(light.WithCompositionHandler(light.NewCompositionHandler()))
-		suite.NotNil(h.CompositionHandler())
-	})
-}
-
-func (suite *lightingHandlerTest) TestWithSSRHandler() {
-	suite.Run("should apply custom SSR handler", func() {
-		h := light.NewLightingHandler(light.WithSSRHandler(light.NewSSRHandler()))
-		suite.NotNil(h.SSRHandler())
 	})
 }
 
@@ -180,7 +146,7 @@ func (suite *lightingHandlerTest) TestBgp() {
 func (suite *lightingHandlerTest) TestBgps() {
 	suite.Run("should return the full bgp map", func() {
 		bgps := suite.handler.Bgps()
-		suite.Equal(7, len(bgps))
+		suite.Equal(8, len(bgps))
 		suite.Contains(bgps, "lights")
 		suite.Contains(bgps, "light_cull")
 		suite.Contains(bgps, "tile_lit")
@@ -188,6 +154,7 @@ func (suite *lightingHandlerTest) TestBgps() {
 		suite.Contains(bgps, "probe_lit")
 		suite.Contains(bgps, "composition_lit")
 		suite.Contains(bgps, "ssr_lit")
+		suite.Contains(bgps, "taa_lit")
 	})
 }
 
@@ -260,30 +227,6 @@ func (suite *lightingHandlerTest) TestResize() {
 		suite.Equal(1080, suite.handler.ScreenHeight())
 		suite.Equal((1920+15)/16, suite.handler.TileCountX())
 		suite.Equal((1080+15)/16, suite.handler.TileCountY())
-	})
-}
-
-func (suite *lightingHandlerTest) TestGBufferHandler() {
-	suite.Run("should return a non-nil handler by default", func() {
-		suite.NotNil(suite.handler.GBufferHandler())
-	})
-}
-
-func (suite *lightingHandlerTest) TestSSAOHandler() {
-	suite.Run("should return a non-nil handler by default", func() {
-		suite.NotNil(suite.handler.SSAOHandler())
-	})
-}
-
-func (suite *lightingHandlerTest) TestCompositionHandler() {
-	suite.Run("should return a non-nil handler by default", func() {
-		suite.NotNil(suite.handler.CompositionHandler())
-	})
-}
-
-func (suite *lightingHandlerTest) TestSSRHandler() {
-	suite.Run("should return a non-nil handler by default", func() {
-		suite.NotNil(suite.handler.SSRHandler())
 	})
 }
 

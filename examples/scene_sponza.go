@@ -15,6 +15,8 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/light"
 	"github.com/Carmen-Shannon/oxy-go/engine/loader"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/gbuffer"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	"github.com/Carmen-Shannon/oxy-go/engine/window"
 )
@@ -36,8 +38,8 @@ func main() {
 		renderer.BackendTypeWGPU,
 		eng.Window(),
 		renderer.WithPresentMode(renderer.PresentModeUncapped),
-		renderer.WithMSAA(renderer.MSAAOff),
-		renderer.WithGPUSerializedProfiling(true),
+		renderer.WithMSAA(renderer.MSAA4x),
+		renderer.WithGPUSerializedProfiling(false),
 	)
 
 	// ── Camera ──────────────────────────────────────────────────────────
@@ -61,6 +63,9 @@ func main() {
 	sc := scene.NewScene("Sponza Scene", cam, r,
 		scene.WithActive(true),
 		scene.WithScreenSize(eng.Window().Width(), eng.Window().Height()),
+		scene.WithLODEnabled(true),
+		scene.WithLODDistances(50.0, 150.0),
+		scene.WithGBufferHandler(gbuffer.NewGBufferHandler()),
 		scene.WithLighting(light.NewLightingHandler(
 			light.WithShadowHandler(light.NewShadowHandler(
 				light.WithPCFRadius(1.0),
@@ -69,30 +74,34 @@ func main() {
 				light.WithShadowMapResolution(2048),
 				light.WithShadowInnerRadius(50),
 			)),
-			light.WithGBufferHandler(light.NewGBufferHandler()),
-			light.WithSSAOHandler(light.NewSSAOHandler(
-				light.WithSSAOSampleCount(8),
-				light.WithSSAOScreenRadius(24.0),
-				light.WithSSAOBias(0.025),
-				light.WithSSAOPower(2.0),
-				light.WithSSAOBlurRadius(2),
-				light.WithSSAOHalfResolution(true),
-			)),
-			light.WithCompositionHandler(light.NewCompositionHandler(
-				light.WithToneMappingEnabled(true),
-				light.WithExposure(1.0),
-				light.WithAutoExposure(true),
-				light.WithAdaptSpeed(8.0),
-				light.WithMinExposure(0.001),
-				light.WithMaxExposure(2.0),
-			)),
-			light.WithSSRHandler(light.NewSSRHandler(
-				light.WithSSRMaxSteps(32),
-				light.WithSSRMaxDistance(10.0),
-				light.WithSSRThickness(2.0),
-				light.WithSSRStride(1.5),
-				light.WithSSRRoughnessCutoff(0.5),
-			)),
+		)),
+		scene.WithSSAOHandler(postprocessing.NewSSAOHandler(
+			postprocessing.WithSSAOSampleCount(8),
+			postprocessing.WithSSAOScreenRadius(24.0),
+			postprocessing.WithSSAOBias(0.025),
+			postprocessing.WithSSAOPower(2.0),
+			postprocessing.WithSSAOBlurRadius(2),
+			postprocessing.WithSSAOHalfResolution(true),
+		)),
+		scene.WithCompositionHandler(postprocessing.NewCompositionHandler(
+			postprocessing.WithToneMappingEnabled(true),
+			postprocessing.WithExposure(1.0),
+			postprocessing.WithAutoExposure(true),
+			postprocessing.WithAdaptSpeed(8.0),
+			postprocessing.WithMinExposure(0.001),
+			postprocessing.WithMaxExposure(2.0),
+		)),
+		scene.WithSSRHandler(postprocessing.NewSSRHandler(
+			postprocessing.WithSSRMaxSteps(32),
+			postprocessing.WithSSRMaxDistance(10.0),
+			postprocessing.WithSSRThickness(2.0),
+			postprocessing.WithSSRStride(1.5),
+			postprocessing.WithSSRRoughnessCutoff(0.5),
+		)),
+		scene.WithTAAHandler(postprocessing.NewTAAHandler(
+			postprocessing.WithTAAHistoryRectificationScale(1.0),
+			postprocessing.WithTAABlendFactor(0.1),
+			postprocessing.WithTAAJitterScale(0.6),
 		)),
 	)
 
@@ -212,7 +221,8 @@ func main() {
 }
 
 // setupSponzaInput wires camera controls (WASD/QE planar movement, middle-mouse orbit,
-// scroll zoom) and sun toggling (L key) and point light toggling (F key) for the Sponza scene.
+// scroll zoom), sun toggling (L key), point light toggling (F key), and Space-driven
+// camera position logging for the Sponza scene.
 //
 // Parameters:
 //   - eng: the engine instance providing window callbacks and tick

@@ -205,6 +205,70 @@ func (suite *animatorImplTest) TestSetInstanceData() {
 	})
 }
 
+func (suite *animatorImplTest) TestSetInstanceFlags() {
+	suite.Run("should store flags on a simple animator instance and mark it dirty", func() {
+		suite.simple.AddInstance()
+		suite.simple.SetInstanceFlags(0, InstanceFlagContactShadowExcluded)
+
+		b := suite.simple.(*animator).backend.(*simpleAnimatorBackendImpl)
+		suite.Equal(uint32(InstanceFlagContactShadowExcluded), b.instanceData[0].InstanceFlags)
+		suite.Equal([]uint32{0}, b.dirtyIndices)
+	})
+
+	suite.Run("should store flags on a skeletal animator instance and mark the dirty range", func() {
+		suite.skeletal.AddInstance()
+		suite.skeletal.SetInstanceFlags(0, InstanceFlagContactShadowExcluded)
+
+		b := suite.skeletal.(*animator).backend.(*skeletalAnimatorBackendImpl)
+		suite.Equal(uint32(InstanceFlagContactShadowExcluded), b.instanceData[0].InstanceFlags)
+		suite.True(b.dirty)
+		suite.Equal(uint32(0), b.dirtyStart)
+		suite.Equal(uint32(1), b.dirtyEnd)
+	})
+
+	suite.Run("should be a no-op when index exceeds maxInstances on simple animator", func() {
+		a := NewAnimator(BackendTypeSimple, WithMaxInstances(1))
+		a.SetInstanceFlags(2, InstanceFlagContactShadowExcluded)
+
+		b := a.(*animator).backend.(*simpleAnimatorBackendImpl)
+		suite.Equal(uint32(0), b.instanceData[0].InstanceFlags)
+		suite.Empty(b.dirtyIndices)
+	})
+
+	suite.Run("should be a no-op when index exceeds maxInstances on skeletal animator", func() {
+		a := NewAnimator(BackendTypeSkeletal, WithMaxInstances(1))
+		a.SetInstanceFlags(2, InstanceFlagContactShadowExcluded)
+
+		b := a.(*animator).backend.(*skeletalAnimatorBackendImpl)
+		suite.Equal(uint32(0), b.instanceData[0].InstanceFlags)
+		suite.False(b.dirty)
+	})
+
+	suite.Run("should expand dirtyStart when second SetInstanceFlags uses a lower index", func() {
+		suite.skeletal.AddInstance()
+		suite.skeletal.AddInstance()
+		suite.skeletal.SetInstanceFlags(1, InstanceFlagContactShadowExcluded)
+		suite.skeletal.SetInstanceFlags(0, InstanceFlagContactShadowExcluded)
+
+		b := suite.skeletal.(*animator).backend.(*skeletalAnimatorBackendImpl)
+		suite.True(b.dirty)
+		suite.Equal(uint32(0), b.dirtyStart)
+		suite.Equal(uint32(2), b.dirtyEnd)
+	})
+
+	suite.Run("should expand dirtyEnd when second SetInstanceFlags uses a higher index", func() {
+		suite.skeletal.AddInstance()
+		suite.skeletal.AddInstance()
+		suite.skeletal.SetInstanceFlags(0, InstanceFlagContactShadowExcluded)
+		suite.skeletal.SetInstanceFlags(1, InstanceFlagContactShadowExcluded)
+
+		b := suite.skeletal.(*animator).backend.(*skeletalAnimatorBackendImpl)
+		suite.True(b.dirty)
+		suite.Equal(uint32(0), b.dirtyStart)
+		suite.Equal(uint32(2), b.dirtyEnd)
+	})
+}
+
 // --- RemoveInstance ---
 
 func (suite *animatorImplTest) TestRemoveInstance() {

@@ -34,9 +34,9 @@ fn is_visible(pos: vec3<f32>, radius: f32) -> bool {
     return true;
 }
 
-// Builds a column-major 4x4 TRS matrix and writes it into the output
-// buffer at the given float offset.
-fn build_transform(pos: vec3<f32>, rot: vec3<f32>, scale: vec3<f32>, out_idx: u32) {
+// Builds a column-major 4x4 TRS matrix and writes it plus the instance flag slot
+// into the output buffer at the given float offset.
+fn build_transform(pos: vec3<f32>, rot: vec3<f32>, scale: vec3<f32>, instance_flags: u32, out_idx: u32) {
     let cx = cos(rot.x); let sx = sin(rot.x);
     let cy = cos(rot.y); let sy = sin(rot.y);
     let cz = cos(rot.z); let sz = sin(rot.z);
@@ -62,6 +62,10 @@ fn build_transform(pos: vec3<f32>, rot: vec3<f32>, scale: vec3<f32>, out_idx: u3
     output_transforms[out_idx + 13u] = pos.y;
     output_transforms[out_idx + 14u] = pos.z;
     output_transforms[out_idx + 15u] = 1.0;
+    output_transforms[out_idx + 16u] = bitcast<f32>(instance_flags);
+    output_transforms[out_idx + 17u] = 0.0;
+    output_transforms[out_idx + 18u] = 0.0;
+    output_transforms[out_idx + 19u] = 0.0;
 }
 
 // Returns true if the model-space AABB (transformed to world space by pos/rot/scale) is
@@ -143,7 +147,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (is_visible(anim.pos, globals.bounding_radius * max_scale)) {
         if (!is_occluded(anim.pos, anim.rot, anim.scale)) {
             let out_slot = atomicAdd(&indirect_args.instance_count, 1u);
-            build_transform(anim.pos, anim.rot, anim.scale, out_slot * 16u);
+            build_transform(anim.pos, anim.rot, anim.scale, anim.instance_flags, out_slot * 20u);
         }
     }
 }

@@ -1,6 +1,7 @@
 package scene_test
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	game_object_mocks "github.com/Carmen-Shannon/oxy-go/engine/game_object/mocks"
 	"github.com/Carmen-Shannon/oxy-go/engine/physics"
 	renderer_mocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/mocks"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
@@ -64,6 +66,19 @@ func (suite *sceneTest) TestNewScene() {
 
 	suite.Run("scene name is set from constructor arg", func() {
 		suite.Equal("test", suite.scene.Name())
+	})
+
+	suite.Run("creates scene without panic when hiz fallback fails", func() {
+		cam := camera_mocks.NewMockCamera(suite.T())
+		cam.EXPECT().BindGroupProvider().Return(nil).Maybe()
+		r := renderer_mocks.NewMockRenderer(suite.T())
+		r.EXPECT().SetInjections(mock.Anything).Return().Maybe()
+		r.EXPECT().CreateHiZTextures(1, 1).Return(nil, nil, nil, nil, 0, fmt.Errorf("hiz creation failed")).Once()
+		var s scene.Scene
+		suite.NotPanics(func() {
+			s = scene.NewScene("hiz-fail", cam, r)
+		})
+		suite.NotNil(s)
 	})
 }
 
@@ -252,6 +267,22 @@ func (suite *sceneTest) TestResize() {
 		suite.rendererMock.EXPECT().Resize(800, 0).Return().Once()
 		suite.scene.Resize(800, 0)
 	})
+
+	suite.Run("resizes the taa handler when taa is enabled", func() {
+		cam := camera_mocks.NewMockCamera(suite.T())
+		cam.EXPECT().BindGroupProvider().Return(nil).Maybe()
+		r := renderer_mocks.NewMockRenderer(suite.T())
+		r.EXPECT().SetInjections(mock.Anything).Return().Maybe()
+		r.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0, nil).Maybe()
+		handler := postprocessing.NewTAAHandler(postprocessing.WithTAAScreenSize(640, 480))
+		handler.SetEnabled(true)
+		s := scene.NewScene("taa-resize", cam, r, scene.WithTAAHandler(handler))
+		r.EXPECT().Resize(1024, 768).Return().Once()
+		cam.EXPECT().SetAspect(float32(1024) / float32(768)).Return().Once()
+		s.Resize(1024, 768)
+		suite.Equal(1024, handler.ScreenWidth())
+		suite.Equal(768, handler.ScreenHeight())
+	})
 }
 
 func (suite *sceneTest) TestDrawCalls() {
@@ -333,5 +364,26 @@ func (suite *sceneTest) TestBeginHDRFrame() {
 		err := suite.scene.BeginHDRFrame()
 		suite.Error(err)
 		suite.True(strings.Contains(err.Error(), "composition not initialized"))
+	})
+}
+
+func (suite *sceneTest) TestPrepareTAA() {
+	suite.Run("no-ops without panic when taa not enabled", func() {
+		suite.NotPanics(func() {
+			suite.scene.PrepareTAA()
+		})
+	})
+}
+
+func (suite *sceneTest) TestWithTAAHandler() {
+	suite.Run("does not panic when setting a custom taa handler", func() {
+		cam := camera_mocks.NewMockCamera(suite.T())
+		cam.EXPECT().BindGroupProvider().Return(nil).Maybe()
+		r := renderer_mocks.NewMockRenderer(suite.T())
+		r.EXPECT().SetInjections(mock.Anything).Return().Maybe()
+		r.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0, nil).Maybe()
+		handler := postprocessing.NewTAAHandler(postprocessing.WithTAAScreenSize(800, 600))
+		s := scene.NewScene("taa-test", cam, r, scene.WithTAAHandler(handler))
+		suite.NotNil(s)
 	})
 }

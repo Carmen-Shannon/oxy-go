@@ -11,6 +11,7 @@ The `model` package defines the engine's GPU-ready 3D model representation. A `M
 - [Builder Options](#builder-options)
 - [Model Interface](#model-interface)
   - [Identity & Mesh Data](#identity--mesh-data)
+  - [LOD](#lod)
   - [Skeleton & Animation](#skeleton--animation)
   - [Materials](#materials)
   - [GPU Providers](#gpu-providers)
@@ -73,12 +74,16 @@ All options follow the `ModelBuilderOption` functional option pattern.
 | `WithAnimations`         | `animations []*AnimationClip`         | Sets the animation clips                                              |
 | `WithImportedMaterials`  | `materials []common.ImportedMaterial` | Sets the raw imported materials from the model file                   |
 | `WithMeshProvider`       | `provider BindGroupProvider`          | Sets the GPU mesh bind group provider (vertex/index buffers)          |
+| `WithLODMeshProviders`   | `providers ...bind_group_provider.BindGroupProvider` | Sets mesh providers for LOD1+ levels (LOD0 remains `WithMeshProvider`) |
 | `WithBoundingRadius`     | `radius float32`                      | Manually sets the bounding sphere radius (overrides auto-computation) |
 | `WithRenderMaterials`    | `mats ...material.Material`           | Sets the GPU-configured render materials                              |
 | `WithComputePipelineKey` | `key string`                          | Sets the compute pipeline key for the model's animator                |
 | `WithVertexData`         | `data []byte`                         | Sets the raw vertex byte buffer                                       |
+| `WithLODVertexData`      | `data ...[]byte`                      | Sets raw vertex buffers for LOD1+ levels                              |
 | `WithIndexData`          | `data []byte`                         | Sets the raw index byte buffer                                        |
+| `WithLODIndexData`       | `data ...[]byte`                      | Sets raw index buffers for LOD1+ levels                               |
 | `WithIndexCount`         | `count int`                           | Sets the number of indices in the mesh                                |
+| `WithLODIndexCounts`     | `counts ...int`                       | Sets index counts for LOD1+ levels                                    |
 | `WithCastsShadows`       | `casts bool`                          | Sets whether the model is rendered into the shadow depth map          |
 | `WithShadowCullMode`     | `mode ShadowCullMode`                 | Sets the face culling mode for the shadow pass                        |
 
@@ -99,6 +104,18 @@ All options follow the `ModelBuilderOption` functional option pattern.
 | `IndexCount() int`           | Returns the number of indices in the mesh                |
 | `SetIndexCount(count int)`   | Sets the index count                                     |
 | `BoundingRadius() float32`   | Returns the bounding sphere radius (for frustum culling) |
+
+### LOD
+
+| Method                                                      | Description                                                                                                            |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `LODCount() int`                                            | Returns the total level count including the base mesh (`1 + len(lodProviders)`).                                     |
+| `LODVertexData(level int) []byte`                           | Returns vertex data for the requested level; out-of-range levels fall back to the base mesh vertex data.             |
+| `LODIndexData(level int) []byte`                            | Returns index data for the requested level; out-of-range levels fall back to the base mesh index data.               |
+| `LODIndexCount(level int) int`                              | Returns index count for the requested level; falls back to base for out-of-range levels or when the LOD vertex buffer is nil. |
+| `LODMeshProvider(level int) bind_group_provider.BindGroupProvider` | Returns the mesh provider for the requested level; falls back to base for out-of-range levels or when the LOD vertex buffer is nil. |
+
+LOD level `0` is always the base mesh. LOD levels `1+` map to the LOD arrays supplied via `WithLODMeshProviders`, `WithLODVertexData`, `WithLODIndexData`, and `WithLODIndexCounts`.
 
 ### Skeleton & Animation
 

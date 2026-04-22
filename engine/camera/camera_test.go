@@ -109,6 +109,47 @@ func (suite *cameraTest) TestInverseProjectionMatrix() {
 	})
 }
 
+func (suite *cameraTest) TestPrevViewProjectionMatrix() {
+	suite.Run("should return the prior view projection matrix after an update", func() {
+		position := [3]float32{0, 0, 0}
+		target := [3]float32{0, 0, -1}
+
+		controllerMock := camera_mocks.NewMockCameraController(suite.T())
+		controllerMock.EXPECT().Position().RunAndReturn(func() (float32, float32, float32) {
+			return position[0], position[1], position[2]
+		}).Twice()
+		controllerMock.EXPECT().Target().RunAndReturn(func() (float32, float32, float32) {
+			return target[0], target[1], target[2]
+		}).Twice()
+
+		cam := camera.NewCamera(camera.WithController(controllerMock))
+		firstViewProjection := cam.ViewProjectionMatrix()
+
+		target = [3]float32{1, 0, -1}
+		cam.Update()
+
+		suite.Equal(firstViewProjection, cam.PrevViewProjectionMatrix())
+	})
+}
+
+func (suite *cameraTest) TestSetJitter() {
+	suite.Run("should apply jitter to projection translation terms on update", func() {
+		controllerMock := camera_mocks.NewMockCameraController(suite.T())
+		controllerMock.EXPECT().Position().Return(float32(0), float32(0), float32(0)).Twice()
+		controllerMock.EXPECT().Target().Return(float32(0), float32(0), float32(-1)).Twice()
+
+		cam := camera.NewCamera(camera.WithController(controllerMock))
+		baselineProjection := cam.ProjectionMatrix()
+
+		cam.SetJitter(0.25, -0.5)
+		cam.Update()
+
+		jitteredProjection := cam.ProjectionMatrix()
+		suite.InDelta(float64(baselineProjection[8])+0.25, float64(jitteredProjection[8]), 1e-6)
+		suite.InDelta(float64(baselineProjection[9])-0.5, float64(jitteredProjection[9]), 1e-6)
+	})
+}
+
 func (suite *cameraTest) TestController() {
 	suite.Run("should return the attached controller", func() {
 		ctrl := suite.camera.Controller()

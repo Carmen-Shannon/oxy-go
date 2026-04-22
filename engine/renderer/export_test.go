@@ -37,3 +37,7 @@ func RendererPendingMSAA(r Renderer) *MSAASampleCount {
 func RendererForceFallbackAdapter(r Renderer) bool {
 	return r.(*renderer).forceFallbackAdapter
 }
+
+func RendererGPUSerializedProfiling(r Renderer) bool {
+	return r.(*renderer).gpuSerializedProfiling
+}

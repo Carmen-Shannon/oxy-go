@@ -1,4 +1,4 @@
-package light
+package postprocessing
 
 import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"

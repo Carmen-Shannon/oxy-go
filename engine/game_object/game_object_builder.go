@@ -63,6 +63,20 @@ func WithModel(m model.Model) GameObjectBuilderOption {
 	}
 }
 
+// WithContactShadowExcluded sets whether this GameObject's instance should be marked
+// as excluded from contact-shadow classification.
+//
+// Parameters:
+//   - excluded: true to mark the instance as contact-shadow excluded
+//
+// Returns:
+//   - GameObjectBuilderOption: functional option to set the contact-shadow exclusion flag
+func WithContactShadowExcluded(excluded bool) GameObjectBuilderOption {
+	return func(obj *gameObject) {
+		obj.contactShadowExcluded = excluded
+	}
+}
+
 // WithPosition sets the initial position of the GameObject before it is added to a Scene.
 //
 // Parameters:

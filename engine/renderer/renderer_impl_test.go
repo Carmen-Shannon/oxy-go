@@ -563,6 +563,25 @@ func (suite *rendererImplTest) TestSyncGPUTimestamps() {
 	})
 }
 
+func (suite *rendererImplTest) TestGPUTimings() {
+	suite.Run("should return the timings map when backend provides non nil data", func() {
+		expected := map[string]float64{"compute": 1.25, "geometry": 2.5}
+		suite.backendMock.EXPECT().GPUTimings().Return(expected).Once()
+
+		timings := suite.r.GPUTimings()
+
+		suite.Equal(expected, timings)
+	})
+
+	suite.Run("should return nil when backend timings are unavailable", func() {
+		suite.backendMock.EXPECT().GPUTimings().Return(nil).Once()
+
+		timings := suite.r.GPUTimings()
+
+		suite.Nil(timings)
+	})
+}
+
 func (suite *rendererImplTest) TestSampleCount() {
 	suite.Run("should return the backend sample count", func() {
 		suite.backendMock.EXPECT().SampleCount().Return(uint32(4)).Once()
@@ -778,6 +797,28 @@ func (suite *rendererImplTest) TestCreateHiZTextures() {
 	})
 }
 
+func (suite *rendererImplTest) TestCreateTAATextures() {
+	suite.Run("should delegate to the backend and return results", func() {
+		suite.backendMock.EXPECT().CreateTAATextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, nil).Once()
+		view0, tex0, view1, tex1, err := suite.r.CreateTAATextures(1920, 1080)
+		suite.NoError(err)
+		suite.Nil(view0)
+		suite.Nil(tex0)
+		suite.Nil(view1)
+		suite.Nil(tex1)
+	})
+}
+
+func (suite *rendererImplTest) TestCreateSharpenTexture() {
+	suite.Run("should delegate to the backend and return results", func() {
+		suite.backendMock.EXPECT().CreateSharpenTexture(mock.Anything, mock.Anything).Return(nil, nil, nil).Once()
+		view, tex, err := suite.r.CreateSharpenTexture(1920, 1080)
+		suite.NoError(err)
+		suite.Nil(view)
+		suite.Nil(tex)
+	})
+}
+
 // --- Builder option functions ---
 
 func (suite *rendererImplTest) TestWithPipeline() {
@@ -823,5 +864,49 @@ func (suite *rendererImplTest) TestWithForceSoftwareRenderer() {
 	suite.Run("should set the force fallback adapter flag to false", func() {
 		renderer.ApplyOption(suite.r, renderer.WithForceSoftwareRenderer(false))
 		suite.False(renderer.RendererForceFallbackAdapter(suite.r))
+	})
+}
+
+func (suite *rendererImplTest) TestWithGPUSerializedProfiling() {
+	suite.Run("should set gpu serialized profiling to true", func() {
+		renderer.ApplyOption(suite.r, renderer.WithGPUSerializedProfiling(true))
+		suite.True(renderer.RendererGPUSerializedProfiling(suite.r))
+	})
+
+	suite.Run("should set gpu serialized profiling to false", func() {
+		renderer.ApplyOption(suite.r, renderer.WithGPUSerializedProfiling(false))
+		suite.False(renderer.RendererGPUSerializedProfiling(suite.r))
+	})
+
+	suite.Run("last applied serialized profiling option wins", func() {
+		renderer.ApplyOption(suite.r, renderer.WithGPUSerializedProfiling(true))
+		renderer.ApplyOption(suite.r, renderer.WithGPUSerializedProfiling(false))
+
+		suite.False(renderer.RendererGPUSerializedProfiling(suite.r))
+	})
+}
+
+func (suite *rendererImplTest) TestNewRendererNilWindowPanics() {
+	suite.Run("should panic when constructing a renderer with a nil window", func() {
+		suite.Panics(func() {
+			renderer.NewRenderer(renderer.BackendTypeWGPU, nil)
+		})
+	})
+
+	suite.Run("should still panic with nil window when builder options are provided", func() {
+		suite.Panics(func() {
+			renderer.NewRenderer(
+				renderer.BackendTypeWGPU,
+				nil,
+				renderer.WithGPUSerializedProfiling(true),
+				renderer.WithForceSoftwareRenderer(true),
+			)
+		})
+	})
+
+	suite.Run("should still panic with nil window when msaa option is provided", func() {
+		suite.Panics(func() {
+			renderer.NewRenderer(renderer.BackendTypeWGPU, nil, renderer.WithMSAA(renderer.MSAA8x))
+		})
 	})
 }

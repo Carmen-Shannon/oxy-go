@@ -248,6 +248,10 @@ const (
 	// downsample compute shader for threshold configuration.
 	// Source: engine/light/assets/bloom-params.wgsl
 	annotationArgBloomParams AnnotationArg = "bloom_params"
+
+	// annotationArgTAAParams identifies the TAAParams struct for the TAA resolve compute shader.
+	// Source: engine/light/assets/taa-params.wgsl
+	annotationArgTAAParams AnnotationArg = "taa_params"
 )
 
 // ── Address space arguments ────────────────────────────────────────────────────
@@ -325,6 +329,12 @@ const (
 
 	// AnnotationArgAnimatorMaxHiZ identifies the animator MAX Hi-Z occlusion culling provider.
 	AnnotationArgAnimatorMaxHiZ AnnotationArg = "animator_max_hiz"
+
+	// AnnotationArgTAA identifies the TAA resolve provider.
+	AnnotationArgTAA AnnotationArg = "taa"
+
+	// AnnotationArgTAASharpen identifies the CAS (Contrast Adaptive Sharpening) post-TAA provider.
+	AnnotationArgTAASharpen AnnotationArg = "taa_sharpen"
 )
 
 // ── Injection key arguments ────────────────────────────────────────────────────
@@ -483,6 +493,27 @@ const (
 
 	// AnnotationArgMaterialParams identifies the per-material scalar parameters uniform binding role.
 	AnnotationArgMaterialParams AnnotationArg = "material_params"
+
+	// AnnotationArgTAAHDRTexture identifies the current-frame HDR texture binding role for TAA.
+	AnnotationArgTAAHDRTexture AnnotationArg = "taa_hdr_texture"
+
+	// AnnotationArgTAAHistoryTexture identifies the history accumulation texture binding role for TAA.
+	AnnotationArgTAAHistoryTexture AnnotationArg = "taa_history_texture"
+
+	// AnnotationArgTAADepth identifies the G-Buffer depth texture binding role for TAA reprojection.
+	AnnotationArgTAADepth AnnotationArg = "taa_depth"
+
+	// AnnotationArgTAAResolved identifies the TAA resolved output storage texture binding role.
+	AnnotationArgTAAResolved AnnotationArg = "taa_resolved"
+
+	// AnnotationArgTAASampler identifies the linear sampler binding role for TAA history sampling.
+	AnnotationArgTAASampler AnnotationArg = "taa_sampler"
+
+	// AnnotationArgTAASharpenInput identifies the TAA resolved texture input binding role for CAS.
+	AnnotationArgTAASharpenInput AnnotationArg = "taa_sharpen_input"
+
+	// AnnotationArgTAASharpenOutput identifies the sharpened storage texture output binding role for CAS.
+	AnnotationArgTAASharpenOutput AnnotationArg = "taa_sharpen_output"
 )
 
 var validInjectionKeys = []AnnotationArg{
@@ -545,6 +576,7 @@ var validStructTypes = []AnnotationArg{
 	annotationArgContactShadowParams,
 	annotationArgLuminanceParams,
 	annotationArgBloomParams,
+	annotationArgTAAParams,
 }
 
 // validAddressSpaces lists all AnnotationArg values that are accepted as address
@@ -578,6 +610,8 @@ var validProviderIdentities = []AnnotationArg{
 	AnnotationArgContactShadows,
 	AnnotationArgAnimatorHiZ,
 	AnnotationArgAnimatorMaxHiZ,
+	AnnotationArgTAA,
+	AnnotationArgTAASharpen,
 }
 
 // validBindingRoles lists all AnnotationArg values that are accepted as binding
@@ -606,6 +640,13 @@ var validBindingRoles = []AnnotationArg{
 	AnnotationArgContactShadowTexture,
 	AnnotationArgContactShadowSampler,
 	AnnotationArgMaterialParams,
+	AnnotationArgTAAHDRTexture,
+	AnnotationArgTAAHistoryTexture,
+	AnnotationArgTAADepth,
+	AnnotationArgTAAResolved,
+	AnnotationArgTAASampler,
+	AnnotationArgTAASharpenInput,
+	AnnotationArgTAASharpenOutput,
 }
 
 // parseAnnotation attempts to parse a single line of WGSL source as an @oxy: annotation.

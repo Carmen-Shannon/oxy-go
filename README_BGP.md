@@ -72,10 +72,11 @@ A `BindGroupProvider` manages three categories of GPU resources:
 
 ### Metadata & Lifecycle
 
-| Field / Method   | Description                                   |
-| ---------------- | --------------------------------------------- |
-| `Label() string` | Debug label for profiling and diagnostics     |
-| `Release()`      | Frees all GPU resources held by this provider |
+| Field / Method      | Description                                                                                            |
+| ------------------- | ------------------------------------------------------------------------------------------------------ |
+| `Label() string`    | Debug label for profiling and diagnostics                                                              |
+| `SetSlot(slot int)` | Sets the active frame-in-flight slot (0 or 1); slot-sensitive methods operate on that slot's resources |
+| `Release()`         | Frees all GPU resources held by this provider                                                          |
 
 ---
 

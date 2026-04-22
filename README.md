@@ -184,6 +184,16 @@ Then regenerate all mocks from the project root:
 mockery
 ```
 
+For a clean regeneration that first removes all existing `mocks/` directories (run from the project root):
+
+```powershell
+Get-ChildItem -Path . -Directory -Recurse -Filter mocks | Remove-Item -Recurse -Force; mockery
+```
+
+```bash
+find . -type d -name mocks -prune -exec rm -rf {} + && mockery
+```
+
 Mockery reads `.mockery.yaml` automatically and writes generated mocks into each package's own `mocks/` subdirectory (e.g., `engine/mocks/`, `common/mocks/`).
 
 ---

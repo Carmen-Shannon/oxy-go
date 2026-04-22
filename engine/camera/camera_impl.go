@@ -28,6 +28,9 @@ type camera struct {
 	viewProjectionMatrix    [16]float32
 	inverseProjectionMatrix [16]float32
 
+	jitterX, jitterY         float32
+	prevViewProjectionMatrix [16]float32
+
 	controller        CameraController
 	bindGroupProvider bind_group_provider.BindGroupProvider
 }
@@ -39,6 +42,9 @@ func (c *camera) updateMatrices() {
 	if c.controller == nil {
 		return
 	}
+
+	// Save the current jittered VP as "previous" before overwriting.
+	copy(c.prevViewProjectionMatrix[:], c.viewProjectionMatrix[:])
 
 	px, py, pz := c.controller.Position()
 	tx, ty, tz := c.controller.Target()
@@ -52,6 +58,14 @@ func (c *camera) updateMatrices() {
 	common.Perspective(c.projectionMatrix[:],
 		c.fov, c.aspect, c.near, c.far,
 	)
+
+	// Apply sub-pixel jitter to clip-space translation elements.
+	// projectionMatrix[8] and [9] are the X and Y translation elements
+	// (column 2, rows 0 and 1 in column-major storage).
+	if c.jitterX != 0 || c.jitterY != 0 {
+		c.projectionMatrix[8] += c.jitterX
+		c.projectionMatrix[9] += c.jitterY
+	}
 
 	common.Mul4(c.viewProjectionMatrix[:], c.projectionMatrix[:], c.viewMatrix[:])
 	common.Invert4(c.inverseProjectionMatrix[:], c.projectionMatrix[:])

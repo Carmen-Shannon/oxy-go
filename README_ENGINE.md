@@ -74,8 +74,8 @@ Creates a new Engine with sensible defaults and applies each option in order. Wh
 
 ### Window
 
-| Method            | Description                             |
-| ----------------- | --------------------------------------- |
+| Method                   | Description                             |
+| ------------------------ | --------------------------------------- |
 | `Window() window.Window` | Returns the underlying window instance. |
 
 ### Tick & Render
@@ -96,10 +96,10 @@ Creates a new Engine with sensible defaults and applies each option in order. Wh
 
 ### Scene Management
 
-| Method                   | Description                                                      |
-| ------------------------ | ---------------------------------------------------------------- |
-| `AddScene(key, s)`       | Registers a scene at the given z-index. Lower keys render first. |
-| `RemoveScene(key)`       | Removes the scene at the given z-index.                          |
+| Method                         | Description                                                      |
+| ------------------------------ | ---------------------------------------------------------------- |
+| `AddScene(key, s)`             | Registers a scene at the given z-index. Lower keys render first. |
+| `RemoveScene(key)`             | Removes the scene at the given z-index.                          |
 | `Scene(key) scene.Scene`       | Retrieves the scene at the given z-index, or `nil`.              |
 | `Scenes() map[int]scene.Scene` | Returns a copy of all registered scenes keyed by z-index.        |
 
@@ -111,39 +111,57 @@ Each iteration of `handleRender`, for all active scenes sorted by ascending z-in
 
 ```
 Phase A — Compute (animation, physics):
+  renderer.SyncGPUTimestamps()
+  scene.SyncFrameSlot(renderer.CurrentFrameSlot())    for each active scene
   renderer.BeginComputeFrame()
-  ── scene.PrepareCompute(dt)            for each active scene
+  ── scene.PrepareCompute(dt)                          for each active scene
   renderer.EndComputeFrame()
 
-Phase B — Geometry (shadows, G-Buffer):
+Phase B — Geometry (shadows, lights, G-Buffer):
   renderer.BeginGeometryFrame()
-  ── scene.PrepareShadows()              for each active scene
-  ── scene.PrepareGBuffer()              for each active scene
+  ── scene.PrepareShadows()                            for each active scene
+  ── scene.PrepareLights()                             for each active scene
+  ── scene.PrepareGBuffer()                            for each active scene
   renderer.EndGeometryFrame()
 
 Phase C — Compute (light culling, SSAO, contact shadows):
   renderer.BeginComputeFrame()
-  ── scene.PrepareLightCulling()         for each active scene
-  ── scene.PrepareSSAO()                 for each active scene
-  ── scene.PrepareContactShadows()       for each active scene
+  ── scene.PrepareLightCulling()                       for each active scene
+  ── scene.PrepareSSAO()                               for each active scene
+  ── scene.PrepareContactShadows()                     for each active scene
   renderer.EndComputeFrame()
 
-Phase D — HDR draw + post-process:
-  scene.BeginHDRFrame()  (or renderer.BeginFrame() as fallback)
-  ── scene.DrawCalls()                   for each active scene
+Phase D — HDR lit draw:
+  scene.BeginHDRFrame()
+  ── scene.DrawCalls()                                 for each active scene
   renderer.EndFrame()
-  renderer.BeginComputeFrame()           (SSR sub-pass, HDR path only)
-  ── scene.PrepareSSR()                  for each active scene
+
+Phase E — Post-process compute (SSR, luminance, bloom, TAA):
+  renderer.BeginComputeFrame()
+  ── scene.PrepareSSR()                                for each active scene
+  ── scene.PrepareLuminance(dt)                        for each active scene
+  ── scene.PrepareBloom()                              for each active scene
+  ── scene.PrepareTAA()                                for each active scene
   renderer.EndComputeFrame()
-  ── scene.PrepareComposition()          for each active scene  (HDR path only)
-  renderer.FlushFrame()                  (batched GPU submit)
+
+Phase F — Composition and present:
+  scene.AcquireCompositionFrame()
+  ── scene.PrepareComposition()                        for each active scene (if acquire succeeded)
+  renderer.FlushFrame()                                batched GPU submit for all phases A–F
   renderer.Present()
 
 Post-frame:
-  renderCallback(dt)                     user render callback (if set)
-  profiler.Tick()                        profiling sample (if enabled)
-  frame rate limiting sleep              (if renderFrameLimit > 0)
+  renderCallback(dt)                                   user render callback (if set)
+  profiler.Tick()                                      profiling sample (if enabled)
+  frame rate limiting sleep                            (if renderFrameLimit > 0)
 ```
+
+**Ordering constraints:**
+
+- All command buffers from phases A–F are accumulated and submitted in a single `FlushFrame()` call to minimise `vkQueueSubmit` overhead.
+- `PrepareLights()` must be called **after** `PrepareShadows()` because shadow slot assignments must be populated before the light buffer is marshalled.
+- `PrepareSSR()` must be called **after** `DrawCalls()` because SSR reads the populated HDR texture.
+- `PrepareTAA()` must be called **after** `PrepareBloom()` and before composition (`AcquireCompositionFrame()` / `PrepareComposition()`).
 
 All active scenes sharing the same renderer are rendered within a single render pass, enabling layered compositing by z-index order.
 
@@ -173,8 +191,8 @@ The `handleRender` goroutine includes a `recover()` guard — if a panic occurs 
 
 ## Files
 
-| File                | Purpose                                                                                                   |
-| ------------------- | --------------------------------------------------------------------------------------------------------- |
-| `engine.go`         | `Engine` interface definition and thin method delegation implementations                                  |
+| File                | Purpose                                                                                                      |
+| ------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `engine.go`         | `Engine` interface definition and thin method delegation implementations                                     |
 | `engine_impl.go`    | `engine` unexported struct, goroutine loops (`handleEngine`, `handleRender`, `handleQuit`), internal helpers |
-| `engine_builder.go` | `EngineBuilderOption` type, 5 `With*` builder functions, and `NewEngine` constructor                      |
+| `engine_builder.go` | `EngineBuilderOption` type, 5 `With*` builder functions, and `NewEngine` constructor                         |

@@ -25,6 +25,7 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/animator"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 )
 
@@ -275,6 +276,13 @@ type Scene interface {
 	// bloom is disabled or the composition handler has not been initialized.
 	PrepareBloom()
 
+	// PrepareTAA dispatches the TAA resolve compute shader, blending the current HDR
+	// frame with the accumulated history texture using motion-vector reprojection and
+	// neighborhood variance clamping. Must be called after PrepareBloom (so the HDR
+	// texture is fully populated) and before PrepareComposition. No-ops if the TAA
+	// handler is not initialized or the camera is nil.
+	PrepareTAA()
+
 	// PrepareComposition runs the fullscreen composition pass: samples the HDR lit
 	// texture and optional SSR texture, applies ACES tone mapping and gamma
 	// correction, and writes the final LDR result to the swapchain.
@@ -343,17 +351,20 @@ func (s *scene) Resize(width, height int) {
 	if s.lightHandler.Enabled() {
 		s.lightHandler.Resize(width, height)
 	}
-	if s.lightHandler.GBufferHandler().Enabled() {
-		s.lightHandler.GBufferHandler().Resize(width, height)
+	if s.gBufferHandler.Enabled() {
+		s.gBufferHandler.Resize(width, height)
 	}
-	if s.lightHandler.SSAOHandler().Enabled() {
-		s.lightHandler.SSAOHandler().Resize(width, height)
+	if s.ssaoHandler.Enabled() {
+		s.ssaoHandler.Resize(width, height)
 	}
-	if s.lightHandler.CompositionHandler().Enabled() {
-		s.lightHandler.CompositionHandler().Resize(width, height)
+	if s.compositionHandler.Enabled() {
+		s.compositionHandler.Resize(width, height)
 	}
-	if s.lightHandler.SSRHandler().Enabled() {
-		s.lightHandler.SSRHandler().Resize(width, height)
+	if s.ssrHandler.Enabled() {
+		s.ssrHandler.Resize(width, height)
+	}
+	if taaH := s.taaHandler; taaH != nil && taaH.Enabled() {
+		taaH.Resize(width, height)
 	}
 	needTileCullReinit := s.lightHandler.TileCountX()*s.lightHandler.TileCountY() > s.tileBufferCapacity
 	s.mu.Unlock()
@@ -405,7 +416,7 @@ func (s *scene) PrepareGBuffer() {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if s.lightHandler.GBufferHandler() == nil || !s.lightHandler.GBufferHandler().Enabled() || s.r == nil {
+	if s.gBufferHandler == nil || !s.gBufferHandler.Enabled() || s.r == nil {
 		return
 	}
 
@@ -413,9 +424,9 @@ func (s *scene) PrepareGBuffer() {
 		return
 	}
 	s.r.BeginGBufferPass(
-		s.lightHandler.GBufferHandler().NormalTextureView(),
-		s.lightHandler.GBufferHandler().AlbedoTextureView(),
-		s.lightHandler.GBufferHandler().DepthTextureView(),
+		s.gBufferHandler.NormalTextureView(),
+		s.gBufferHandler.AlbedoTextureView(),
+		s.gBufferHandler.DepthTextureView(),
 	)
 
 	for _, anim := range s.animatorPool {
@@ -428,15 +439,15 @@ func (s *scene) PrepareGBuffer() {
 			if mdl == nil {
 				continue
 			}
-			meshProvider := mdl.MeshProvider()
+			meshProvider := mdl.LODMeshProvider(s.animLODLevel(a))
 			if meshProvider == nil {
 				continue
 			}
 
 			// Select the appropriate G-Buffer pipeline based on whether the model is skinned.
-			pipeKey := s.lightHandler.GBufferHandler().PipelineKey("static")
+			pipeKey := s.gBufferHandler.PipelineKey("static")
 			if mdl.Skinned() {
-				pipeKey = s.lightHandler.GBufferHandler().PipelineKey("skinned")
+				pipeKey = s.gBufferHandler.PipelineKey("skinned")
 			}
 			if pipeKey == "" {
 				continue
@@ -455,26 +466,29 @@ func (s *scene) PrepareGBuffer() {
 			if len(mats) == 0 {
 				continue
 			}
-			matBGP := mats[0].BindGroupProvider()
-			if matBGP == nil {
-				continue
-			}
 
-			gbufferBindGroups := []bind_group_provider.BindGroupProvider{
-				cameraBGP,
-				a.OutputBindGroupProvider(),
-				matBGP,
-			}
-
-			// Use indirect draw when GPU frustum culling is active.
-			if a.CullingEnabled() {
-				if indBuf := a.IndirectBuffer(s.animIndirectBinding[a]); indBuf != nil {
-					_ = s.r.GBufferDrawCallIndirect(pipeKey, meshProvider, indBuf, gbufferBindGroups)
+			for _, mat := range mats {
+				matBGP := mat.BindGroupProvider()
+				if matBGP == nil {
 					continue
 				}
-			}
 
-			_ = s.r.GBufferDrawCall(pipeKey, meshProvider, uint32(a.InstanceCount()), gbufferBindGroups)
+				gbufferBindGroups := []bind_group_provider.BindGroupProvider{
+					cameraBGP,
+					a.OutputBindGroupProvider(),
+					matBGP,
+				}
+
+				// Use indirect draw when GPU frustum culling is active.
+				if a.CullingEnabled() {
+					if indBuf := a.IndirectBuffer(s.animIndirectBinding[a]); indBuf != nil {
+						_ = s.r.GBufferDrawCallIndirect(pipeKey, meshProvider, indBuf, gbufferBindGroups)
+						continue
+					}
+				}
+
+				_ = s.r.GBufferDrawCall(pipeKey, meshProvider, uint32(a.InstanceCount()), gbufferBindGroups)
+			}
 		}
 	}
 
@@ -486,26 +500,26 @@ func (s *scene) PrepareSSAO() {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if s.lightHandler.SSAOHandler() == nil || !s.lightHandler.SSAOHandler().Enabled() || s.r == nil || s.cam == nil {
+	if s.ssaoHandler == nil || !s.ssaoHandler.Enabled() || s.r == nil || s.cam == nil {
 		return
 	}
 
-	w := s.lightHandler.SSAOHandler().ScreenWidth()
-	h := s.lightHandler.SSAOHandler().ScreenHeight()
+	w := s.ssaoHandler.ScreenWidth()
+	h := s.ssaoHandler.ScreenHeight()
 
 	// Compute the G-Buffer coordinate scale: 2.0 when running at half-resolution,
 	// 1.0 at full resolution. The SSAO compute and blur shaders multiply their
 	// texture coordinates by this value when reading from full-res G-Buffer textures.
 	var gbufferScale float32 = 1.0
 	var gbufferScaleI int32 = 1
-	if s.lightHandler.SSAOHandler().HalfResolution() {
+	if s.ssaoHandler.HalfResolution() {
 		gbufferScale = 2.0
 		gbufferScaleI = 2
 	}
 
 	ssaoW := w
 	ssaoH := h
-	if s.lightHandler.SSAOHandler().HalfResolution() {
+	if s.ssaoHandler.HalfResolution() {
 		ssaoW = max(w/2, 1)
 		ssaoH = max(h/2, 1)
 	}
@@ -522,7 +536,7 @@ func (s *scene) PrepareSSAO() {
 	}
 
 	// Compute view-adaptive world-space radius from screen-space pixel radius.
-	screenRadius := s.lightHandler.SSAOHandler().ScreenRadius()
+	screenRadius := s.ssaoHandler.ScreenRadius()
 	camDist := float32(1.0)
 	if ctrl := s.cam.Controller(); ctrl != nil {
 		if d := ctrl.Radius(); d > 0 {
@@ -533,32 +547,32 @@ func (s *scene) PrepareSSAO() {
 	worldRadius := screenRadius * (2.0 * camDist * float32(math.Tan(float64(fov/2.0)))) / float32(ssaoH)
 
 	// Build and write SSAO uniform parameters.
-	ssaoParams := light.GPUSSAOParams{
+	ssaoParams := postprocessing.GPUSSAOParams{
 		Projection:     s.cam.ViewProjectionMatrix(),
 		InvViewProj:    invVP,
 		Radius:         worldRadius,
-		Bias:           s.lightHandler.SSAOHandler().Bias(),
-		Power:          s.lightHandler.SSAOHandler().Power(),
-		SampleCount:    uint32(s.lightHandler.SSAOHandler().SampleCount()),
+		Bias:           s.ssaoHandler.Bias(),
+		Power:          s.ssaoHandler.Power(),
+		SampleCount:    uint32(s.ssaoHandler.SampleCount()),
 		ScreenWidth:    float32(ssaoW),
 		ScreenHeight:   float32(ssaoH),
 		GBufferScale:   gbufferScale,
 		CameraPosition: camPos,
 	}
 
-	ssaoBGP := s.lightHandler.SSAOHandler().Bgp("ssao_compute")
-	blurHBGP := s.lightHandler.SSAOHandler().Bgp("ssao_blur_h")
-	blurVBGP := s.lightHandler.SSAOHandler().Bgp("ssao_blur_v")
+	ssaoBGP := s.ssaoHandler.Bgp("ssao_compute")
+	blurHBGP := s.ssaoHandler.Bgp("ssao_blur_h")
+	blurVBGP := s.ssaoHandler.Bgp("ssao_blur_v")
 
 	// Write SSAO params to the compute BGP uniform buffer.
-	hParams := light.GPUBlurParams{
+	hParams := postprocessing.GPUBlurParams{
 		Direction:    [2]int32{1, 0},
-		Radius:       int32(s.lightHandler.SSAOHandler().BlurRadius()),
+		Radius:       int32(s.ssaoHandler.BlurRadius()),
 		GBufferScale: gbufferScaleI,
 	}
-	vParams := light.GPUBlurParams{
+	vParams := postprocessing.GPUBlurParams{
 		Direction:    [2]int32{0, 1},
-		Radius:       int32(s.lightHandler.SSAOHandler().BlurRadius()),
+		Radius:       int32(s.ssaoHandler.BlurRadius()),
 		GBufferScale: gbufferScaleI,
 	}
 	s.r.WriteBuffers([]bind_group_provider.BufferWrite{
@@ -568,7 +582,7 @@ func (s *scene) PrepareSSAO() {
 	})
 
 	// Dispatch SSAO compute + bilateral blur.
-	ssaoWGX, ssaoWGY := s.computeWorkgroupSize2D(s.lightHandler.SSAOHandler().PipelineKey("ssao_compute"), 16, 16)
+	ssaoWGX, ssaoWGY := s.computeWorkgroupSize2D(s.ssaoHandler.PipelineKey("ssao_compute"), 16, 16)
 	workGroupsX := (uint32(ssaoW) + ssaoWGX - 1) / ssaoWGX
 	workGroupsY := (uint32(ssaoH) + ssaoWGY - 1) / ssaoWGY
 	wg := [3]uint32{workGroupsX, workGroupsY, 1}
@@ -576,13 +590,13 @@ func (s *scene) PrepareSSAO() {
 	// Each dispatch is a separate compute pass to ensure automatic GPU barriers
 	// between the SSAO compute output and the blur reads (READ-AFTER-WRITE).
 	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-		{PipelineKey: s.lightHandler.SSAOHandler().PipelineKey("ssao_compute"), Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ssaoBGP}}, WorkGroupCount: wg},
+		{PipelineKey: s.ssaoHandler.PipelineKey("ssao_compute"), Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ssaoBGP}}, WorkGroupCount: wg},
 	})
 	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-		{PipelineKey: s.lightHandler.SSAOHandler().PipelineKey("ssao_blur"), Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: blurHBGP}}, WorkGroupCount: wg},
+		{PipelineKey: s.ssaoHandler.PipelineKey("ssao_blur"), Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: blurHBGP}}, WorkGroupCount: wg},
 	})
 	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-		{PipelineKey: s.lightHandler.SSAOHandler().PipelineKey("ssao_blur"), Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: blurVBGP}}, WorkGroupCount: wg},
+		{PipelineKey: s.ssaoHandler.PipelineKey("ssao_blur"), Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: blurVBGP}}, WorkGroupCount: wg},
 	})
 }
 
@@ -640,7 +654,7 @@ func (s *scene) PrepareContactShadows() {
 
 	csBGP := csHandler.Bgp("contact_shadow_compute")
 	s.r.WriteBuffers([]bind_group_provider.BufferWrite{
-		{Provider: csBGP, Binding: 2, Offset: 0, Data: params.Marshal()},
+		{Provider: csBGP, Binding: 4, Offset: 0, Data: params.Marshal()},
 	})
 
 	csWGX, csWGY := s.computeWorkgroupSize2D(csHandler.PipelineKey("contact_shadow_compute"), 16, 16)
@@ -660,8 +674,8 @@ func (s *scene) PrepareSSR() {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	ssrHandler := s.lightHandler.SSRHandler()
-	compHandler := s.lightHandler.CompositionHandler()
+	ssrHandler := s.ssrHandler
+	compHandler := s.compositionHandler
 	if ssrHandler == nil || !ssrHandler.Enabled() || compHandler == nil || !compHandler.Enabled() || s.r == nil || s.cam == nil {
 		return
 	}
@@ -681,7 +695,7 @@ func (s *scene) PrepareSSR() {
 	}
 
 	// Build and write SSR uniform parameters.
-	ssrParams := light.GPUSSRParams{
+	ssrParams := postprocessing.GPUSSRParams{
 		Projection:      s.cam.ProjectionMatrix(),
 		InvProjection:   s.cam.InverseProjectionMatrix(),
 		View:            s.cam.ViewMatrix(),
@@ -800,7 +814,7 @@ func (s *scene) PrepareBloom() {
 	if s.lightHandler == nil || s.r == nil {
 		return
 	}
-	ch := s.lightHandler.CompositionHandler()
+	ch := s.compositionHandler
 	if ch == nil || !ch.Enabled() || !ch.BloomEnabled() || ch.BloomMipCount() <= 0 {
 		return
 	}
@@ -810,7 +824,7 @@ func (s *scene) PrepareBloom() {
 	// Write bloom params for each downsample BGP.
 	writes := make([]bind_group_provider.BufferWrite, mipCount)
 	for i := 0; i < mipCount; i++ {
-		params := light.GPUBloomParams{}
+		params := postprocessing.GPUBloomParams{}
 		if i == 0 {
 			params.Threshold = ch.BloomThreshold()
 		}
@@ -861,17 +875,134 @@ func (s *scene) PrepareBloom() {
 	s.r.EndComputeFrame()
 }
 
+func (s *scene) PrepareTAA() {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	s.prepareTAA()
+}
+
+func (s *scene) prepareTAA() {
+	if s.lightHandler == nil || s.cam == nil {
+		return
+	}
+	taaH := s.taaHandler
+	if taaH == nil || !taaH.Enabled() {
+		return
+	}
+
+	// Halton sequence for sub-pixel jitter (base 2 for X, base 3 for Y).
+	// Returns value in [-0.5, 0.5] pixel space, then converted to NDC.
+	halton := func(index uint64, base uint64) float32 {
+		var result float64
+		f := 1.0 / float64(base)
+		i := index
+		for i > 0 {
+			result += f * float64(i%base)
+			i /= base
+			f /= float64(base)
+		}
+		return float32(result - 0.5) // center around 0
+	}
+
+	// Wrap the Halton sequence at N=8 per Yang et al. [YNS*09] §3.1 recommendation.
+	// UE4 uses an 8-sample Halton(2,3) sequence by default. Bounded wrapping ensures
+	// all 8 sub-pixel positions are evenly covered each cycle regardless of frame count,
+	// and avoids floating-point precision issues in the Halton computation at high indices.
+	nextIdx := (taaH.FrameIndex() + 1) % 8
+	jitterScale := taaH.JitterScale()
+	jx := halton(nextIdx, 2) * jitterScale
+	jy := halton(nextIdx, 3) * jitterScale
+	taaH.AdvanceFrame(jx, jy)
+
+	// Convert pixel jitter to projection-matrix NDC element units.
+	sw := float32(taaH.ScreenWidth())
+	sh := float32(taaH.ScreenHeight())
+	var ndcX, ndcY float32
+	if sw > 0 {
+		ndcX = jx * 2.0 / sw
+	}
+	if sh > 0 {
+		ndcY = jy * 2.0 / sh
+	}
+
+	// Schedule the jitter for the NEXT frame's cam.Update().
+	s.cam.SetJitter(ndcX, ndcY)
+
+	// Build GPUTAAParams from the camera's CURRENT (jittered) matrices.
+	// currVP reflects the jittered VP for the current frame (applied last frame's prepareTAA jitter).
+	// prevVP reflects the jittered VP that was active in the previous frame.
+	currVP := s.cam.ViewProjectionMatrix()
+	var invCurrVP [16]float32
+	common.Invert4(invCurrVP[:], currVP[:])
+	rawHistoryOnly := float32(0.0)
+	if taaH.RawHistoryOnly() {
+		rawHistoryOnly = 1.0
+	}
+
+	params := postprocessing.GPUTAAParams{
+		InvCurrViewProj:           invCurrVP,
+		PrevViewProj:              s.cam.PrevViewProjectionMatrix(),
+		JitterCurr:                [2]float32{taaH.JitterX(), taaH.JitterY()},
+		JitterPrev:                [2]float32{taaH.PrevJitterX(), taaH.PrevJitterY()},
+		ScreenWidth:               float32(taaH.ScreenWidth()),
+		ScreenHeight:              float32(taaH.ScreenHeight()),
+		BlendFactor:               taaH.BlendFactor(),
+		HistoryRectificationScale: taaH.HistoryRectificationScale(),
+		RawHistoryOnly:            rawHistoryOnly,
+	}
+
+	// Select the active slot's BGP using the renderer's current frame slot.
+	slot := s.r.CurrentFrameSlot()
+
+	bgpKey := "taa_resolve_0"
+	if slot == 1 {
+		bgpKey = "taa_resolve_1"
+	}
+	bgp := taaH.Bgp(bgpKey)
+
+	s.r.WriteBuffers([]bind_group_provider.BufferWrite{
+		{Provider: bgp, Binding: 0, Offset: 0, Data: params.Marshal()},
+	})
+
+	w := uint32(taaH.ScreenWidth())
+	h := uint32(taaH.ScreenHeight())
+	wgX := (w + 7) / 8
+	wgY := (h + 7) / 8
+
+	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+		{
+			PipelineKey:    taaH.PipelineKey("taa_resolve"),
+			Providers:      []renderer.ComputeGroupProvider{{Group: 0, Provider: bgp}},
+			WorkGroupCount: [3]uint32{wgX, wgY, 1},
+		},
+	})
+
+	casBGPKey := "taa_sharpen_0"
+	if slot == 1 {
+		casBGPKey = "taa_sharpen_1"
+	}
+	casBGP := taaH.Bgp(casBGPKey)
+
+	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+		{
+			PipelineKey:    taaH.PipelineKey("taa_sharpen"),
+			Providers:      []renderer.ComputeGroupProvider{{Group: 0, Provider: casBGP}},
+			WorkGroupCount: [3]uint32{wgX, wgY, 1},
+		},
+	})
+}
+
 func (s *scene) PrepareComposition() {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	compHandler := s.lightHandler.CompositionHandler()
+	compHandler := s.compositionHandler
 	if compHandler == nil || !compHandler.Enabled() || s.r == nil {
 		return
 	}
 
 	// Write composition params uniform.
-	compParams := light.GPUCompositionParams{
+	compParams := postprocessing.GPUCompositionParams{
 		Exposure: compHandler.Exposure(),
 	}
 	if compHandler.ToneMappingEnabled() {
@@ -908,7 +1039,7 @@ func (s *scene) BeginHDRFrame() error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	ch := s.lightHandler.CompositionHandler()
+	ch := s.compositionHandler
 	if ch == nil || !ch.Enabled() || s.r == nil {
 		return fmt.Errorf("scene %q: composition not initialized", s.name)
 	}
@@ -1219,7 +1350,7 @@ func (s *scene) PrepareShadows() {
 			}
 			if buf, ok := s.shadowIndirectBuffers[a]; ok && buf != nil {
 				args := animator.GPUIndirectArgs{
-					IndexCount:    uint32(mdl.IndexCount()),
+					IndexCount:    uint32(mdl.LODIndexCount(s.animShadowLODLevel(a))),
 					InstanceCount: a.InstanceCount(),
 					FirstIndex:    0,
 					BaseVertex:    0,
@@ -1393,7 +1524,7 @@ func (s *scene) PrepareShadows() {
 					if mdl == nil || !mdl.CastsShadows() {
 						continue
 					}
-					meshProvider := mdl.MeshProvider()
+					meshProvider := mdl.LODMeshProvider(s.animShadowLODLevel(a))
 					if meshProvider == nil {
 						continue
 					}
@@ -1467,7 +1598,7 @@ func (s *scene) PrepareShadows() {
 					if mdl == nil || !mdl.CastsShadows() {
 						continue
 					}
-					meshProvider := mdl.MeshProvider()
+					meshProvider := mdl.LODMeshProvider(s.animShadowLODLevel(a))
 					if meshProvider == nil {
 						continue
 					}
@@ -1599,7 +1730,7 @@ func (s *scene) PrepareShadows() {
 						if mdl == nil || !mdl.CastsShadows() {
 							continue
 						}
-						meshProvider := mdl.MeshProvider()
+						meshProvider := mdl.LODMeshProvider(s.animShadowLODLevel(a))
 						if meshProvider == nil {
 							continue
 						}
@@ -1819,6 +1950,9 @@ func (s *scene) AddGameObject(obj game_object.GameObject, pipelineOpts ...pipeli
 
 	// Push initial transform data from the GameObject into the animator slot
 	anim.SetInstanceData(idx, pos, scale, rotSpeed, rot)
+	if obj.ContactShadowExcluded() {
+		anim.SetInstanceFlags(idx, animator.InstanceFlagContactShadowExcluded)
+	}
 
 	// Update reverse-index so Remove() can find the swapped object in O(1).
 	if s.instanceLookup[anim] == nil {
@@ -1881,6 +2015,7 @@ func (s *scene) AddGameObject(obj game_object.GameObject, pipelineOpts ...pipeli
 		}
 	}
 
+	s.drawCacheDirty = true
 	return obj.ID()
 }
 
@@ -1952,6 +2087,8 @@ func (s *scene) RemoveGameObject(id uint64) {
 		s.patchSyncMapEntry(anim, obj.ID(), 0xFFFFFFFF)
 		s.physicsHandler.RemoveBody(obj.ID())
 	}
+
+	s.drawCacheDirty = true
 }
 
 func (s *scene) PrepareCompute(deltaTime float32) {
@@ -1968,9 +2105,12 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 	hiZMipCount := 0
 	projX := float32(0)
 	if s.lightHandler != nil {
-		if ssrHandler := s.lightHandler.SSRHandler(); ssrHandler != nil {
+		if ssrHandler := s.ssrHandler; ssrHandler != nil {
 			hiZMipCount = ssrHandler.HiZMipCount()
 		}
+	}
+	if s.debugDisableAnimatorHiZOcclusion {
+		hiZMipCount = 0
 	}
 	projMat := s.cam.ProjectionMatrix()
 	projX = projMat[0]
@@ -2036,6 +2176,13 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 	// A WaitGroup provides per-frame barrier sync since pool.Wait() blocks until
 	// workers idle-exit which is unsuitable for frame-rate workloads.
 	var wg sync.WaitGroup
+	var lodMu sync.Mutex
+	var camPosX, camPosY, camPosZ float32
+	if s.lodEnabled {
+		if ctrl := s.cam.Controller(); ctrl != nil {
+			camPosX, camPosY, camPosZ = ctrl.Position()
+		}
+	}
 	taskID := 0
 	for _, anim := range s.animatorPool {
 		for _, a := range anim {
@@ -2103,6 +2250,35 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 
 					aCap.PrepareFrame(deltaTime, uniformBinding)
 					aCap.Flush(instanceBinding, boneBinding, modelBinding)
+
+					if s.lodEnabled {
+						lodLevel := 0
+						if mdl.LODCount() > 1 && aCap.InstanceCount() > 0 {
+							minDist := float32(math.MaxFloat32)
+							for i := uint32(0); i < aCap.InstanceCount(); i++ {
+								pos, _ := aCap.InstanceTransform(i)
+								dx := pos[0] - camPosX
+								dy := pos[1] - camPosY
+								dz := pos[2] - camPosZ
+								dist := float32(math.Sqrt(float64(dx*dx + dy*dy + dz*dz)))
+								if dist < minDist {
+									minDist = dist
+								}
+							}
+							if minDist >= s.lod2Distance {
+								lodLevel = 2
+							} else if minDist >= s.lod1Distance {
+								lodLevel = 1
+							}
+							maxLevel := mdl.LODCount() - 1
+							if lodLevel > maxLevel {
+								lodLevel = maxLevel
+							}
+						}
+						lodMu.Lock()
+						s.lodLevelCache[aCap] = lodLevel
+						lodMu.Unlock()
+					}
 					return nil, nil
 				},
 			})
@@ -2122,7 +2298,8 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 			}
 			if a.CullingEnabled() {
 				if m := a.Model(); m != nil {
-					if mp := m.MeshProvider(); mp != nil {
+					lodLevel := s.animLODLevel(a)
+					if mp := m.LODMeshProvider(lodLevel); mp != nil {
 						a.ResetIndirectArgs(uint32(mp.IndexCount()), s.animIndirectBinding[a])
 					}
 				}
@@ -2179,6 +2356,32 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 			s.physicsSyncWrites = s.physicsSyncWrites[:0]
 		}
 
+		bodyCount := uint32(ph.BodiesCount())
+
+		// physDispatchGroups computes the number of work groups needed to cover
+		// itemCount invocations for the shader behind the given pipeline key.
+		// The workgroup size is read from the parsed WGSL source, not hardcoded.
+		physDispatchGroups := func(pipeKey string, itemCount uint32) [3]uint32 {
+			pipe := s.r.Pipeline(pipeKey)
+			if pipe == nil {
+				return [3]uint32{1, 1, 1}
+			}
+			shdr := pipe.Shader(shader.ShaderTypeCompute)
+			if shdr == nil {
+				return [3]uint32{1, 1, 1}
+			}
+			wgSize := shdr.WorkgroupSize()
+			xSize := wgSize[0]
+			if xSize == 0 {
+				xSize = 1
+			}
+			groups := (itemCount + xSize - 1) / xSize
+			if groups == 0 {
+				groups = 1
+			}
+			return [3]uint32{groups, 1, 1}
+		}
+
 		if substeps > 0 {
 			// Write globals uniform once — it is constant across all substeps
 			// since fixedDt does not change within a frame.
@@ -2193,32 +2396,7 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 				s.r.WriteBuffers(physWrites)
 			}
 
-			// physDispatchGroups computes the number of work groups needed to cover
-			// itemCount invocations for the shader behind the given pipeline key.
-			// The workgroup size is read from the parsed WGSL source, not hardcoded.
-			physDispatchGroups := func(pipeKey string, itemCount uint32) [3]uint32 {
-				pipe := s.r.Pipeline(pipeKey)
-				if pipe == nil {
-					return [3]uint32{1, 1, 1}
-				}
-				shdr := pipe.Shader(shader.ShaderTypeCompute)
-				if shdr == nil {
-					return [3]uint32{1, 1, 1}
-				}
-				wgSize := shdr.WorkgroupSize()
-				xSize := wgSize[0]
-				if xSize == 0 {
-					xSize = 1
-				}
-				groups := (itemCount + xSize - 1) / xSize
-				if groups == 0 {
-					groups = 1
-				}
-				return [3]uint32{groups, 1, 1}
-			}
-
 			particleCount := uint32(ph.ParticleCount())
-			bodyCount := uint32(ph.BodiesCount())
 
 			// Pre-build AABB atomics reset payload (6 × u32):
 			//   indices 0–2 (min): 0xFFFFFFFF (largest sortable uint → will be atomicMin'd down)
@@ -2272,28 +2450,6 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 				})
 			}
 
-			// After all substeps, sync physics results back to each Animator's
-			// AnimationData buffer. Each sync group dispatches the sync shader with
-			// its own BGP that binds the correct AnimationData buffer and per-group
-			// sync_map (sentinel-filtered so non-member bodies are skipped).
-			if len(s.physicsSyncGroup) > 0 {
-				syncKey := ph.PipelineKey("sync")
-				syncWG := physDispatchGroups(syncKey, bodyCount)
-				syncDispatches := make([]renderer.ComputeDispatch, 0, len(s.physicsSyncGroup))
-				for i := 0; i < len(s.physicsSyncGroup); i++ {
-					if bgp, ok := s.physicsSyncGroup[i]; ok {
-						syncDispatches = append(syncDispatches, renderer.ComputeDispatch{
-							PipelineKey:    syncKey,
-							Providers:      []renderer.ComputeGroupProvider{{Group: 0, Provider: bgp}},
-							WorkGroupCount: syncWG,
-						})
-					}
-				}
-				if len(syncDispatches) > 0 {
-					s.r.DispatchComputeBatch(syncDispatches)
-				}
-			}
-
 			// If game logic requested a readback, encode a GPU→GPU copy of the bodies
 			// buffer into the staging buffer. The next frame will map and process it.
 			if ph.ConsumeReadbackRequest() {
@@ -2306,6 +2462,27 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 			// No substeps this frame (accumulator hasn't reached fixedDt yet),
 			// but we still need to flush registration/removal writes.
 			s.r.WriteBuffers(physWrites)
+		}
+
+		// Sync physics results back to each Animator's AnimationData buffer.
+		// This must run every frame (even when substeps == 0) so both frame-slot
+		// buffers stay coherent under ping-pong scheduling.
+		if len(s.physicsSyncGroup) > 0 && bodyCount > 0 {
+			syncKey := ph.PipelineKey("sync")
+			syncWG := physDispatchGroups(syncKey, bodyCount)
+			syncDispatches := make([]renderer.ComputeDispatch, 0, len(s.physicsSyncGroup))
+			for i := 0; i < len(s.physicsSyncGroup); i++ {
+				if bgp, ok := s.physicsSyncGroup[i]; ok {
+					syncDispatches = append(syncDispatches, renderer.ComputeDispatch{
+						PipelineKey:    syncKey,
+						Providers:      []renderer.ComputeGroupProvider{{Group: 0, Provider: bgp}},
+						WorkGroupCount: syncWG,
+					})
+				}
+			}
+			if len(syncDispatches) > 0 {
+				s.r.DispatchComputeBatch(syncDispatches)
+			}
 		}
 	}
 
@@ -2398,6 +2575,190 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 func (s *scene) DrawCalls() error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	// Parallel pre-pass: rebuild the bind group cache when the animator pool has changed.
+	// Each (animator, material pipeline) pair is processed concurrently via the compute pool;
+	// cache writes are serialized by cacheMu. On steady-state frames the cache is read directly
+	// by the serial draw loop below with no declaration-scanning overhead.
+	if s.drawCacheDirty {
+		var prewg sync.WaitGroup
+		var cacheMu sync.Mutex
+		newCache := make(map[drawCacheKey][]bind_group_provider.BindGroupProvider)
+		taskID := 0
+		for _, anim := range s.animatorPool {
+			for _, a := range anim {
+				if a.InstanceCount() == 0 {
+					continue
+				}
+				mdl := a.Model()
+				if mdl == nil {
+					continue
+				}
+				mats := mdl.RenderMaterials()
+				if len(mats) == 0 {
+					continue
+				}
+				for _, mat := range mats {
+					pipelineKey := mat.PipelineKey()
+					if pipelineKey == "" {
+						continue
+					}
+					rp := s.r.Pipeline(pipelineKey)
+					if rp == nil {
+						continue
+					}
+					renderShader := rp.Shader(shader.ShaderTypeVertex)
+					if renderShader == nil {
+						continue
+					}
+					if s.computePool == nil {
+						continue
+					}
+					prewg.Add(1)
+					aCap := a
+					mCap := mat
+					mdlCap := mdl
+					pkeyCap := pipelineKey
+					rpCap := rp
+					rsCap := renderShader
+					id := taskID
+					taskID++
+					s.computePool.SubmitTask(worker.Task{
+						ID: id,
+						Do: func() (any, error) {
+							defer prewg.Done()
+
+							allDecls := make([]shader.Annotation, 0, 32)
+							allDecls = append(allDecls, rsCap.Declarations()...)
+							if fragShader := rpCap.Shader(shader.ShaderTypeFragment); fragShader != nil {
+								allDecls = append(allDecls, fragShader.Declarations()...)
+							}
+
+							maxGroup := -1
+							groupProviders := make(map[int]bind_group_provider.BindGroupProvider, 8)
+							for _, decl := range allDecls {
+								if decl.Group == nil {
+									continue
+								}
+								g := *decl.Group
+								if g > maxGroup {
+									maxGroup = g
+								}
+								if _, exists := groupProviders[g]; exists {
+									continue
+								}
+
+								var provider bind_group_provider.BindGroupProvider
+								switch decl.Type {
+								case shader.AnnotationTypeProvider:
+									switch decl.Args[0] {
+									case shader.AnnotationArgCamera:
+										provider = s.cam.BindGroupProvider()
+									case shader.AnnotationArgMaterial:
+										if mp := mCap.Provider(g); mp != nil {
+											provider = mp
+										} else {
+											provider = mCap.BindGroupProvider()
+										}
+									case shader.AnnotationArgLights:
+										if s.lightHandler.Enabled() {
+											provider = s.lightHandler.Bgp("lights")
+										}
+									case shader.AnnotationArgShadow:
+										if s.lightHandler.Enabled() {
+											provider = s.lightHandler.ShadowHandler().Bgp("csm_shadow_lit")
+										}
+									case shader.AnnotationArgTiles:
+										if s.lightHandler.Enabled() {
+											provider = s.lightHandler.Bgp("tile_lit")
+										}
+									case shader.AnnotationArgEffect:
+										if ep := mdlCap.EffectProvider(); ep != nil {
+											provider = ep
+										}
+									case shader.AnnotationArgAnimator:
+										provider = aCap.OutputBindGroupProvider()
+									case shader.AnnotationArgSSAO:
+										if s.lightHandler.Enabled() {
+											provider = s.lightHandler.Bgp("ssao_lit")
+										}
+									}
+								case shader.AnnotationTypeBindingGroup:
+									typeArg := string(decl.Args[2])
+									if stripped, ok := strings.CutPrefix(typeArg, "array<"); ok {
+										typeArg = strings.TrimSuffix(stripped, ">")
+									}
+									switch shader.AnnotationArg(typeArg) {
+									case shader.AnnotationArgCamera:
+										provider = s.cam.BindGroupProvider()
+									case shader.AnnotationArgInstanceData:
+										provider = aCap.OutputBindGroupProvider()
+									case shader.AnnotationArgLight, shader.AnnotationArgLightHeader:
+										if s.lightHandler.Enabled() {
+											provider = s.lightHandler.Bgp("lights")
+										}
+									case shader.AnnotationArgShadowUniform, shader.AnnotationArgCSMData:
+										if s.lightHandler.Enabled() {
+											provider = s.lightHandler.ShadowHandler().Bgp("csm_shadow_lit")
+										}
+									case shader.AnnotationArgTileUniforms:
+										if s.lightHandler.Enabled() {
+											provider = s.lightHandler.Bgp("tile_lit")
+										}
+									case shader.AnnotationArgOverlayParams:
+										if bp := mCap.BindGroupProvider(); bp != nil {
+											provider = bp
+										} else if ep := mdlCap.EffectProvider(); ep != nil {
+											provider = ep
+										}
+									case shader.AnnotationArgEffectParams:
+										if ep := mdlCap.EffectProvider(); ep != nil {
+											provider = ep
+										} else if mp := mCap.Provider(g); mp != nil {
+											provider = mp
+										}
+									}
+								}
+
+								if provider != nil {
+									groupProviders[g] = provider
+								}
+							}
+
+							bindGroups := make([]bind_group_provider.BindGroupProvider, 0, maxGroup+1)
+							valid := maxGroup >= 0
+							for g := 0; g <= maxGroup; g++ {
+								p, ok := groupProviders[g]
+								if !ok || p == nil {
+									valid = false
+									break
+								}
+								bindGroups = append(bindGroups, p)
+							}
+							if !valid {
+								return nil, nil
+							}
+
+							cacheMu.Lock()
+							newCache[drawCacheKey{aCap, pkeyCap}] = bindGroups
+							cacheMu.Unlock()
+							return nil, nil
+						},
+					})
+				}
+			}
+		}
+		prewg.Wait()
+		s.drawBindGroupCache = newCache
+		s.drawCacheDirty = false
+	}
+
+	// Serial draw loop. On cache hits (steady-state frames after a dirty rebuild) the hot
+	// path is a map lookup + draw call with no declaration scanning. On cache misses (first
+	// frame when drawCacheDirty was false, or when computePool is nil), the fallback runs
+	// the original inline provider resolution — identical to the pre-optimization behavior —
+	// and caches the result for subsequent frames.
+	var builtCache map[drawCacheKey][]bind_group_provider.BindGroupProvider
 	for _, anim := range s.animatorPool {
 		for _, a := range anim {
 			if a.InstanceCount() == 0 {
@@ -2408,7 +2769,7 @@ func (s *scene) DrawCalls() error {
 			if mdl == nil {
 				continue
 			}
-			meshProvider := mdl.MeshProvider()
+			meshProvider := mdl.LODMeshProvider(s.animLODLevel(a))
 			if meshProvider == nil {
 				continue
 			}
@@ -2424,134 +2785,145 @@ func (s *scene) DrawCalls() error {
 					continue
 				}
 
-				// Look up the render pipeline to discover bind group layouts from both shaders.
-				rp := s.r.Pipeline(pipelineKey)
-				if rp == nil {
-					continue
-				}
-				renderShader := rp.Shader(shader.ShaderTypeVertex)
-				if renderShader == nil {
-					continue
-				}
-
-				// Collect declarations from vertex and fragment shaders.
-				allDecls := s.drawDeclsPool[:0]
-				allDecls = append(allDecls, renderShader.Declarations()...)
-				if fragShader := rp.Shader(shader.ShaderTypeFragment); fragShader != nil {
-					allDecls = append(allDecls, fragShader.Declarations()...)
-				}
-				s.drawDeclsPool = allDecls
-
-				// Build bind groups dynamically by matching each group's var names to a provider.
-				// Groups are iterated in index order so bindGroups[i] maps to @group(i).
-				maxGroup := -1
-				clear(s.drawGroupProvidersPool)
-				groupProviders := s.drawGroupProvidersPool
-				for _, decl := range allDecls {
-					if decl.Group == nil {
+				bindGroups, ok := s.drawBindGroupCache[drawCacheKey{a, pipelineKey}]
+				if !ok {
+					// Cache miss: fall back to inline declaration scanning (original behavior).
+					// This path runs on the first frame (drawCacheDirty=false, nil cache) and
+					// whenever computePool is nil. The result is stored in builtCache so
+					// subsequent frames are fast.
+					rp := s.r.Pipeline(pipelineKey)
+					if rp == nil {
 						continue
 					}
-					g := *decl.Group
-					if g > maxGroup {
-						maxGroup = g
-					}
-					if _, exists := groupProviders[g]; exists {
+					renderShader := rp.Shader(shader.ShaderTypeVertex)
+					if renderShader == nil {
 						continue
 					}
 
-					var provider bind_group_provider.BindGroupProvider
-					switch decl.Type {
-					case shader.AnnotationTypeProvider:
-						switch decl.Args[0] {
-						case shader.AnnotationArgCamera:
-							provider = s.cam.BindGroupProvider()
-						case shader.AnnotationArgMaterial:
-							if mp := mat.Provider(g); mp != nil {
-								provider = mp
-							} else {
-								provider = mat.BindGroupProvider()
+					allDecls := s.drawDeclsPool[:0]
+					allDecls = append(allDecls, renderShader.Declarations()...)
+					if fragShader := rp.Shader(shader.ShaderTypeFragment); fragShader != nil {
+						allDecls = append(allDecls, fragShader.Declarations()...)
+					}
+					s.drawDeclsPool = allDecls
+
+					maxGroup := -1
+					clear(s.drawGroupProvidersPool)
+					groupProviders := s.drawGroupProvidersPool
+					for _, decl := range allDecls {
+						if decl.Group == nil {
+							continue
+						}
+						g := *decl.Group
+						if g > maxGroup {
+							maxGroup = g
+						}
+						if _, exists := groupProviders[g]; exists {
+							continue
+						}
+
+						var provider bind_group_provider.BindGroupProvider
+						switch decl.Type {
+						case shader.AnnotationTypeProvider:
+							switch decl.Args[0] {
+							case shader.AnnotationArgCamera:
+								provider = s.cam.BindGroupProvider()
+							case shader.AnnotationArgMaterial:
+								if mp := mat.Provider(g); mp != nil {
+									provider = mp
+								} else {
+									provider = mat.BindGroupProvider()
+								}
+							case shader.AnnotationArgLights:
+								if s.lightHandler.Enabled() {
+									provider = s.lightHandler.Bgp("lights")
+								}
+							case shader.AnnotationArgShadow:
+								if s.lightHandler.Enabled() {
+									provider = s.lightHandler.ShadowHandler().Bgp("csm_shadow_lit")
+								}
+							case shader.AnnotationArgTiles:
+								if s.lightHandler.Enabled() {
+									provider = s.lightHandler.Bgp("tile_lit")
+								}
+							case shader.AnnotationArgEffect:
+								if ep := mdl.EffectProvider(); ep != nil {
+									provider = ep
+								}
+							case shader.AnnotationArgAnimator:
+								provider = a.OutputBindGroupProvider()
+							case shader.AnnotationArgSSAO:
+								if s.lightHandler.Enabled() {
+									provider = s.lightHandler.Bgp("ssao_lit")
+								}
 							}
-						case shader.AnnotationArgLights:
-							if s.lightHandler.Enabled() {
-								provider = s.lightHandler.Bgp("lights")
+						case shader.AnnotationTypeBindingGroup:
+							typeArg := string(decl.Args[2])
+							if stripped, ok2 := strings.CutPrefix(typeArg, "array<"); ok2 {
+								typeArg = strings.TrimSuffix(stripped, ">")
 							}
-						case shader.AnnotationArgShadow:
-							if s.lightHandler.Enabled() {
-								provider = s.lightHandler.ShadowHandler().Bgp("csm_shadow_lit")
-							}
-						case shader.AnnotationArgTiles:
-							if s.lightHandler.Enabled() {
-								provider = s.lightHandler.Bgp("tile_lit")
-							}
-						case shader.AnnotationArgEffect:
-							if ep := mdl.EffectProvider(); ep != nil {
-								provider = ep
-							}
-						case shader.AnnotationArgAnimator:
-							provider = a.OutputBindGroupProvider()
-						case shader.AnnotationArgSSAO:
-							if s.lightHandler.Enabled() {
-								provider = s.lightHandler.Bgp("ssao_lit")
+							switch shader.AnnotationArg(typeArg) {
+							case shader.AnnotationArgCamera:
+								provider = s.cam.BindGroupProvider()
+							case shader.AnnotationArgInstanceData:
+								provider = a.OutputBindGroupProvider()
+							case shader.AnnotationArgLight, shader.AnnotationArgLightHeader:
+								if s.lightHandler.Enabled() {
+									provider = s.lightHandler.Bgp("lights")
+								}
+							case shader.AnnotationArgShadowUniform, shader.AnnotationArgCSMData:
+								if s.lightHandler.Enabled() {
+									provider = s.lightHandler.ShadowHandler().Bgp("csm_shadow_lit")
+								}
+							case shader.AnnotationArgTileUniforms:
+								if s.lightHandler.Enabled() {
+									provider = s.lightHandler.Bgp("tile_lit")
+								}
+							case shader.AnnotationArgOverlayParams:
+								if bp := mat.BindGroupProvider(); bp != nil {
+									provider = bp
+								} else if ep := mdl.EffectProvider(); ep != nil {
+									provider = ep
+								}
+							case shader.AnnotationArgEffectParams:
+								if ep := mdl.EffectProvider(); ep != nil {
+									provider = ep
+								} else if mp := mat.Provider(g); mp != nil {
+									provider = mp
+								}
 							}
 						}
-					case shader.AnnotationTypeBindingGroup:
-						typeArg := string(decl.Args[2])
-						if stripped, ok := strings.CutPrefix(typeArg, "array<"); ok {
-							typeArg = strings.TrimSuffix(stripped, ">")
-						}
-						switch shader.AnnotationArg(typeArg) {
-						case shader.AnnotationArgCamera:
-							provider = s.cam.BindGroupProvider()
-						case shader.AnnotationArgInstanceData:
-							provider = a.OutputBindGroupProvider()
-						case shader.AnnotationArgLight, shader.AnnotationArgLightHeader:
-							if s.lightHandler.Enabled() {
-								provider = s.lightHandler.Bgp("lights")
-							}
-						case shader.AnnotationArgShadowUniform, shader.AnnotationArgCSMData:
-							if s.lightHandler.Enabled() {
-								provider = s.lightHandler.ShadowHandler().Bgp("csm_shadow_lit")
-							}
-						case shader.AnnotationArgTileUniforms:
-							if s.lightHandler.Enabled() {
-								provider = s.lightHandler.Bgp("tile_lit")
-							}
-						case shader.AnnotationArgOverlayParams:
-							if bp := mat.BindGroupProvider(); bp != nil {
-								provider = bp
-							} else if ep := mdl.EffectProvider(); ep != nil {
-								provider = ep
-							}
-						case shader.AnnotationArgEffectParams:
-							if ep := mdl.EffectProvider(); ep != nil {
-								provider = ep
-							} else if mp := mat.Provider(g); mp != nil {
-								provider = mp
-							}
+
+						if provider != nil {
+							groupProviders[g] = provider
 						}
 					}
 
-					if provider != nil {
-						groupProviders[g] = provider
+					builtSlice := s.drawBindGroupsPool[:0]
+					skipMaterial := false
+					for g := 0; g <= maxGroup; g++ {
+						p, ok2 := groupProviders[g]
+						if !ok2 || p == nil {
+							skipMaterial = true
+							break
+						}
+						builtSlice = append(builtSlice, p)
 					}
+					s.drawBindGroupsPool = builtSlice
+					if skipMaterial {
+						continue
+					}
+
+					// Cache the built result so future frames hit the fast path.
+					cached := make([]bind_group_provider.BindGroupProvider, len(builtSlice))
+					copy(cached, builtSlice)
+					if builtCache == nil {
+						builtCache = make(map[drawCacheKey][]bind_group_provider.BindGroupProvider)
+					}
+					builtCache[drawCacheKey{a, pipelineKey}] = cached
+					bindGroups = builtSlice
 				}
 
-				bindGroups := s.drawBindGroupsPool[:0]
-				skipMaterial := false
-				for g := 0; g <= maxGroup; g++ {
-					provider, ok := groupProviders[g]
-					if !ok || provider == nil {
-						skipMaterial = true
-						break
-					}
-					bindGroups = append(bindGroups, provider)
-				}
-				if skipMaterial {
-					continue
-				}
-
-				// Use indirect draw when GPU frustum culling is active — the compute shader writes
-				// the visible instance count into the indirect args buffer, avoiding CPU readback.
 				if a.CullingEnabled() {
 					if indBuf := a.IndirectBuffer(s.animIndirectBinding[a]); indBuf != nil {
 						if err := s.r.DrawCallIndirect(pipelineKey, meshProvider, indBuf, bindGroups); err != nil {
@@ -2568,5 +2940,45 @@ func (s *scene) DrawCalls() error {
 		}
 	}
 
+	// Merge any inline-built entries into the persistent cache so future frames are fast.
+	if len(builtCache) > 0 {
+		if s.drawBindGroupCache == nil {
+			s.drawBindGroupCache = builtCache
+		} else {
+			for k, v := range builtCache {
+				s.drawBindGroupCache[k] = v
+			}
+		}
+	}
+
 	return nil
+}
+
+// animLODLevel returns the LOD level for the given animator from the per-frame cache.
+// Returns 0 (base mesh) when LOD is disabled or the animator has no cached level.
+func (s *scene) animLODLevel(a animator.Animator) int {
+	if !s.lodEnabled {
+		return 0
+	}
+	if level, ok := s.lodLevelCache[a]; ok {
+		return level
+	}
+	return 0
+}
+
+// animShadowLODLevel returns the LOD level for shadow rendering of the given
+// animator. Adds lodShadowBias to the base LOD level, clamped to the model's
+// maximum available LOD.
+func (s *scene) animShadowLODLevel(a animator.Animator) int {
+	base := s.animLODLevel(a)
+	mdl := a.Model()
+	if mdl == nil {
+		return base
+	}
+	level := base + s.lodShadowBias
+	maxLevel := mdl.LODCount() - 1
+	if level > maxLevel {
+		level = maxLevel
+	}
+	return level
 }

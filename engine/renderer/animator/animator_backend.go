@@ -11,6 +11,10 @@ const (
 	// BackendTypeSkeletal is the skeletal animation backend, supporting bone-based animation
 	// with blending and per-instance playback state driven by a compute shader.
 	BackendTypeSkeletal
+
+	// InstanceFlagContactShadowExcluded marks an instance as excluded from downstream
+	// contact-shadow classification.
+	InstanceFlagContactShadowExcluded uint32 = 1 << 0
 )
 
 // AnimatorBackend is the interface all animation backends must implement.

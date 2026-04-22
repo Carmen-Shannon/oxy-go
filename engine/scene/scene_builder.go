@@ -15,6 +15,8 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/animator"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/gbuffer"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 	"github.com/cogentcore/webgpu/wgpu"
 )
@@ -94,6 +96,22 @@ func WithCullingDisabled(disabled bool) SceneBuilderOption {
 	}
 }
 
+// WithDebugDisableAnimatorHiZOcclusion forces the Hi-Z mip count sent to
+// animators to zero during PrepareCompute, isolating animator-side Hi-Z
+// occlusion without disabling frustum culling or other animator flow.
+// By default this diagnostic is disabled.
+//
+// Parameters:
+//   - disabled: true to force animators to see zero Hi-Z mips
+//
+// Returns:
+//   - SceneBuilderOption: option function to apply
+func WithDebugDisableAnimatorHiZOcclusion(disabled bool) SceneBuilderOption {
+	return func(s *scene) {
+		s.debugDisableAnimatorHiZOcclusion = disabled
+	}
+}
+
 // WithLighting attaches a pre-configured LightingHandler to the scene, replacing
 // the default handler created by NewScene. Use light.NewLightingHandler with
 // light.WithShadow* options to configure shadow mapping and ambient color before
@@ -108,6 +126,69 @@ func WithCullingDisabled(disabled bool) SceneBuilderOption {
 func WithLighting(handler light.LightingHandler) SceneBuilderOption {
 	return func(s *scene) {
 		s.lightHandler = handler
+	}
+}
+
+// WithGBufferHandler attaches a pre-configured GBufferHandler to the scene.
+func WithGBufferHandler(handler gbuffer.GBufferHandler) SceneBuilderOption {
+	return func(s *scene) {
+		s.gBufferHandler = handler
+	}
+}
+
+// WithSSAOHandler attaches a pre-configured SSAOHandler to the scene,
+// replacing the default handler created by NewScene.
+//
+// Parameters:
+//   - handler: the pre-configured SSAOHandler
+//
+// Returns:
+//   - SceneBuilderOption: option function to apply
+func WithSSAOHandler(handler postprocessing.SSAOHandler) SceneBuilderOption {
+	return func(s *scene) {
+		s.ssaoHandler = handler
+	}
+}
+
+// WithCompositionHandler attaches a pre-configured CompositionHandler to the
+// scene, replacing the default handler created by NewScene.
+//
+// Parameters:
+//   - handler: the pre-configured CompositionHandler
+//
+// Returns:
+//   - SceneBuilderOption: option function to apply
+func WithCompositionHandler(handler postprocessing.CompositionHandler) SceneBuilderOption {
+	return func(s *scene) {
+		s.compositionHandler = handler
+	}
+}
+
+// WithSSRHandler attaches a pre-configured SSRHandler to the scene,
+// replacing the default handler created by NewScene.
+//
+// Parameters:
+//   - handler: the pre-configured SSRHandler
+//
+// Returns:
+//   - SceneBuilderOption: option function to apply
+func WithSSRHandler(handler postprocessing.SSRHandler) SceneBuilderOption {
+	return func(s *scene) {
+		s.ssrHandler = handler
+	}
+}
+
+// WithTAAHandler attaches a pre-configured TAAHandler to the scene,
+// replacing the default handler created by NewScene.
+//
+// Parameters:
+//   - handler: the pre-configured TAAHandler
+//
+// Returns:
+//   - SceneBuilderOption: option function to apply
+func WithTAAHandler(handler postprocessing.TAAHandler) SceneBuilderOption {
+	return func(s *scene) {
+		s.taaHandler = handler
 	}
 }
 
@@ -163,6 +244,51 @@ func WithMaxBonesGPU(n uint64) SceneBuilderOption {
 	}
 }
 
+// WithLODEnabled enables or disables per-frame Level-of-Detail mesh selection.
+// When enabled, the scene selects LOD levels based on camera distance each frame.
+//
+// Parameters:
+//   - enabled: true to enable LOD selection
+//
+// Returns:
+//   - SceneBuilderOption: option function to apply
+func WithLODEnabled(enabled bool) SceneBuilderOption {
+	return func(s *scene) {
+		s.lodEnabled = enabled
+	}
+}
+
+// WithLODDistances sets the camera distance thresholds for LOD level transitions.
+// Objects farther than lod1 use LOD1; objects farther than lod2 use LOD2.
+//
+// Parameters:
+//   - lod1: distance at which LOD1 activates
+//   - lod2: distance at which LOD2 activates (must be > lod1)
+//
+// Returns:
+//   - SceneBuilderOption: option function to apply
+func WithLODDistances(lod1, lod2 float32) SceneBuilderOption {
+	return func(s *scene) {
+		s.lod1Distance = lod1
+		s.lod2Distance = lod2
+	}
+}
+
+// WithLODShadowBias sets the number of extra LOD levels applied to shadow
+// rendering. A bias of 1 means shadows use one coarser LOD level than the
+// visible mesh, reducing shadow pass geometry.
+//
+// Parameters:
+//   - bias: additional LOD levels for shadow passes (default 1)
+//
+// Returns:
+//   - SceneBuilderOption: option function to apply
+func WithLODShadowBias(bias int) SceneBuilderOption {
+	return func(s *scene) {
+		s.lodShadowBias = bias
+	}
+}
+
 // NewScene creates a new Scene with the given camera and renderer. Both are
 // required and NewScene panics if either is nil. The camera's bind group layout
 // is resolved from the pre-processor declarations of the engine's standard
@@ -202,8 +328,17 @@ func NewScene(name string, cam camera.Camera, r renderer.Renderer, options ...Sc
 		drawDeclsPool:          make([]shader.Annotation, 0, 32),
 		drawGroupProvidersPool: make(map[int]bind_group_provider.BindGroupProvider, 8),
 		lightHandler:           light.NewLightingHandler(),
+		gBufferHandler:         gbuffer.NewGBufferHandler(),
+		ssaoHandler:            postprocessing.NewSSAOHandler(),
+		compositionHandler:     postprocessing.NewCompositionHandler(postprocessing.WithToneMappingEnabled(true), postprocessing.WithExposure(1.0)),
+		ssrHandler:             postprocessing.NewSSRHandler(),
+		taaHandler:             postprocessing.NewTAAHandler(),
 		physicsSyncGroup:       make(map[int]bind_group_provider.BindGroupProvider),
 		physicsAnimBinding:     -1,
+		lodLevelCache:          make(map[animator.Animator]int),
+		lodShadowBias:          1,
+		drawBindGroupCache:     make(map[drawCacheKey][]bind_group_provider.BindGroupProvider),
+		drawCacheDirty:         true,
 	}
 
 	for _, option := range options {

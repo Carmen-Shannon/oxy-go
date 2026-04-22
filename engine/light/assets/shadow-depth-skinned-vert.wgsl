@@ -20,9 +20,9 @@ struct VertexOutput {
 };
 
 // The compute shader writes each instance as a flat sequence of vec4<f32>:
-//   [model_matrix: 4 vec4] [bone_0: 4 vec4] ... [bone_(MAX_BONES-1): 4 vec4]
-// Total per instance: (1 + MAX_BONES) × 4 vec4.
-const FLOATS_PER_INSTANCE: u32 = (1u + MAX_BONES) * 4u;
+//   [model_matrix: 4 vec4] [instance_flags: 1 vec4] [bone_0: 4 vec4] ... [bone_(MAX_BONES-1): 4 vec4]
+// Total per instance: 5 vec4 header entries + 4 vec4 per bone matrix.
+const FLOATS_PER_INSTANCE: u32 = 5u + MAX_BONES * 4u;
 
 //@oxy:group 0 0 storage_uniform shadow_uniform shadow_uniform
 //@oxy:provider 1 0 animator
@@ -48,8 +48,8 @@ fn vs_main(
     // Model matrix is the first 4 vec4 entries.
     let model_matrix = read_mat4(base);
 
-    // Bone matrices start right after the model matrix.
-    let bone_base = base + 4u;
+    // Bone matrices start right after the model matrix and instance flag slot.
+    let bone_base = base + 5u;
 
     // Blend skinning: accumulate weighted bone transforms.
     var skinned_pos = vec4<f32>(0.0);

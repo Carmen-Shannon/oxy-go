@@ -24,9 +24,5 @@ type lightingHandlerImpl struct {
 
 	// GI sub-handlers — owned by the lighting system and lazily initialized
 	// by the scene when the first light is added.
-	gBufferHandler       GBufferHandler
-	ssaoHandler          SSAOHandler
-	compositionHandler   CompositionHandler
-	ssrHandler           SSRHandler
 	contactShadowHandler ContactShadowHandler
 }

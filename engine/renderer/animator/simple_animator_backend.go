@@ -160,6 +160,13 @@ type simpleAnimatorBackend interface {
 	//   - rotXYZ: the current rotation as [3]float32 (current angles around x, y, z axes)
 	SetInstanceData(index uint32, posXYZ, scaleXYZ, rotSpeedXYZ, rotXYZ [3]float32)
 
+	// SetInstanceFlags sets renderer-visible per-instance flags for a specific instance.
+	//
+	// Parameters:
+	//   - index: the index of the instance to update
+	//   - flags: the per-instance flag bitmask to upload
+	SetInstanceFlags(index uint32, flags uint32)
+
 	// SetMaxInstances sets the maximum number of instances that this animator backend can handle. This should be called before adding instances to ensure that the backend is configured with the correct capacity.
 	//
 	// Parameters:
@@ -473,6 +480,17 @@ func (s *simpleAnimatorBackendImpl) SetInstanceData(index uint32, posXYZ, scaleX
 	s.instanceData[index].Scale = scaleXYZ
 	s.instanceData[index].RotSpeed = rotSpeedXYZ
 	s.instanceData[index].Rot = rotXYZ
+	s.enqueueDirty(index)
+}
+
+func (s *simpleAnimatorBackendImpl) SetInstanceFlags(index uint32, flags uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if index >= s.maxInstances {
+		return
+	}
+
+	s.instanceData[index].InstanceFlags = flags
 	s.enqueueDirty(index)
 }
 

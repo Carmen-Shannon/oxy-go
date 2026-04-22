@@ -263,3 +263,59 @@ func Invert3x3(m [9]float32) ([9]float32, bool) {
 		(m[0]*m[4] - m[1]*m[3]) * invDet,
 	}, true
 }
+
+// ClampInt constrains v to the range [lo, hi].
+//
+// Parameters:
+//   - v: value to clamp
+//   - lo: lower bound
+//   - hi: upper bound
+//
+// Returns:
+//   - int: clamped value
+func ClampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// NormalizeF64 normalizes a 3-component float64 vector and returns it as float32.
+// Returns a zero vector if the input length is effectively zero.
+//
+// Parameters:
+//   - v: input vector (accumulated sum, not yet normalized)
+//
+// Returns:
+//   - [3]float32: unit-length vector
+func NormalizeF64(v [3]float64) [3]float32 {
+	l := math.Sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2])
+	if l < 1e-12 {
+		return [3]float32{}
+	}
+	return [3]float32{
+		float32(v[0] / l),
+		float32(v[1] / l),
+		float32(v[2] / l),
+	}
+}
+
+// CellKey computes the flattened grid cell index for a 3D position within a uniform grid.
+//
+// Parameters:
+//   - pos: the 3D position to quantize
+//   - vMin: bounding box minimum
+//   - delta: cell size per axis
+//   - gridRes: grid resolution per axis
+//
+// Returns:
+//   - int: flattened cell index
+func CellKey(pos [3]float32, vMin [3]float32, delta [3]float32, gridRes int) int {
+	cx := ClampInt(int(math.Floor(float64((pos[0]-vMin[0])/delta[0]))), 0, gridRes-1)
+	cy := ClampInt(int(math.Floor(float64((pos[1]-vMin[1])/delta[1]))), 0, gridRes-1)
+	cz := ClampInt(int(math.Floor(float64((pos[2]-vMin[2])/delta[2]))), 0, gridRes-1)
+	return cz*gridRes*gridRes + cy*gridRes + cx
+}

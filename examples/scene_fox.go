@@ -135,7 +135,7 @@ func main() {
 			Path:     "examples/assets/textures/wood.png",
 			MimeType: "image/png",
 		}),
-		material.WithPipelineKey(foxModel.Name()),
+		material.WithPipelineKey(foxModel.Name()+"_wood"),
 	)
 
 	// Save the original materials so we can restore them when toggling back.
