@@ -228,23 +228,55 @@ func (suite *bindGroupProviderTest) TestRelease() {
 			suite.provider.Release()
 		})
 	})
-	suite.Run("should not panic when textureViews map has nil entries", func() {
-		suite.provider.SetTextureView(0, nil)
+	suite.Run("nil texture view key remains stable and release does not panic", func() {
+		suite.provider.SetTextureView(7, nil)
+
+		suite.Contains(suite.provider.TextureViews(), 7)
+		suite.Nil(suite.provider.TextureView(7))
+
 		suite.NotPanics(func() {
 			suite.provider.Release()
 		})
+
+		suite.Contains(suite.provider.TextureViews(), 7)
+		suite.Nil(suite.provider.TextureView(7))
 	})
-	suite.Run("should not panic when samplers map has nil entries", func() {
-		suite.provider.SetSampler(0, nil)
+	suite.Run("nil sampler key remains stable and release does not panic", func() {
+		suite.provider.SetSampler(11, nil)
+
+		suite.Contains(suite.provider.Samplers(), 11)
+		suite.Nil(suite.provider.Sampler(11))
+
 		suite.NotPanics(func() {
 			suite.provider.Release()
 		})
+
+		suite.Contains(suite.provider.Samplers(), 11)
+		suite.Nil(suite.provider.Sampler(11))
 	})
-	suite.Run("should not panic when buffers map has nil entries", func() {
-		suite.provider.SetBuffer(0, nil)
+	suite.Run("nil buffer entries remain stable across both frame slots and release does not panic", func() {
+		suite.provider.SetSlot(0)
+		suite.provider.SetBuffer(3, nil)
+		suite.provider.SetSlot(1)
+		suite.provider.SetBuffer(5, nil)
+
+		suite.provider.SetSlot(0)
+		suite.Contains(suite.provider.Buffers(), 3)
+		suite.Nil(suite.provider.Buffer(3))
+		suite.provider.SetSlot(1)
+		suite.Contains(suite.provider.Buffers(), 5)
+		suite.Nil(suite.provider.Buffer(5))
+
 		suite.NotPanics(func() {
 			suite.provider.Release()
 		})
+
+		suite.provider.SetSlot(0)
+		suite.Contains(suite.provider.Buffers(), 3)
+		suite.Nil(suite.provider.Buffer(3))
+		suite.provider.SetSlot(1)
+		suite.Contains(suite.provider.Buffers(), 5)
+		suite.Nil(suite.provider.Buffer(5))
 	})
 }
 

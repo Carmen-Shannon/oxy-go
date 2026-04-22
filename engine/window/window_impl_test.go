@@ -204,6 +204,22 @@ func (suite *windowTest) TestIsRunning() {
 	})
 }
 
+func (suite *windowTest) TestGLFWWindowIsRunning() {
+	suite.Run("returns false without panic when not running and window is nil", func() {
+		gw := &glfwWindow{
+			running: false,
+			window:  nil,
+		}
+
+		result := true
+		suite.NotPanics(func() {
+			result = gw.isRunning()
+		})
+
+		suite.False(result)
+	})
+}
+
 func (suite *windowTest) TestClose() {
 	suite.Run("returns error when backend is nil", func() {
 		w := &window{}

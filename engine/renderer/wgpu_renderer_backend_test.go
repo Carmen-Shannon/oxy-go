@@ -4,6 +4,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
 	shadermocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/shader/mocks"
 	"github.com/cogentcore/webgpu/wgpu"
@@ -95,6 +96,18 @@ func (suite *wgpuRendererBackendTest) TestComputeGuards() {
 		backend.EndComputeFrame()
 
 		suite.Equal(0, backend.computeFrameDepth)
+	})
+
+	suite.Run("end compute frame nested depth decrements and retains encoder", func() {
+		backend := newTestWGPURendererBackend()
+		encoder := new(wgpu.CommandEncoder)
+		backend.computeFrameEncoder = encoder
+		backend.computeFrameDepth = 2
+
+		backend.EndComputeFrame()
+
+		suite.Equal(1, backend.computeFrameDepth)
+		suite.Equal(encoder, backend.computeFrameEncoder)
 	})
 
 	suite.Run("copy buffer to buffer returns safely when compute encoder is nil", func() {
@@ -371,6 +384,20 @@ func (suite *wgpuRendererBackendTest) TestPipelineRegistrationValidationErrors()
 		suite.EqualError(err, "both vertex and fragment shaders must be set to create a render pipeline")
 	})
 
+	suite.Run("register render pipeline errors when fragment shader is missing", func() {
+		backend := newTestWGPURendererBackend()
+		vertexShader := shadermocks.NewMockShader(suite.T())
+		renderPipeline := pipeline.NewPipeline(
+			"render-missing-fragment",
+			pipeline.PipelineTypeRender,
+			pipeline.WithVertexShader(vertexShader),
+		)
+
+		err := backend.RegisterRenderPipeline(renderPipeline)
+
+		suite.EqualError(err, "both vertex and fragment shaders must be set to create a render pipeline")
+	})
+
 	suite.Run("register compute pipeline errors when compute shader is missing", func() {
 		backend := newTestWGPURendererBackend()
 		computePipeline := pipeline.NewPipeline("compute-missing", pipeline.PipelineTypeCompute)
@@ -472,6 +499,103 @@ func (suite *wgpuRendererBackendTest) TestCreateBloomTexturesValidation() {
 	})
 }
 
+func (suite *wgpuRendererBackendTest) TestBindGroupAndBufferNoGPUBranches() {
+	suite.Run("init bind group returns nil when descriptor has no entries", func() {
+		backend := newTestWGPURendererBackend()
+		provider := bind_group_provider.NewBindGroupProvider("empty-descriptor")
+
+		err := backend.InitBindGroup(provider, wgpu.BindGroupLayoutDescriptor{}, nil, nil)
+
+		suite.NoError(err)
+		suite.Nil(provider.BindGroup())
+	})
+
+	suite.Run("init bind group returns validation error when sampled texture view is missing", func() {
+		backend := newTestWGPURendererBackend()
+		provider := bind_group_provider.NewBindGroupProvider("missing-sampled-view")
+		provider.SetBindGroupLayout(new(wgpu.BindGroupLayout))
+
+		err := backend.InitBindGroup(provider, wgpu.BindGroupLayoutDescriptor{
+			Entries: []wgpu.BindGroupLayoutEntry{
+				{
+					Binding: 3,
+					Texture: wgpu.TextureBindingLayout{SampleType: wgpu.TextureSampleTypeFloat},
+				},
+			},
+		}, nil, nil)
+
+		suite.ErrorContains(err, "texture binding 3 has no texture view")
+		suite.ErrorContains(err, "call InitTextureView first")
+	})
+
+	suite.Run("init bind group returns validation error when storage texture view is missing", func() {
+		backend := newTestWGPURendererBackend()
+		provider := bind_group_provider.NewBindGroupProvider("missing-storage-view")
+		provider.SetBindGroupLayout(new(wgpu.BindGroupLayout))
+
+		err := backend.InitBindGroup(provider, wgpu.BindGroupLayoutDescriptor{
+			Entries: []wgpu.BindGroupLayoutEntry{
+				{
+					Binding:        4,
+					StorageTexture: wgpu.StorageTextureBindingLayout{Access: wgpu.StorageTextureAccess(1)},
+				},
+			},
+		}, nil, nil)
+
+		suite.ErrorContains(err, "texture binding 4 has no texture view")
+		suite.ErrorContains(err, "call InitTextureView first")
+	})
+
+	suite.Run("init bind group returns validation error when sampler is missing", func() {
+		backend := newTestWGPURendererBackend()
+		provider := bind_group_provider.NewBindGroupProvider("missing-sampler")
+		provider.SetBindGroupLayout(new(wgpu.BindGroupLayout))
+
+		err := backend.InitBindGroup(provider, wgpu.BindGroupLayoutDescriptor{
+			Entries: []wgpu.BindGroupLayoutEntry{
+				{
+					Binding: 5,
+					Sampler: wgpu.SamplerBindingLayout{Type: wgpu.SamplerBindingTypeFiltering},
+				},
+			},
+		}, nil, nil)
+
+		suite.ErrorContains(err, "sampler binding 5 has no sampler")
+		suite.ErrorContains(err, "call InitSampler first")
+	})
+
+	suite.Run("init mesh buffers with empty data still sets index count", func() {
+		backend := newTestWGPURendererBackend()
+		provider := bind_group_provider.NewBindGroupProvider("empty-mesh")
+
+		err := backend.InitMeshBuffers(provider, nil, nil, 7)
+
+		suite.NoError(err)
+		suite.Nil(provider.VertexBuffer())
+		suite.Nil(provider.IndexBuffer())
+		suite.Equal(7, provider.IndexCount())
+	})
+
+	suite.Run("write buffers skips nil provider buffer without panic", func() {
+		backend := newTestWGPURendererBackend()
+		provider := bind_group_provider.NewBindGroupProvider("nil-write-buffer")
+
+		suite.NotPanics(func() {
+			backend.WriteBuffers([]bind_group_provider.BufferWrite{
+				{Provider: provider, Binding: 9, Offset: 0, Data: []byte{1, 2, 3}},
+			})
+		})
+	})
+
+	suite.Run("write raw buffer returns when buffer is nil", func() {
+		backend := newTestWGPURendererBackend()
+
+		suite.NotPanics(func() {
+			backend.WriteRawBuffer(nil, 0, []byte{1})
+		})
+	})
+}
+
 func (suite *wgpuRendererBackendTest) TestFlushAndTimingHelpers() {
 	suite.Run("flush frame with no pending command buffers returns zero and advances slot", func() {
 		backend := newTestWGPURendererBackend()
@@ -509,6 +633,13 @@ func (suite *wgpuRendererBackendTest) TestFlushAndTimingHelpers() {
 }
 
 func (suite *wgpuRendererBackendTest) TestMergeBindGroupLayouts() {
+	suite.Run("nil vertex and fragment maps return an empty merged map", func() {
+		merged := mergeBindGroupLayouts(nil, nil)
+
+		suite.NotNil(merged)
+		suite.Len(merged, 0)
+	})
+
 	suite.Run("vertex only group is preserved", func() {
 		vertexLayouts := map[int]wgpu.BindGroupLayoutDescriptor{
 			0: {
