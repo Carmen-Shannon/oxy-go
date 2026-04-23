@@ -1,3 +1,17 @@
+// Package profiler contains a WIP implementation of a performance anaylsis system for tracking frame timings, memory usage, GC activity, and custom metrics.
+// The Profiler interface provides methods for recording timing sections and scalar metrics, which are logged at a configurable interval (e.g. every 5 seconds) when Tick() is called each frame.
+//
+// The profiler tracks:
+// - FPS (frames per second)
+// - Heap usage (MB)
+// - Allocation rate (MB/s)
+// - GC activity (number of GCs, last pause time, max pause time)
+// - Total memory obtained from the OS (MB)
+//
+// Custom timing sections can be defined with Section(label), which returns a function to stop the timer. This allows tracking of specific phases of the frame (e.g. "PrepareShadows", "RenderOpaque").
+// Custom scalar metrics can be recorded with Record(label, value), which logs the average value for each metric at the end of the interval.
+//
+// The profiler is designed to have minimal overhead when not logging, and provides detailed insights into performance characteristics over time.
 package profiler
 
 import (

@@ -35,8 +35,14 @@ import (
 	renderer_mocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/mocks"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
 	pipeline_mocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline/mocks"
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing"
-	postprocessing_mocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/mocks"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/composition"
+	composition_mocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/composition/mocks"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssao"
+	ssao_mocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssao/mocks"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssr"
+	ssr_mocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssr/mocks"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/taa"
+	taa_mocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/taa/mocks"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 	shader_mocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/shader/mocks"
 	"github.com/stretchr/testify/mock"
@@ -71,10 +77,10 @@ func (suite *sceneImplTest) SetupSubTest() {
 		r:                      suite.rendererMock,
 		lightHandler:           light.NewLightingHandler(),
 		gBufferHandler:         gbuffer.NewGBufferHandler(),
-		ssaoHandler:            postprocessing.NewSSAOHandler(),
-		compositionHandler:     postprocessing.NewCompositionHandler(),
-		ssrHandler:             postprocessing.NewSSRHandler(),
-		taaHandler:             postprocessing.NewTAAHandler(),
+		ssaoHandler:            ssao.NewHandler(),
+		compositionHandler:     composition.NewHandler(),
+		ssrHandler:             ssr.NewHandler(),
+		taaHandler:             taa.NewHandler(),
 		maxBonesGPU:            64,
 		drawGroupProvidersPool: make(map[int]bind_group_provider.BindGroupProvider),
 		shadowIndirectBuffers:  make(map[animator.Animator]*wgpu.Buffer),
@@ -843,9 +849,9 @@ func (suite *sceneImplTest) TestPrepareTAA() {
 	})
 
 	suite.Run("writes taa params and dispatches resolve and sharpen passes", func() {
-		taaHandler := postprocessing.NewTAAHandler(
-			postprocessing.WithTAAScreenSize(1280, 720),
-			postprocessing.WithTAABlendFactor(0.2),
+		taaHandler := taa.NewHandler(
+			taa.WithTAAScreenSize(1280, 720),
+			taa.WithTAABlendFactor(0.2),
 		)
 		taaHandler.SetEnabled(true)
 		taaHandler.SetPipelineKey("taa_resolve", "taa_resolve_pipeline")
@@ -881,7 +887,7 @@ func (suite *sceneImplTest) TestPrepareTAA() {
 			suite.Equal(taaHandler.Bgp("taa_resolve_0"), writes[0].Provider)
 			suite.Equal(0, writes[0].Binding)
 			suite.Zero(writes[0].Offset)
-			suite.Len(writes[0].Data, (&postprocessing.GPUTAAParams{}).Size())
+			suite.Len(writes[0].Data, (&taa.GPUTAAParams{}).Size())
 			suite.Equal(math.Float32bits(1.0), binary.LittleEndian.Uint32(writes[0].Data[0:4]))
 			suite.Equal(math.Float32bits(prevViewProjection[0]), binary.LittleEndian.Uint32(writes[0].Data[64:68]))
 			suite.Equal(math.Float32bits(0.0), binary.LittleEndian.Uint32(writes[0].Data[128:132]))
@@ -938,9 +944,9 @@ func (suite *sceneImplTest) TestPrepareTAA() {
 	})
 
 	suite.Run("skips NDC conversion when screen dimensions are zero", func() {
-		taaHandler := postprocessing.NewTAAHandler(
-			postprocessing.WithTAAScreenSize(0, 0),
-			postprocessing.WithTAABlendFactor(0.1),
+		taaHandler := taa.NewHandler(
+			taa.WithTAAScreenSize(0, 0),
+			taa.WithTAABlendFactor(0.1),
 		)
 		taaHandler.SetEnabled(true)
 		taaHandler.SetPipelineKey("taa_resolve", "taa_resolve_pipeline")
@@ -965,9 +971,9 @@ func (suite *sceneImplTest) TestPrepareTAA() {
 	})
 
 	suite.Run("uses slot 1 BGP keys when renderer returns frame slot 1", func() {
-		taaHandler := postprocessing.NewTAAHandler(
-			postprocessing.WithTAAScreenSize(1280, 720),
-			postprocessing.WithTAABlendFactor(0.2),
+		taaHandler := taa.NewHandler(
+			taa.WithTAAScreenSize(1280, 720),
+			taa.WithTAABlendFactor(0.2),
 		)
 		taaHandler.SetEnabled(true)
 		taaHandler.SetPipelineKey("taa_resolve", "taa_resolve_pipeline")
@@ -6069,7 +6075,7 @@ func (suite *sceneImplTest) TestInitSSAO() {
 
 	suite.Run("w zero returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		gbufMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
 		suite.scene.ssaoHandler = ssaoMock
 		suite.scene.gBufferHandler = gbufMock
@@ -6082,7 +6088,7 @@ func (suite *sceneImplTest) TestInitSSAO() {
 
 	suite.Run("HalfResolution true CreateSSAOTextures error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		gbufMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
 		suite.scene.ssaoHandler = ssaoMock
 		suite.scene.gBufferHandler = gbufMock
@@ -6100,7 +6106,7 @@ func (suite *sceneImplTest) TestInitSSAO() {
 
 	suite.Run("CreateSSAOTextures error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		gbufMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
 		suite.scene.ssaoHandler = ssaoMock
 		suite.scene.gBufferHandler = gbufMock
@@ -6118,7 +6124,7 @@ func (suite *sceneImplTest) TestInitSSAO() {
 
 	suite.Run("CreateLinearSampler error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		gbufMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
 		suite.scene.ssaoHandler = ssaoMock
 		suite.scene.gBufferHandler = gbufMock
@@ -6143,7 +6149,7 @@ func (suite *sceneImplTest) TestInitSSAO() {
 
 	suite.Run("RegisterPipelines ssao_compute error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		gbufMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
 		suite.scene.ssaoHandler = ssaoMock
 		suite.scene.gBufferHandler = gbufMock
@@ -6171,7 +6177,7 @@ func (suite *sceneImplTest) TestInitSSAO() {
 
 	suite.Run("RegisterPipelines ssao_blur error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		gbufMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
 		suite.scene.ssaoHandler = ssaoMock
 		suite.scene.gBufferHandler = gbufMock
@@ -6201,7 +6207,7 @@ func (suite *sceneImplTest) TestInitSSAO() {
 
 	suite.Run("InitBindGroup ssao_compute error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		gbufMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
 		suite.scene.ssaoHandler = ssaoMock
 		suite.scene.gBufferHandler = gbufMock
@@ -6236,7 +6242,7 @@ func (suite *sceneImplTest) TestInitSSAO() {
 
 	suite.Run("InitBindGroup blur_h error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		gbufMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
 		suite.scene.ssaoHandler = ssaoMock
 		suite.scene.gBufferHandler = gbufMock
@@ -6275,7 +6281,7 @@ func (suite *sceneImplTest) TestInitSSAO() {
 
 	suite.Run("InitBindGroup blur_v error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		gbufMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
 		suite.scene.ssaoHandler = ssaoMock
 		suite.scene.gBufferHandler = gbufMock
@@ -6318,7 +6324,7 @@ func (suite *sceneImplTest) TestInitSSAO() {
 
 	suite.Run("CreateSSAOTextures slot 1 error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		gbufMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
 		suite.scene.ssaoHandler = ssaoMock
 		suite.scene.gBufferHandler = gbufMock
@@ -6371,7 +6377,7 @@ func (suite *sceneImplTest) TestInitSSAO() {
 
 	suite.Run("full happy path HalfResolution false completes", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		gbufMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
 		suite.scene.ssaoHandler = ssaoMock
 		suite.scene.gBufferHandler = gbufMock
@@ -6451,7 +6457,7 @@ func (suite *sceneImplTest) TestInitSSAOLitBindGroup() {
 		shaderMock.EXPECT().BindGroupLayoutDescriptor(ssaoGroupIdx).Return(desc).Once()
 
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		bgpMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 
 		lhMock.EXPECT().Bgp("ssao_lit").Return(bgpMock).Once()
@@ -6490,7 +6496,7 @@ func (suite *sceneImplTest) TestInitSSAOLitBindGroup() {
 		shaderMock.EXPECT().BindGroupLayoutDescriptor(ssaoGroupIdx).Return(desc).Once()
 
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		bgpMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 
 		lhMock.EXPECT().Bgp("ssao_lit").Return(bgpMock).Once()
@@ -6522,7 +6528,7 @@ func (suite *sceneImplTest) TestInitSSAOLitBindGroup() {
 		shaderMock.EXPECT().BindGroupLayoutDescriptor(ssaoGroupIdx).Return(desc).Once()
 
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		bgpMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 
 		lhMock.EXPECT().Bgp("ssao_lit").Return(bgpMock).Once()
@@ -6555,7 +6561,7 @@ func (suite *sceneImplTest) TestInitSSAOLitBindGroup() {
 		shaderMock.EXPECT().BindGroupLayoutDescriptor(ssaoGroupIdx).Return(desc).Once()
 
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		bgpMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 
 		lhMock.EXPECT().Bgp("ssao_lit").Return(bgpMock).Once()
@@ -8050,14 +8056,14 @@ func (suite *sceneImplTest) TestInitLightCullResources() {
 func (suite *sceneImplTest) TestInitSSR() {
 	makeReadyHandlers := func() (
 		*light_mocks.MockLightingHandler,
-		*postprocessing_mocks.MockSSRHandler,
+		*ssr_mocks.MockHandler,
 		*gbuffer_mocks.MockGBufferHandler,
-		*postprocessing_mocks.MockCompositionHandler,
+		*composition_mocks.MockHandler,
 	) {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 		gbMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		compMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		compMock := composition_mocks.NewMockHandler(suite.T())
 		suite.scene.ssrHandler = ssrMock
 		suite.scene.gBufferHandler = gbMock
 		suite.scene.compositionHandler = compMock
@@ -8068,9 +8074,9 @@ func (suite *sceneImplTest) TestInitSSR() {
 
 	makeFullBase := func(mipCount int) (
 		*light_mocks.MockLightingHandler,
-		*postprocessing_mocks.MockSSRHandler,
+		*ssr_mocks.MockHandler,
 		*gbuffer_mocks.MockGBufferHandler,
-		*postprocessing_mocks.MockCompositionHandler,
+		*composition_mocks.MockHandler,
 	) {
 		lhMock, ssrMock, gbMock, compMock := makeReadyHandlers()
 		suite.scene.screenWidth = 800
@@ -8114,7 +8120,7 @@ func (suite *sceneImplTest) TestInitSSR() {
 	suite.Run("ssrHandler nil returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		suite.scene.gBufferHandler = gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		suite.scene.compositionHandler = postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		suite.scene.compositionHandler = composition_mocks.NewMockHandler(suite.T())
 		suite.scene.ssrHandler = nil
 		suite.scene.lightHandler = lhMock
 		suite.NotPanics(func() { suite.scene.initSSR() })
@@ -8122,16 +8128,16 @@ func (suite *sceneImplTest) TestInitSSR() {
 
 	suite.Run("gbHandler nil returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 		suite.scene.ssrHandler = ssrMock
-		suite.scene.compositionHandler = postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		suite.scene.compositionHandler = composition_mocks.NewMockHandler(suite.T())
 		suite.scene.lightHandler = lhMock
 		suite.NotPanics(func() { suite.scene.initSSR() })
 	})
 
 	suite.Run("compHandler nil returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 		gbMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
 		suite.scene.ssrHandler = ssrMock
 		suite.scene.gBufferHandler = gbMock
@@ -8142,9 +8148,9 @@ func (suite *sceneImplTest) TestInitSSR() {
 
 	suite.Run("gbHandler not enabled returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 		gbMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		compMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		compMock := composition_mocks.NewMockHandler(suite.T())
 		suite.scene.ssrHandler = ssrMock
 		suite.scene.gBufferHandler = gbMock
 		suite.scene.compositionHandler = compMock
@@ -8156,9 +8162,9 @@ func (suite *sceneImplTest) TestInitSSR() {
 
 	suite.Run("compHandler not enabled returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 		gbMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		compMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		compMock := composition_mocks.NewMockHandler(suite.T())
 		suite.scene.ssrHandler = ssrMock
 		suite.scene.gBufferHandler = gbMock
 		suite.scene.compositionHandler = compMock
@@ -8768,13 +8774,13 @@ func (suite *sceneImplTest) TestInitSSR() {
 func (suite *sceneImplTest) TestInitComposition() {
 	makeBase := func() (
 		*light_mocks.MockLightingHandler,
-		*postprocessing_mocks.MockCompositionHandler,
-		*postprocessing_mocks.MockSSRHandler,
+		*composition_mocks.MockHandler,
+		*ssr_mocks.MockHandler,
 		*bgp_mocks.MockBindGroupProvider,
 	) {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 		bgpMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 
 		suite.scene.screenWidth = 800
@@ -8802,8 +8808,8 @@ func (suite *sceneImplTest) TestInitComposition() {
 
 	makeFullBase := func() (
 		*light_mocks.MockLightingHandler,
-		*postprocessing_mocks.MockCompositionHandler,
-		*postprocessing_mocks.MockSSRHandler,
+		*composition_mocks.MockHandler,
+		*ssr_mocks.MockHandler,
 		*bgp_mocks.MockBindGroupProvider,
 	) {
 		lhMock, chMock, ssrMock, bgpMock := makeBase()
@@ -8845,7 +8851,7 @@ func (suite *sceneImplTest) TestInitComposition() {
 
 	suite.Run("zero screenWidth returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		suite.scene.compositionHandler = chMock
 		suite.scene.lightHandler = lhMock
 		suite.scene.screenWidth = 0
@@ -8855,7 +8861,7 @@ func (suite *sceneImplTest) TestInitComposition() {
 
 	suite.Run("zero screenHeight returns early", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		suite.scene.compositionHandler = chMock
 		suite.scene.lightHandler = lhMock
 		suite.scene.screenWidth = 800
@@ -8865,7 +8871,7 @@ func (suite *sceneImplTest) TestInitComposition() {
 
 	suite.Run("CreateCompositionTextures error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		suite.scene.compositionHandler = chMock
 		suite.scene.lightHandler = lhMock
 		suite.scene.screenWidth = 800
@@ -8878,7 +8884,7 @@ func (suite *sceneImplTest) TestInitComposition() {
 
 	suite.Run("CreateCompositionTextures slot 1 error panics", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		suite.scene.compositionHandler = chMock
 		suite.scene.lightHandler = lhMock
 		suite.scene.screenWidth = 800
@@ -8969,8 +8975,8 @@ func (suite *sceneImplTest) TestInitLighting() {
 	makeMocks := func() (
 		lhMock *light_mocks.MockLightingHandler,
 		shMock *light_mocks.MockShadowHandler,
-		compMock *postprocessing_mocks.MockCompositionHandler,
-		ssrMock *postprocessing_mocks.MockSSRHandler,
+		compMock *composition_mocks.MockHandler,
+		ssrMock *ssr_mocks.MockHandler,
 		camMock *camera_mocks.MockCamera,
 		camBGPMock *bgp_mocks.MockBindGroupProvider,
 	) {
@@ -8978,9 +8984,9 @@ func (suite *sceneImplTest) TestInitLighting() {
 		shMock = light_mocks.NewMockShadowHandler(suite.T())
 		csMock := light_mocks.NewMockContactShadowHandler(suite.T())
 		gbMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
-		compMock = postprocessing_mocks.NewMockCompositionHandler(suite.T())
-		ssrMock = postprocessing_mocks.NewMockSSRHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
+		compMock = composition_mocks.NewMockHandler(suite.T())
+		ssrMock = ssr_mocks.NewMockHandler(suite.T())
 		camMock = camera_mocks.NewMockCamera(suite.T())
 		camBGPMock = bgp_mocks.NewMockBindGroupProvider(suite.T())
 
@@ -9165,7 +9171,7 @@ func (suite *sceneImplTest) TestInitLighting() {
 		suite.scene.buildInjectionMap()
 	}
 
-	mkInitCompBGP := func(compMock *postprocessing_mocks.MockCompositionHandler, ssrMock *postprocessing_mocks.MockSSRHandler) *bgp_mocks.MockBindGroupProvider {
+	mkInitCompBGP := func(compMock *composition_mocks.MockHandler, ssrMock *ssr_mocks.MockHandler) *bgp_mocks.MockBindGroupProvider {
 		bgpMockComp := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		bgpMockComp.EXPECT().SetTextureView(mock.Anything, mock.Anything).Maybe()
 		bgpMockComp.EXPECT().SetSampler(mock.Anything, mock.Anything).Maybe()
@@ -11637,7 +11643,7 @@ func (suite *sceneImplTest) TestSyncFrameSlot() {
 	})
 
 	suite.Run("calls SetSlot on SSAOHandler", func() {
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		ssaoMock.EXPECT().SetSlot(1).Return().Once()
 		mockLH := light_mocks.NewMockLightingHandler(suite.T())
 		mockLH.EXPECT().ContactShadowHandler().Return(nil).Once()
@@ -11683,7 +11689,7 @@ func (suite *sceneImplTest) TestSyncFrameSlot() {
 	suite.Run("calls SetSlot on CompositionHandler and its luminance_compute BGP", func() {
 		lumBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		lumBGP.EXPECT().SetSlot(1).Return().Once()
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		chMock.EXPECT().SetSlot(1).Return().Once()
 		chMock.EXPECT().Bgp("luminance_compute").Return(lumBGP).Once()
 		mockLH := light_mocks.NewMockLightingHandler(suite.T())
@@ -11698,7 +11704,7 @@ func (suite *sceneImplTest) TestSyncFrameSlot() {
 	})
 
 	suite.Run("calls SetSlot on SSRHandler", func() {
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 		ssrMock.EXPECT().SetSlot(1).Return().Once()
 		mockLH := light_mocks.NewMockLightingHandler(suite.T())
 		mockLH.EXPECT().ContactShadowHandler().Return(nil).Once()
@@ -11712,7 +11718,7 @@ func (suite *sceneImplTest) TestSyncFrameSlot() {
 	})
 
 	suite.Run("calls SetSlot on TAAHandler", func() {
-		taaMock := postprocessing_mocks.NewMockTAAHandler(suite.T())
+		taaMock := taa_mocks.NewMockHandler(suite.T())
 		taaMock.EXPECT().SetSlot(1).Return().Once()
 		mockLH := light_mocks.NewMockLightingHandler(suite.T())
 		mockLH.EXPECT().ContactShadowHandler().Return(nil).Once()
@@ -11820,7 +11826,7 @@ func (suite *sceneImplTest) TestInitSSAOMissingBranches() {
 	suite.Run("should return early when screen dimensions are zero for SSAO", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		gbhMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		gbhMock.EXPECT().Enabled().Return(true).Once()
 		suite.scene.gBufferHandler = gbhMock
 		suite.scene.ssaoHandler = ssaoMock
@@ -11937,7 +11943,7 @@ func (suite *sceneImplTest) TestInitLightCullResourcesMissingBranches() {
 func (suite *sceneImplTest) TestInitCompositionMissingBranches() {
 	suite.Run("should return early when screen dimensions are zero", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		suite.scene.compositionHandler = chMock
 		suite.scene.lightHandler = lhMock
 		suite.scene.screenWidth = 0
@@ -11948,7 +11954,7 @@ func (suite *sceneImplTest) TestInitCompositionMissingBranches() {
 
 func (suite *sceneImplTest) TestInitBloomMissingBranches() {
 	suite.Run("should return early when half dimensions are zero", func() {
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		bgpMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		chMock.EXPECT().BloomEnabled().Return(true).Once()
 		suite.NotPanics(func() { suite.scene.initBloom(chMock, bgpMock, 0, 0) })
@@ -11958,9 +11964,9 @@ func (suite *sceneImplTest) TestInitBloomMissingBranches() {
 func (suite *sceneImplTest) TestInitSSRMissingBranches() {
 	suite.Run("should return early when GBuffer or Composition handler is not enabled", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 		gbhMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		gbhMock.EXPECT().Enabled().Return(false).Once()
 		suite.scene.ssrHandler = ssrMock
 		suite.scene.gBufferHandler = gbhMock
@@ -11971,9 +11977,9 @@ func (suite *sceneImplTest) TestInitSSRMissingBranches() {
 
 	suite.Run("should return early when screen dimensions are zero", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 		gbhMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		gbhMock.EXPECT().Enabled().Return(true).Once()
 		chMock.EXPECT().Enabled().Return(true).Once()
 		suite.scene.ssrHandler = ssrMock
@@ -12033,7 +12039,7 @@ func (suite *sceneImplTest) TestRefreshAnimatorHiZBindGroupsMissingBranches() {
 	suite.Run("should skip animator when hiZBGP is nil", func() {
 		suite.scene.animatorPool = make(map[model.Model][]animator.Animator)
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 		ssrMock.EXPECT().SetSlot(mock.Anything).Maybe()
 		ssrMock.EXPECT().HiZTextureView().Return(nil).Maybe()
 		ssrMock.EXPECT().HiZMaxTextureView().Return(nil).Maybe()
@@ -12049,7 +12055,7 @@ func (suite *sceneImplTest) TestRefreshAnimatorHiZBindGroupsMissingBranches() {
 	suite.Run("should skip animator when model is nil", func() {
 		suite.scene.animatorPool = make(map[model.Model][]animator.Animator)
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 		ssrMock.EXPECT().SetSlot(mock.Anything).Maybe()
 		ssrMock.EXPECT().HiZTextureView().Return(nil).Maybe()
 		ssrMock.EXPECT().HiZMaxTextureView().Return(nil).Maybe()
@@ -12067,7 +12073,7 @@ func (suite *sceneImplTest) TestRefreshAnimatorHiZBindGroupsMissingBranches() {
 	suite.Run("should skip animator when pipeline is nil", func() {
 		suite.scene.animatorPool = make(map[model.Model][]animator.Animator)
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 		ssrMock.EXPECT().SetSlot(mock.Anything).Maybe()
 		ssrMock.EXPECT().HiZTextureView().Return(nil).Maybe()
 		ssrMock.EXPECT().HiZMaxTextureView().Return(nil).Maybe()
@@ -12087,7 +12093,7 @@ func (suite *sceneImplTest) TestRefreshAnimatorHiZBindGroupsMissingBranches() {
 	suite.Run("should skip animator when compute shader is nil", func() {
 		suite.scene.animatorPool = make(map[model.Model][]animator.Animator)
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 		ssrMock.EXPECT().SetSlot(mock.Anything).Maybe()
 		ssrMock.EXPECT().HiZTextureView().Return(nil).Maybe()
 		ssrMock.EXPECT().HiZMaxTextureView().Return(nil).Maybe()
@@ -12111,11 +12117,11 @@ func (suite *sceneImplTest) TestReleaseResolutionDependentResourcesMissingBranch
 	suite.Run("should not panic when all handlers are enabled but no GPU resources are allocated", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		gbhMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		cshMock := light_mocks.NewMockContactShadowHandler(suite.T())
 		shMock := light_mocks.NewMockShadowHandler(suite.T())
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 
 		suite.scene.gBufferHandler = gbhMock
 		suite.scene.ssaoHandler = ssaoMock
@@ -12242,7 +12248,7 @@ func (suite *sceneImplTest) TestResizeMissingBranches() {
 func (suite *sceneImplTest) TestPrepareCompositionMissingBranches() {
 	suite.Run("should set ToneMappingEnabled in params when tone mapping is enabled", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		bgpMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		suite.scene.compositionHandler = chMock
 		chMock.EXPECT().Enabled().Return(true).Once()
@@ -12263,7 +12269,7 @@ func (suite *sceneImplTest) TestPrepareCompositionMissingBranches() {
 
 	suite.Run("should set AutoExposureEnabled in params when auto exposure is enabled", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		bgpMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		suite.scene.compositionHandler = chMock
 		chMock.EXPECT().Enabled().Return(true).Once()
@@ -12284,7 +12290,7 @@ func (suite *sceneImplTest) TestPrepareCompositionMissingBranches() {
 
 	suite.Run("should set BloomEnabled and BloomIntensity in params when bloom is enabled", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		bgpMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		suite.scene.compositionHandler = chMock
 		chMock.EXPECT().Enabled().Return(true).Once()
@@ -12380,7 +12386,7 @@ func (suite *sceneImplTest) TestNewSceneMissingBranches() {
 
 func (suite *sceneImplTest) TestInitBloomDisabledFallback() {
 	suite.Run("should init 1x1 fallback texture when bloom is disabled", func() {
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		chMock.EXPECT().BloomEnabled().Return(false).Once()
 		suite.rendererMock.EXPECT().InitTextureView(compBGPMock, 6, mock.Anything).Return(nil).Once()
@@ -12390,7 +12396,7 @@ func (suite *sceneImplTest) TestInitBloomDisabledFallback() {
 
 func (suite *sceneImplTest) TestInitBloomHappyPath() {
 	suite.Run("should init bloom textures and BGPs when bloom is enabled with mipCount 1", func() {
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		chMock.EXPECT().BloomEnabled().Return(true).Once()
 		downReadViews := make([]*wgpu.TextureView, 1)
@@ -12426,11 +12432,11 @@ func (suite *sceneImplTest) TestReleaseResolutionDependentResourcesWithBloomAndS
 	suite.Run("should call Release on bloom and SSR HiZ BGPs when mip counts are non-zero", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		gbhMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		cshMock := light_mocks.NewMockContactShadowHandler(suite.T())
 		shMock := light_mocks.NewMockShadowHandler(suite.T())
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 
 		suite.scene.gBufferHandler = gbhMock
 		suite.scene.ssaoHandler = ssaoMock
@@ -12523,7 +12529,7 @@ func (suite *sceneImplTest) TestRefreshAnimatorHiZBindGroupsHappyPath() {
 	suite.Run("calls InitBindGroup once per slot when animator has valid hiZBGP pipeline and compute shader", func() {
 		suite.scene.animatorPool = make(map[model.Model][]animator.Animator)
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 		ssrMock.EXPECT().SetSlot(mock.Anything).Return().Maybe()
 		ssrMock.EXPECT().HiZTextureView().Return(&wgpu.TextureView{}).Maybe()
 		ssrMock.EXPECT().HiZMaxTextureView().Return(&wgpu.TextureView{}).Maybe()
@@ -12556,7 +12562,7 @@ func (suite *sceneImplTest) TestRefreshAnimatorHiZBindGroupsHappyPath() {
 
 func (suite *sceneImplTest) TestSyncFrameSlotCompositionHandlerLuminanceBGPNil() {
 	suite.Run("calls SetSlot on CompositionHandler but skips nil luminance BGP", func() {
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		chMock.EXPECT().SetSlot(1).Return().Once()
 		chMock.EXPECT().Bgp("luminance_compute").Return(nil).Once()
 		mockLH := light_mocks.NewMockLightingHandler(suite.T())
@@ -12750,7 +12756,7 @@ func (suite *sceneImplTest) TestDrawCallsAdditionalAnnotations() {
 
 func (suite *sceneImplTest) TestInitBloomMultiMip() {
 	suite.Run("should init bloom BGPs with mipCount=2 covering down i>0 read view and up loop body", func() {
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		chMock.EXPECT().BloomEnabled().Return(true).Once()
 		downReadViews := []*wgpu.TextureView{&wgpu.TextureView{}, &wgpu.TextureView{}}
@@ -12785,7 +12791,7 @@ func (suite *sceneImplTest) TestInitBloomMultiMip() {
 
 func (suite *sceneImplTest) TestInitLuminancePanicPaths() {
 	suite.Run("should panic when CreateBuffer fails", func() {
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		suite.rendererMock.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).
 			Return(nil, errors.New("buf err")).Once()
@@ -12794,7 +12800,7 @@ func (suite *sceneImplTest) TestInitLuminancePanicPaths() {
 
 	suite.Run("should panic when RegisterPipelines fails", func() {
 		suite.scene.buildInjectionMap()
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		suite.rendererMock.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).
 			Return(&wgpu.Buffer{}, nil).Once()
@@ -12807,7 +12813,7 @@ func (suite *sceneImplTest) TestInitLuminancePanicPaths() {
 
 	suite.Run("should panic when InitBindGroup slot 0 fails", func() {
 		suite.scene.buildInjectionMap()
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		lumBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		suite.rendererMock.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).
@@ -12827,7 +12833,7 @@ func (suite *sceneImplTest) TestInitLuminancePanicPaths() {
 
 	suite.Run("should panic when InitBindGroup slot 1 fails", func() {
 		suite.scene.buildInjectionMap()
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		lumBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		suite.rendererMock.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).
@@ -12856,7 +12862,7 @@ func (suite *sceneImplTest) TestRefreshAnimatorHiZBindGroupsFallbackView() {
 		suite.scene.hizFallbackView = fallbackView
 
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 		ssrMock.EXPECT().SetSlot(mock.Anything).Maybe()
 		ssrMock.EXPECT().HiZTextureView().Return(nil).Maybe()
 		ssrMock.EXPECT().HiZMaxTextureView().Return(&wgpu.TextureView{}).Maybe()
@@ -12892,7 +12898,7 @@ func (suite *sceneImplTest) TestRefreshAnimatorHiZBindGroupsFallbackView() {
 		suite.scene.hizFallbackView = nil
 
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 		ssrMock.EXPECT().SetSlot(mock.Anything).Maybe()
 		ssrMock.EXPECT().HiZTextureView().Return(nil).Maybe()
 		ssrMock.EXPECT().HiZMaxTextureView().Return(nil).Maybe()
@@ -12924,7 +12930,7 @@ func (suite *sceneImplTest) TestRefreshAnimatorHiZBindGroupsFallbackView() {
 		suite.scene.animatorPool = make(map[model.Model][]animator.Animator)
 
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 		ssrMock.EXPECT().SetSlot(mock.Anything).Maybe()
 		ssrMock.EXPECT().HiZTextureView().Return(&wgpu.TextureView{}).Maybe()
 		ssrMock.EXPECT().HiZMaxTextureView().Return(&wgpu.TextureView{}).Maybe()
@@ -13705,7 +13711,7 @@ func (suite *sceneImplTest) TestInitSSAOHalfResolution() {
 	suite.Run("should use half dimensions when HalfResolution is true", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		gbhMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		gbhMock.EXPECT().Enabled().Return(true).Once()
 		ssaoMock.EXPECT().HalfResolution().Return(true).Once()
 		suite.scene.gBufferHandler = gbhMock
@@ -13727,8 +13733,8 @@ func (suite *sceneImplTest) TestInitCompositionSSRNonNilPath() {
 		suite.scene.screenHeight = 600
 
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		ssrView := &wgpu.TextureView{}
 
@@ -13852,11 +13858,11 @@ func (suite *sceneImplTest) TestResizePostProcessingGBufferEnabled() {
 
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		gbhMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		cshMock := light_mocks.NewMockContactShadowHandler(suite.T())
 		shMock := light_mocks.NewMockShadowHandler(suite.T())
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 
 		suite.scene.gBufferHandler = gbhMock
 		suite.scene.ssaoHandler = ssaoMock
@@ -14040,7 +14046,7 @@ func (suite *sceneImplTest) TestCreateAnimatorShadowBufferPanicOnFail() {
 
 func (suite *sceneImplTest) TestInitBloomPanicArms() {
 	suite.Run("should panic when InitTextureView fails and bloom is disabled", func() {
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		chMock.EXPECT().BloomEnabled().Return(false).Once()
 		suite.rendererMock.EXPECT().InitTextureView(compBGPMock, 6, mock.Anything).Return(errors.New("fail")).Once()
@@ -14048,7 +14054,7 @@ func (suite *sceneImplTest) TestInitBloomPanicArms() {
 	})
 
 	suite.Run("should panic when CreateBloomTextures fails", func() {
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		chMock.EXPECT().BloomEnabled().Return(true).Once()
 		suite.rendererMock.EXPECT().CreateBloomTextures(400, 300).Return(
@@ -14058,7 +14064,7 @@ func (suite *sceneImplTest) TestInitBloomPanicArms() {
 	})
 
 	suite.Run("should panic when RegisterPipelines fails for downsample pipeline", func() {
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		chMock.EXPECT().BloomEnabled().Return(true).Once()
 		downReadViews := make([]*wgpu.TextureView, 1)
@@ -14081,7 +14087,7 @@ func (suite *sceneImplTest) TestInitBloomPanicArms() {
 	})
 
 	suite.Run("should panic when RegisterPipelines fails for upsample pipeline", func() {
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		chMock.EXPECT().BloomEnabled().Return(true).Once()
 		downReadViews := make([]*wgpu.TextureView, 1)
@@ -14106,7 +14112,7 @@ func (suite *sceneImplTest) TestInitBloomPanicArms() {
 	})
 
 	suite.Run("should panic when InitBindGroup fails in downsample loop", func() {
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		chMock.EXPECT().BloomEnabled().Return(true).Once()
 		downReadViews := make([]*wgpu.TextureView, 1)
@@ -14134,7 +14140,7 @@ func (suite *sceneImplTest) TestInitBloomPanicArms() {
 	})
 
 	suite.Run("should panic when InitBindGroup fails in upsample loop", func() {
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		chMock.EXPECT().BloomEnabled().Return(true).Once()
 		downReadViews := make([]*wgpu.TextureView, 2)
@@ -14165,7 +14171,7 @@ func (suite *sceneImplTest) TestInitBloomPanicArms() {
 	})
 
 	suite.Run("should cover upReadViews else branch when i is not mipCount-2 in upsample loop", func() {
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
 		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		chMock.EXPECT().BloomEnabled().Return(true).Once()
 		downReadViews := make([]*wgpu.TextureView, 3)
@@ -14941,7 +14947,7 @@ func (suite *sceneImplTest) TestRefreshAnimatorHiZBindGroupsMaxViewNilPaths() {
 		suite.scene.hizFallbackView = nil
 
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 		ssrMock.EXPECT().SetSlot(mock.Anything).Maybe()
 		ssrMock.EXPECT().HiZTextureView().Return(&wgpu.TextureView{}).Maybe()
 		ssrMock.EXPECT().HiZMaxTextureView().Return(nil).Maybe()
@@ -15003,11 +15009,11 @@ func (suite *sceneImplTest) TestReleaseResolutionDependentResourcesBGPPaths() {
 	suite.Run("sets all bgp bind groups to nil for all handlers enabled", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		gbhMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		cshMock := light_mocks.NewMockContactShadowHandler(suite.T())
 		shMock := light_mocks.NewMockShadowHandler(suite.T())
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 
 		suite.scene.gBufferHandler = gbhMock
 		suite.scene.ssaoHandler = ssaoMock
@@ -15136,11 +15142,11 @@ func (suite *sceneImplTest) TestResizePostProcessingSSAOEnabled() {
 
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		gbhMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		cshMock := light_mocks.NewMockContactShadowHandler(suite.T())
 		shMock := light_mocks.NewMockShadowHandler(suite.T())
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 
 		suite.scene.gBufferHandler = gbhMock
 		suite.scene.ssaoHandler = ssaoMock
@@ -15195,11 +15201,11 @@ func (suite *sceneImplTest) TestResizePostProcessingCSMShadowLitBindGroup() {
 
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		gbhMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		cshMock := light_mocks.NewMockContactShadowHandler(suite.T())
 		shMock := light_mocks.NewMockShadowHandler(suite.T())
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 
 		suite.scene.gBufferHandler = gbhMock
 		suite.scene.ssaoHandler = ssaoMock
@@ -15241,11 +15247,11 @@ func (suite *sceneImplTest) TestResizePostProcessingCompositionEnabled() {
 
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		gbhMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		cshMock := light_mocks.NewMockContactShadowHandler(suite.T())
 		shMock := light_mocks.NewMockShadowHandler(suite.T())
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 
 		suite.scene.gBufferHandler = gbhMock
 		suite.scene.ssaoHandler = ssaoMock
@@ -15298,11 +15304,11 @@ func (suite *sceneImplTest) TestResizePostProcessingSSREnabled() {
 
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		gbhMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		cshMock := light_mocks.NewMockContactShadowHandler(suite.T())
 		shMock := light_mocks.NewMockShadowHandler(suite.T())
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 
 		suite.scene.gBufferHandler = gbhMock
 		suite.scene.ssaoHandler = ssaoMock
@@ -15364,11 +15370,11 @@ func (suite *sceneImplTest) TestResizePostProcessingSSRCompositionCombinedPanic(
 
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		gbhMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		cshMock := light_mocks.NewMockContactShadowHandler(suite.T())
 		shMock := light_mocks.NewMockShadowHandler(suite.T())
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 
 		suite.scene.gBufferHandler = gbhMock
 		suite.scene.ssaoHandler = ssaoMock
@@ -15427,11 +15433,11 @@ func (suite *sceneImplTest) TestResizePostProcessingSSRCompositionCombinedPanic(
 
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		gbhMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		cshMock := light_mocks.NewMockContactShadowHandler(suite.T())
 		shMock := light_mocks.NewMockShadowHandler(suite.T())
-		chMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		chMock := composition_mocks.NewMockHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 		compBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 
 		suite.scene.gBufferHandler = gbhMock
@@ -15478,9 +15484,9 @@ func (suite *sceneImplTest) TestResizePostProcessingSSRCompositionCombinedPanic(
 }
 
 func (suite *sceneImplTest) TestInitTAA() {
-	makeBase := func() (*gbuffer_mocks.MockGBufferHandler, *postprocessing_mocks.MockCompositionHandler) {
+	makeBase := func() (*gbuffer_mocks.MockGBufferHandler, *composition_mocks.MockHandler) {
 		gbMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		compMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		compMock := composition_mocks.NewMockHandler(suite.T())
 		suite.scene.gBufferHandler = gbMock
 		suite.scene.compositionHandler = compMock
 		suite.scene.screenWidth = 800
@@ -15523,7 +15529,7 @@ func (suite *sceneImplTest) TestInitTAA() {
 
 	suite.Run("gbHandler not enabled returns early", func() {
 		gbMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		compMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		compMock := composition_mocks.NewMockHandler(suite.T())
 		suite.scene.gBufferHandler = gbMock
 		suite.scene.compositionHandler = compMock
 		gbMock.EXPECT().Enabled().Return(false).Once()
@@ -15533,7 +15539,7 @@ func (suite *sceneImplTest) TestInitTAA() {
 
 	suite.Run("compHandler not enabled returns early", func() {
 		gbMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		compMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		compMock := composition_mocks.NewMockHandler(suite.T())
 		suite.scene.gBufferHandler = gbMock
 		suite.scene.compositionHandler = compMock
 		gbMock.EXPECT().Enabled().Return(true).Once()
@@ -15543,7 +15549,7 @@ func (suite *sceneImplTest) TestInitTAA() {
 
 	suite.Run("zero screenWidth returns early", func() {
 		gbMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		compMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		compMock := composition_mocks.NewMockHandler(suite.T())
 		suite.scene.gBufferHandler = gbMock
 		suite.scene.compositionHandler = compMock
 		gbMock.EXPECT().Enabled().Return(true).Once()
@@ -15555,7 +15561,7 @@ func (suite *sceneImplTest) TestInitTAA() {
 
 	suite.Run("zero screenHeight returns early", func() {
 		gbMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		compMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
+		compMock := composition_mocks.NewMockHandler(suite.T())
 		suite.scene.gBufferHandler = gbMock
 		suite.scene.compositionHandler = compMock
 		gbMock.EXPECT().Enabled().Return(true).Once()
@@ -15698,7 +15704,7 @@ func (suite *sceneImplTest) TestInitTAA() {
 
 func (suite *sceneImplTest) TestReleaseResolutionDependentResourcesTAA() {
 	suite.Run("releases TAA textures and bind groups when enabled", func() {
-		taaMock := postprocessing_mocks.NewMockTAAHandler(suite.T())
+		taaMock := taa_mocks.NewMockHandler(suite.T())
 		suite.scene.taaHandler = taaMock
 		taaMock.EXPECT().Enabled().Return(true).Once()
 		taaMock.EXPECT().SetSlot(mock.Anything).Maybe()
@@ -15715,7 +15721,7 @@ func (suite *sceneImplTest) TestReleaseResolutionDependentResourcesTAA() {
 	})
 
 	suite.Run("enters non-nil BGP branch and calls SetBindGroup nil", func() {
-		taaMock := postprocessing_mocks.NewMockTAAHandler(suite.T())
+		taaMock := taa_mocks.NewMockHandler(suite.T())
 		suite.scene.taaHandler = taaMock
 		taaMock.EXPECT().Enabled().Return(true).Once()
 		taaMock.EXPECT().SetSlot(mock.Anything).Maybe()
@@ -15755,18 +15761,18 @@ func (suite *sceneImplTest) TestResizePostProcessingTAAEnabled() {
 	suite.Run("calls initTAA when taaHandler is enabled", func() {
 		lhMock := light_mocks.NewMockLightingHandler(suite.T())
 		gbMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
-		ssaoMock := postprocessing_mocks.NewMockSSAOHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
 		cshMock := light_mocks.NewMockContactShadowHandler(suite.T())
 		shMock := light_mocks.NewMockShadowHandler(suite.T())
-		compMock := postprocessing_mocks.NewMockCompositionHandler(suite.T())
-		ssrMock := postprocessing_mocks.NewMockSSRHandler(suite.T())
+		compMock := composition_mocks.NewMockHandler(suite.T())
+		ssrMock := ssr_mocks.NewMockHandler(suite.T())
 
 		suite.scene.gBufferHandler = gbMock
 		suite.scene.ssaoHandler = ssaoMock
 		suite.scene.compositionHandler = compMock
 		suite.scene.ssrHandler = ssrMock
 		suite.scene.lightHandler = lhMock
-		suite.scene.taaHandler = postprocessing.NewTAAHandler()
+		suite.scene.taaHandler = taa.NewHandler()
 		suite.scene.taaHandler.SetEnabled(true)
 		suite.scene.screenWidth = 800
 		suite.scene.screenHeight = 600
@@ -15843,7 +15849,7 @@ func (suite *sceneImplTest) TestBuilderOptions() {
 
 	suite.Run("WithSSAOHandler sets ssaoHandler", func() {
 		s := &scene{}
-		h := postprocessing.NewSSAOHandler()
+		h := ssao.NewHandler()
 		opt := WithSSAOHandler(h)
 		opt(s)
 		suite.Equal(h, s.ssaoHandler)
@@ -15851,7 +15857,7 @@ func (suite *sceneImplTest) TestBuilderOptions() {
 
 	suite.Run("WithCompositionHandler sets compositionHandler", func() {
 		s := &scene{}
-		h := postprocessing.NewCompositionHandler()
+		h := composition.NewHandler()
 		opt := WithCompositionHandler(h)
 		opt(s)
 		suite.Equal(h, s.compositionHandler)
@@ -15859,7 +15865,7 @@ func (suite *sceneImplTest) TestBuilderOptions() {
 
 	suite.Run("WithSSRHandler sets ssrHandler", func() {
 		s := &scene{}
-		h := postprocessing.NewSSRHandler()
+		h := ssr.NewHandler()
 		opt := WithSSRHandler(h)
 		opt(s)
 		suite.Equal(h, s.ssrHandler)

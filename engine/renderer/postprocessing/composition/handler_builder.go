@@ -1,12 +1,12 @@
-package postprocessing
+package composition
 
 import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 )
 
-// CompositionHandlerOption is a functional option for configuring a CompositionHandler
-// during construction via NewCompositionHandler.
-type CompositionHandlerOption func(*compositionHandlerImpl)
+// HandlerOption is a functional option for configuring a Handler
+// during construction via NewHandler.
+type HandlerOption func(*handlerImpl)
 
 // WithCompositionScreenSize sets the initial screen dimensions used for HDR texture
 // allocation. These should match the surface dimensions at the time of initialization.
@@ -16,9 +16,9 @@ type CompositionHandlerOption func(*compositionHandlerImpl)
 //   - height: the screen height in pixels
 //
 // Returns:
-//   - CompositionHandlerOption: a function that applies the screen size option to a compositionHandlerImpl
-func WithCompositionScreenSize(width, height int) CompositionHandlerOption {
-	return func(h *compositionHandlerImpl) {
+//   - HandlerOption: a function that applies the screen size option to a handlerImpl
+func WithCompositionScreenSize(width, height int) HandlerOption {
+	return func(h *handlerImpl) {
 		h.screenWidth = width
 		h.screenHeight = height
 	}
@@ -32,9 +32,9 @@ func WithCompositionScreenSize(width, height int) CompositionHandlerOption {
 //   - enabled: true to enable ACES tone mapping
 //
 // Returns:
-//   - CompositionHandlerOption: a function that applies the tone mapping option to a compositionHandlerImpl
-func WithToneMappingEnabled(enabled bool) CompositionHandlerOption {
-	return func(h *compositionHandlerImpl) {
+//   - HandlerOption: a function that applies the tone mapping option to a handlerImpl
+func WithToneMappingEnabled(enabled bool) HandlerOption {
+	return func(h *handlerImpl) {
 		h.toneMappingEnabled = enabled
 	}
 }
@@ -46,9 +46,9 @@ func WithToneMappingEnabled(enabled bool) CompositionHandlerOption {
 //   - exposure: the exposure multiplier
 //
 // Returns:
-//   - CompositionHandlerOption: a function that applies the exposure option to a compositionHandlerImpl
-func WithExposure(exposure float32) CompositionHandlerOption {
-	return func(h *compositionHandlerImpl) {
+//   - HandlerOption: a function that applies the exposure option to a handlerImpl
+func WithExposure(exposure float32) HandlerOption {
+	return func(h *handlerImpl) {
 		h.exposure = exposure
 	}
 }
@@ -60,9 +60,9 @@ func WithExposure(exposure float32) CompositionHandlerOption {
 //   - enabled: true to enable auto-exposure
 //
 // Returns:
-//   - CompositionHandlerOption: a function that applies the auto-exposure option
-func WithAutoExposure(enabled bool) CompositionHandlerOption {
-	return func(h *compositionHandlerImpl) {
+//   - HandlerOption: a function that applies the auto-exposure option
+func WithAutoExposure(enabled bool) HandlerOption {
+	return func(h *handlerImpl) {
 		h.autoExposureEnabled = enabled
 	}
 }
@@ -74,9 +74,9 @@ func WithAutoExposure(enabled bool) CompositionHandlerOption {
 //   - speed: the adaptation speed (exposures per second)
 //
 // Returns:
-//   - CompositionHandlerOption: a function that applies the adapt speed option
-func WithAdaptSpeed(speed float32) CompositionHandlerOption {
-	return func(h *compositionHandlerImpl) {
+//   - HandlerOption: a function that applies the adapt speed option
+func WithAdaptSpeed(speed float32) HandlerOption {
+	return func(h *handlerImpl) {
 		h.adaptSpeed = speed
 	}
 }
@@ -87,9 +87,9 @@ func WithAdaptSpeed(speed float32) CompositionHandlerOption {
 //   - min: the minimum allowed exposure value
 //
 // Returns:
-//   - CompositionHandlerOption: a function that applies the min exposure option
-func WithMinExposure(min float32) CompositionHandlerOption {
-	return func(h *compositionHandlerImpl) {
+//   - HandlerOption: a function that applies the min exposure option
+func WithMinExposure(min float32) HandlerOption {
+	return func(h *handlerImpl) {
 		h.minExposure = min
 	}
 }
@@ -100,9 +100,9 @@ func WithMinExposure(min float32) CompositionHandlerOption {
 //   - max: the maximum allowed exposure value
 //
 // Returns:
-//   - CompositionHandlerOption: a function that applies the max exposure option
-func WithMaxExposure(max float32) CompositionHandlerOption {
-	return func(h *compositionHandlerImpl) {
+//   - HandlerOption: a function that applies the max exposure option
+func WithMaxExposure(max float32) HandlerOption {
+	return func(h *handlerImpl) {
 		h.maxExposure = max
 	}
 }
@@ -116,9 +116,9 @@ func WithMaxExposure(max float32) CompositionHandlerOption {
 //   - size: the workgroup tile dimension (number of threads per axis)
 //
 // Returns:
-//   - CompositionHandlerOption: a function that applies the workgroup size option
-func WithLuminanceWorkgroupSize(size int) CompositionHandlerOption {
-	return func(h *compositionHandlerImpl) {
+//   - HandlerOption: a function that applies the workgroup size option
+func WithLuminanceWorkgroupSize(size int) HandlerOption {
+	return func(h *handlerImpl) {
 		h.luminanceWorkgroupSize = size
 	}
 }
@@ -127,8 +127,8 @@ func WithLuminanceWorkgroupSize(size int) CompositionHandlerOption {
 //
 // Parameters:
 //   - enabled: true to enable bloom
-func WithBloomEnabled(enabled bool) CompositionHandlerOption {
-	return func(h *compositionHandlerImpl) {
+func WithBloomEnabled(enabled bool) HandlerOption {
+	return func(h *handlerImpl) {
 		h.bloomEnabled = enabled
 	}
 }
@@ -138,8 +138,8 @@ func WithBloomEnabled(enabled bool) CompositionHandlerOption {
 //
 // Parameters:
 //   - threshold: the brightness threshold (typical range 0.5–2.0, default 1.0)
-func WithBloomThreshold(threshold float32) CompositionHandlerOption {
-	return func(h *compositionHandlerImpl) {
+func WithBloomThreshold(threshold float32) HandlerOption {
+	return func(h *handlerImpl) {
 		h.bloomThreshold = threshold
 	}
 }
@@ -149,13 +149,13 @@ func WithBloomThreshold(threshold float32) CompositionHandlerOption {
 //
 // Parameters:
 //   - intensity: the bloom intensity (typical range 0.1–1.0, default 0.5)
-func WithBloomIntensity(intensity float32) CompositionHandlerOption {
-	return func(h *compositionHandlerImpl) {
+func WithBloomIntensity(intensity float32) HandlerOption {
+	return func(h *handlerImpl) {
 		h.bloomIntensity = intensity
 	}
 }
 
-// NewCompositionHandler creates a new CompositionHandler with sensible defaults and any
+// NewHandler creates a new Handler with sensible defaults and any
 // provided options applied. GPU resources are not allocated until the owning scene
 // calls the appropriate initialization methods.
 //
@@ -164,12 +164,12 @@ func WithBloomIntensity(intensity float32) CompositionHandlerOption {
 //   - Exposure: 1.0
 //
 // Parameters:
-//   - opts: variadic list of CompositionHandlerOption functions to configure the handler
+//   - opts: variadic list of HandlerOption functions to configure the handler
 //
 // Returns:
-//   - CompositionHandler: a new handler instance ready to be attached to a scene
-func NewCompositionHandler(opts ...CompositionHandlerOption) CompositionHandler {
-	h := &compositionHandlerImpl{
+//   - Handler: a new handler instance ready to be attached to a scene
+func NewHandler(opts ...HandlerOption) Handler {
+	h := &handlerImpl{
 		enabled:                false,
 		toneMappingEnabled:     true,
 		exposure:               1.0,

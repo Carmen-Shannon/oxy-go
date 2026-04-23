@@ -16,7 +16,10 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/animator"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/gbuffer"
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/composition"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssao"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssr"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/taa"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 	"github.com/cogentcore/webgpu/wgpu"
 )
@@ -130,7 +133,7 @@ func WithLighting(handler light.LightingHandler) SceneBuilderOption {
 }
 
 // WithGBufferHandler attaches a pre-configured GBufferHandler to the scene.
-func WithGBufferHandler(handler gbuffer.GBufferHandler) SceneBuilderOption {
+func WithGBufferHandler(handler gbuffer.Handler) SceneBuilderOption {
 	return func(s *scene) {
 		s.gBufferHandler = handler
 	}
@@ -144,7 +147,7 @@ func WithGBufferHandler(handler gbuffer.GBufferHandler) SceneBuilderOption {
 //
 // Returns:
 //   - SceneBuilderOption: option function to apply
-func WithSSAOHandler(handler postprocessing.SSAOHandler) SceneBuilderOption {
+func WithSSAOHandler(handler ssao.Handler) SceneBuilderOption {
 	return func(s *scene) {
 		s.ssaoHandler = handler
 	}
@@ -158,7 +161,7 @@ func WithSSAOHandler(handler postprocessing.SSAOHandler) SceneBuilderOption {
 //
 // Returns:
 //   - SceneBuilderOption: option function to apply
-func WithCompositionHandler(handler postprocessing.CompositionHandler) SceneBuilderOption {
+func WithCompositionHandler(handler composition.Handler) SceneBuilderOption {
 	return func(s *scene) {
 		s.compositionHandler = handler
 	}
@@ -172,7 +175,7 @@ func WithCompositionHandler(handler postprocessing.CompositionHandler) SceneBuil
 //
 // Returns:
 //   - SceneBuilderOption: option function to apply
-func WithSSRHandler(handler postprocessing.SSRHandler) SceneBuilderOption {
+func WithSSRHandler(handler ssr.Handler) SceneBuilderOption {
 	return func(s *scene) {
 		s.ssrHandler = handler
 	}
@@ -186,7 +189,7 @@ func WithSSRHandler(handler postprocessing.SSRHandler) SceneBuilderOption {
 //
 // Returns:
 //   - SceneBuilderOption: option function to apply
-func WithTAAHandler(handler postprocessing.TAAHandler) SceneBuilderOption {
+func WithTAAHandler(handler taa.Handler) SceneBuilderOption {
 	return func(s *scene) {
 		s.taaHandler = handler
 	}
@@ -328,11 +331,11 @@ func NewScene(name string, cam camera.Camera, r renderer.Renderer, options ...Sc
 		drawDeclsPool:          make([]shader.Annotation, 0, 32),
 		drawGroupProvidersPool: make(map[int]bind_group_provider.BindGroupProvider, 8),
 		lightHandler:           light.NewLightingHandler(),
-		gBufferHandler:         gbuffer.NewGBufferHandler(),
-		ssaoHandler:            postprocessing.NewSSAOHandler(),
-		compositionHandler:     postprocessing.NewCompositionHandler(postprocessing.WithToneMappingEnabled(true), postprocessing.WithExposure(1.0)),
-		ssrHandler:             postprocessing.NewSSRHandler(),
-		taaHandler:             postprocessing.NewTAAHandler(),
+		gBufferHandler:         gbuffer.NewHandler(),
+		ssaoHandler:            ssao.NewHandler(),
+		compositionHandler:     composition.NewHandler(composition.WithToneMappingEnabled(true), composition.WithExposure(1.0)),
+		ssrHandler:             ssr.NewHandler(),
+		taaHandler:             taa.NewHandler(),
 		physicsSyncGroup:       make(map[int]bind_group_provider.BindGroupProvider),
 		physicsAnimBinding:     -1,
 		lodLevelCache:          make(map[animator.Animator]int),

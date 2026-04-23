@@ -82,9 +82,8 @@ Creates a new Engine with sensible defaults and applies each option in order. Wh
 
 | Method                        | Description                                                                                            |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `SetTickRate(fps)`            | Sets the engine tick rate in Hz. Takes effect immediately if the engine is running (sent via channel). |
+| `SetTickRate(hz)`             | Sets the engine tick rate in Hz. Takes effect immediately if the engine is running (sent via channel). |
 | `SetTickCallback(callback)`   | Registers the function called each engine tick. Receives `deltaTime float32` in seconds.               |
-| `SetRenderCallback(callback)` | Registers the function called each render frame. Receives `deltaTime float32` in seconds.              |
 | `SetRenderFrameLimit(fps)`    | Sets an optional render frame rate cap. Pass 0 to uncap.                                               |
 
 ### Profiling

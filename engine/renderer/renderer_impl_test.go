@@ -819,7 +819,30 @@ func (suite *rendererImplTest) TestCreateSharpenTexture() {
 	})
 }
 
-// --- Builder option functions ---
+func (suite *rendererImplTest) TestNewRendererNilWindowPanics() {
+	suite.Run("should panic when constructing a renderer with a nil window", func() {
+		suite.Panics(func() {
+			renderer.NewRenderer(renderer.BackendTypeWGPU, nil)
+		})
+	})
+
+	suite.Run("should still panic with nil window when builder options are provided", func() {
+		suite.Panics(func() {
+			renderer.NewRenderer(
+				renderer.BackendTypeWGPU,
+				nil,
+				renderer.WithGPUSerializedProfiling(true),
+				renderer.WithForceSoftwareRenderer(true),
+			)
+		})
+	})
+
+	suite.Run("should still panic with nil window when msaa option is provided", func() {
+		suite.Panics(func() {
+			renderer.NewRenderer(renderer.BackendTypeWGPU, nil, renderer.WithMSAA(renderer.MSAA8x))
+		})
+	})
+}
 
 func (suite *rendererImplTest) TestWithPipeline() {
 	suite.Run("should add the pipeline to the cache under the given key", func() {
@@ -883,30 +906,5 @@ func (suite *rendererImplTest) TestWithGPUSerializedProfiling() {
 		renderer.ApplyOption(suite.r, renderer.WithGPUSerializedProfiling(false))
 
 		suite.False(renderer.RendererGPUSerializedProfiling(suite.r))
-	})
-}
-
-func (suite *rendererImplTest) TestNewRendererNilWindowPanics() {
-	suite.Run("should panic when constructing a renderer with a nil window", func() {
-		suite.Panics(func() {
-			renderer.NewRenderer(renderer.BackendTypeWGPU, nil)
-		})
-	})
-
-	suite.Run("should still panic with nil window when builder options are provided", func() {
-		suite.Panics(func() {
-			renderer.NewRenderer(
-				renderer.BackendTypeWGPU,
-				nil,
-				renderer.WithGPUSerializedProfiling(true),
-				renderer.WithForceSoftwareRenderer(true),
-			)
-		})
-	})
-
-	suite.Run("should still panic with nil window when msaa option is provided", func() {
-		suite.Panics(func() {
-			renderer.NewRenderer(renderer.BackendTypeWGPU, nil, renderer.WithMSAA(renderer.MSAA8x))
-		})
 	})
 }

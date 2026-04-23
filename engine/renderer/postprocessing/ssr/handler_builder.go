@@ -1,12 +1,12 @@
-package postprocessing
+package ssr
 
 import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 )
 
-// SSRHandlerOption is a functional option for configuring an SSRHandler
-// during construction via NewSSRHandler.
-type SSRHandlerOption func(*ssrHandlerImpl)
+// HandlerOption is a functional option for configuring a Handler
+// during construction via NewHandler.
+type HandlerOption func(*handlerImpl)
 
 // WithSSRScreenSize sets the initial screen dimensions used for SSR texture
 // allocation. These should match the surface dimensions at the time of
@@ -17,9 +17,9 @@ type SSRHandlerOption func(*ssrHandlerImpl)
 //   - height: the screen height in pixels
 //
 // Returns:
-//   - SSRHandlerOption: a function that applies the screen size option to an ssrHandlerImpl
-func WithSSRScreenSize(width, height int) SSRHandlerOption {
-	return func(h *ssrHandlerImpl) {
+//   - HandlerOption: a function that applies the screen size option to a handlerImpl
+func WithSSRScreenSize(width, height int) HandlerOption {
+	return func(h *handlerImpl) {
 		h.screenWidth = width
 		h.screenHeight = height
 	}
@@ -32,9 +32,9 @@ func WithSSRScreenSize(width, height int) SSRHandlerOption {
 //   - steps: the maximum step count (recommended: 64)
 //
 // Returns:
-//   - SSRHandlerOption: a function that applies the max steps option to an ssrHandlerImpl
-func WithSSRMaxSteps(steps int) SSRHandlerOption {
-	return func(h *ssrHandlerImpl) {
+//   - HandlerOption: a function that applies the max steps option to a handlerImpl
+func WithSSRMaxSteps(steps int) HandlerOption {
+	return func(h *handlerImpl) {
 		h.maxSteps = steps
 	}
 }
@@ -46,9 +46,9 @@ func WithSSRMaxSteps(steps int) SSRHandlerOption {
 //   - distance: the maximum distance (recommended: 50.0)
 //
 // Returns:
-//   - SSRHandlerOption: a function that applies the max distance option to an ssrHandlerImpl
-func WithSSRMaxDistance(distance float32) SSRHandlerOption {
-	return func(h *ssrHandlerImpl) {
+//   - HandlerOption: a function that applies the max distance option to a handlerImpl
+func WithSSRMaxDistance(distance float32) HandlerOption {
+	return func(h *handlerImpl) {
 		h.maxDistance = distance
 	}
 }
@@ -60,9 +60,9 @@ func WithSSRMaxDistance(distance float32) SSRHandlerOption {
 //   - thickness: the depth tolerance (recommended: 0.1)
 //
 // Returns:
-//   - SSRHandlerOption: a function that applies the thickness option to an ssrHandlerImpl
-func WithSSRThickness(thickness float32) SSRHandlerOption {
-	return func(h *ssrHandlerImpl) {
+//   - HandlerOption: a function that applies the thickness option to a handlerImpl
+func WithSSRThickness(thickness float32) HandlerOption {
+	return func(h *handlerImpl) {
 		h.thickness = thickness
 	}
 }
@@ -74,9 +74,9 @@ func WithSSRThickness(thickness float32) SSRHandlerOption {
 //   - stride: the stride multiplier (recommended: 1.0)
 //
 // Returns:
-//   - SSRHandlerOption: a function that applies the stride option to an ssrHandlerImpl
-func WithSSRStride(stride float32) SSRHandlerOption {
-	return func(h *ssrHandlerImpl) {
+//   - HandlerOption: a function that applies the stride option to a handlerImpl
+func WithSSRStride(stride float32) HandlerOption {
+	return func(h *handlerImpl) {
 		h.stride = stride
 	}
 }
@@ -88,14 +88,14 @@ func WithSSRStride(stride float32) SSRHandlerOption {
 //   - cutoff: the roughness cutoff (recommended: 0.5)
 //
 // Returns:
-//   - SSRHandlerOption: a function that applies the roughness cutoff option to an ssrHandlerImpl
-func WithSSRRoughnessCutoff(cutoff float32) SSRHandlerOption {
-	return func(h *ssrHandlerImpl) {
+//   - HandlerOption: a function that applies the roughness cutoff option to a handlerImpl
+func WithSSRRoughnessCutoff(cutoff float32) HandlerOption {
+	return func(h *handlerImpl) {
 		h.roughnessCutoff = cutoff
 	}
 }
 
-// NewSSRHandler creates a new SSRHandler with sensible defaults and any
+// NewHandler creates a new Handler with sensible defaults and any
 // provided options applied. GPU resources are not allocated until the owning
 // scene calls the appropriate initialization methods.
 //
@@ -107,12 +107,12 @@ func WithSSRRoughnessCutoff(cutoff float32) SSRHandlerOption {
 //   - RoughnessCutoff: 0.5
 //
 // Parameters:
-//   - opts: variadic list of SSRHandlerOption functions to configure the handler
+//   - opts: variadic list of HandlerOption functions to configure the handler
 //
 // Returns:
-//   - SSRHandler: a new handler instance ready to be attached to a scene
-func NewSSRHandler(opts ...SSRHandlerOption) SSRHandler {
-	h := &ssrHandlerImpl{
+//   - Handler: a new handler instance ready to be attached to a scene
+func NewHandler(opts ...HandlerOption) Handler {
+	h := &handlerImpl{
 		enabled:         false,
 		maxSteps:        64,
 		maxDistance:     50.0,

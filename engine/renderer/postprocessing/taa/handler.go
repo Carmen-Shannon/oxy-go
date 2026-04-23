@@ -1,15 +1,16 @@
-package postprocessing
+// Package taa provides the temporal anti-aliasing postprocessing subsystem.
+package taa
 
 import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/cogentcore/webgpu/wgpu"
 )
 
-// TAAHandler manages GPU resources and state for the Temporal Anti-Aliasing
+// Handler manages GPU resources and state for the Temporal Anti-Aliasing
 // resolve pass. It owns two ping-pong RGBA16Float textures (history and resolve
 // output), a linear sampler, the taa_resolve compute pipeline key, and the two
 // slot-indexed BGPs that wire those resources into the compute shader.
-type TAAHandler interface {
+type Handler interface {
 	// Enabled reports whether TAA is active.
 	Enabled() bool
 
@@ -131,4 +132,4 @@ type TAAHandler interface {
 	Resize(width, height int)
 }
 
-var _ TAAHandler = &taaHandlerImpl{}
+var _ Handler = &handlerImpl{}

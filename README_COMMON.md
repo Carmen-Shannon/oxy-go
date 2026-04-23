@@ -66,7 +66,7 @@ Provides a generic delegation pattern for routing method calls through a replace
 
 ## Key Codes (`key_codes.go`)
 
-Platform-independent virtual key constants matching [GLFW key codes](https://pkg.go.dev/github.com/go-gl/glfw/v3.3/glfw#Key). Printable keys use their ASCII values; special keys use GLFW-assigned values.
+Platform-independent virtual key constants matching [GLFW key codes](https://pkg.go.dev/github.com/go-gl/glfw/v3.4/glfw#Key). Printable keys use their ASCII values; special keys use GLFW-assigned values.
 
 ### Printable Keys
 

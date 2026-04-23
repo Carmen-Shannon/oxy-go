@@ -1,6 +1,3 @@
-// gltf_types.go contains glTF 2.0 spec data structures for JSON deserialization.
-// These types map directly to the glTF 2.0 JSON schema and are internal to the loader package.
-// Reference: https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html
 package loader
 
 // --- glTF Root Structure ---

@@ -2,7 +2,7 @@ package common
 
 // Virtual key codes for cross-platform input handling.
 // These values match GLFW key codes which use ASCII values for printable keys.
-// Reference: https://pkg.go.dev/github.com/go-gl/glfw/v3.3/glfw#Key
+// Reference: https://pkg.go.dev/github.com/go-gl/glfw/v3.4/glfw#Key
 const (
 	KeyW         = 87  // W key (ASCII)
 	KeyA         = 65  // A key (ASCII)

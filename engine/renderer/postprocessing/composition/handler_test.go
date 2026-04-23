@@ -1,10 +1,10 @@
-package postprocessing_test
+package composition_test
 
 import (
 	"testing"
 
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/composition"
 	"github.com/cogentcore/webgpu/wgpu"
 	"github.com/stretchr/testify/suite"
 )
@@ -15,19 +15,19 @@ func TestRunCompositionHandlerTests(t *testing.T) {
 
 type compositionHandlerTest struct {
 	suite.Suite
-	handler postprocessing.CompositionHandler
+	handler composition.Handler
 }
 
 func (suite *compositionHandlerTest) SetupSubTest() {
-	suite.handler = postprocessing.NewCompositionHandler()
+	suite.handler = composition.NewHandler()
 }
 
 func (suite *compositionHandlerTest) TestNewCompositionHandler() {
 	suite.Run("should create a new composition handler with provided options", func() {
-		h := postprocessing.NewCompositionHandler(
-			postprocessing.WithCompositionScreenSize(1920, 1080),
-			postprocessing.WithToneMappingEnabled(false),
-			postprocessing.WithExposure(2.0),
+		h := composition.NewHandler(
+			composition.WithCompositionScreenSize(1920, 1080),
+			composition.WithToneMappingEnabled(false),
+			composition.WithExposure(2.0),
 		)
 		suite.NotNil(h)
 	})
@@ -303,36 +303,36 @@ func (suite *compositionHandlerTest) TestSetExposureBuffer() {
 
 func (suite *compositionHandlerTest) TestNewCompositionHandlerWithAutoExposureOptions() {
 	suite.Run("should create handler with auto exposure enabled", func() {
-		h := postprocessing.NewCompositionHandler(
-			postprocessing.WithAutoExposure(true),
+		h := composition.NewHandler(
+			composition.WithAutoExposure(true),
 		)
 		suite.Equal(true, h.AutoExposureEnabled())
 	})
 
 	suite.Run("should create handler with custom adapt speed", func() {
-		h := postprocessing.NewCompositionHandler(
-			postprocessing.WithAdaptSpeed(3.0),
+		h := composition.NewHandler(
+			composition.WithAdaptSpeed(3.0),
 		)
 		suite.Equal(float32(3.0), h.AdaptSpeed())
 	})
 
 	suite.Run("should create handler with custom min exposure", func() {
-		h := postprocessing.NewCompositionHandler(
-			postprocessing.WithMinExposure(0.2),
+		h := composition.NewHandler(
+			composition.WithMinExposure(0.2),
 		)
 		suite.Equal(float32(0.2), h.MinExposure())
 	})
 
 	suite.Run("should create handler with custom max exposure", func() {
-		h := postprocessing.NewCompositionHandler(
-			postprocessing.WithMaxExposure(15.0),
+		h := composition.NewHandler(
+			composition.WithMaxExposure(15.0),
 		)
 		suite.Equal(float32(15.0), h.MaxExposure())
 	})
 
 	suite.Run("should create handler with custom luminance workgroup size", func() {
-		h := postprocessing.NewCompositionHandler(
-			postprocessing.WithLuminanceWorkgroupSize(8),
+		h := composition.NewHandler(
+			composition.WithLuminanceWorkgroupSize(8),
 		)
 		suite.Equal(8, h.LuminanceWorkgroupSize())
 	})
@@ -483,10 +483,10 @@ func (suite *compositionHandlerTest) TestSetBloomUpMip0View() {
 
 func (suite *compositionHandlerTest) TestNewCompositionHandlerWithBloomOptions() {
 	suite.Run("should create handler with bloom options applied", func() {
-		h := postprocessing.NewCompositionHandler(
-			postprocessing.WithBloomEnabled(true),
-			postprocessing.WithBloomThreshold(0.8),
-			postprocessing.WithBloomIntensity(0.6),
+		h := composition.NewHandler(
+			composition.WithBloomEnabled(true),
+			composition.WithBloomThreshold(0.8),
+			composition.WithBloomIntensity(0.6),
 		)
 		suite.Equal(true, h.BloomEnabled())
 		suite.Equal(float32(0.8), h.BloomThreshold())
@@ -496,7 +496,7 @@ func (suite *compositionHandlerTest) TestNewCompositionHandlerWithBloomOptions()
 
 func (suite *compositionHandlerTest) TestNewCompositionHandlerBloomDefaults() {
 	suite.Run("should have correct bloom defaults with no bloom options", func() {
-		h := postprocessing.NewCompositionHandler()
+		h := composition.NewHandler()
 		suite.Equal(false, h.BloomEnabled())
 		suite.Equal(float32(1.0), h.BloomThreshold())
 		suite.Equal(float32(0.5), h.BloomIntensity())

@@ -1,13 +1,14 @@
-package postprocessing
+// Package composition provides the postprocessing composition and tone-mapping subsystem.
+package composition
 
 import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/cogentcore/webgpu/wgpu"
 )
 
-// CompositionHandler defines the interface for the scene's composition and tone mapping subsystem.
+// Handler defines the interface for the scene's composition and tone mapping subsystem.
 //
-// The CompositionHandler manages the offscreen HDR render target, the full-screen
+// The Handler manages the offscreen HDR render target, the full-screen
 // composition pipeline, and tone mapping configuration. When composition is active,
 // the lit pass renders to an RGBA16Float offscreen texture instead of the swapchain.
 // A final full-screen pass then samples the HDR result along with any SSR texture,
@@ -15,7 +16,7 @@ import (
 //
 // Thread safety is provided by the owning scene's mutex — the handler itself
 // does not perform internal locking.
-type CompositionHandler interface {
+type Handler interface {
 	// Enabled returns whether the composition subsystem has been GPU-initialized
 	// and is ready for rendering.
 	//
@@ -415,124 +416,124 @@ type CompositionHandler interface {
 	SetBloomUpMip0View(tv *wgpu.TextureView)
 }
 
-var _ CompositionHandler = &compositionHandlerImpl{}
+var _ Handler = &handlerImpl{}
 
-func (h *compositionHandlerImpl) Enabled() bool                   { return h.enabled }
-func (h *compositionHandlerImpl) SetEnabled(enabled bool)         { h.enabled = enabled }
-func (h *compositionHandlerImpl) ScreenWidth() int                { return h.screenWidth }
-func (h *compositionHandlerImpl) ScreenHeight() int               { return h.screenHeight }
-func (h *compositionHandlerImpl) ToneMappingEnabled() bool        { return h.toneMappingEnabled }
-func (h *compositionHandlerImpl) Exposure() float32               { return h.exposure }
-func (h *compositionHandlerImpl) SetExposure(exposure float32)    { h.exposure = exposure }
-func (h *compositionHandlerImpl) PipelineKey(name string) string  { return h.pipelineKeys[name] }
-func (h *compositionHandlerImpl) PipelineKeys() map[string]string { return h.pipelineKeys }
-func (h *compositionHandlerImpl) SetPipelineKey(name, key string) { h.pipelineKeys[name] = key }
-func (h *compositionHandlerImpl) SetSlot(slot int)                { h.activeSlot = slot }
-func (h *compositionHandlerImpl) HDRTexture() *wgpu.Texture       { return h.hdrTextures[h.activeSlot] }
-func (h *compositionHandlerImpl) SetHDRTexture(t *wgpu.Texture)   { h.hdrTextures[h.activeSlot] = t }
-func (h *compositionHandlerImpl) HDRTextureView() *wgpu.TextureView {
+func (h *handlerImpl) Enabled() bool                   { return h.enabled }
+func (h *handlerImpl) SetEnabled(enabled bool)         { h.enabled = enabled }
+func (h *handlerImpl) ScreenWidth() int                { return h.screenWidth }
+func (h *handlerImpl) ScreenHeight() int               { return h.screenHeight }
+func (h *handlerImpl) ToneMappingEnabled() bool        { return h.toneMappingEnabled }
+func (h *handlerImpl) Exposure() float32               { return h.exposure }
+func (h *handlerImpl) SetExposure(exposure float32)    { h.exposure = exposure }
+func (h *handlerImpl) PipelineKey(name string) string  { return h.pipelineKeys[name] }
+func (h *handlerImpl) PipelineKeys() map[string]string { return h.pipelineKeys }
+func (h *handlerImpl) SetPipelineKey(name, key string) { h.pipelineKeys[name] = key }
+func (h *handlerImpl) SetSlot(slot int)                { h.activeSlot = slot }
+func (h *handlerImpl) HDRTexture() *wgpu.Texture       { return h.hdrTextures[h.activeSlot] }
+func (h *handlerImpl) SetHDRTexture(t *wgpu.Texture)   { h.hdrTextures[h.activeSlot] = t }
+func (h *handlerImpl) HDRTextureView() *wgpu.TextureView {
 	return h.hdrTextureViews[h.activeSlot]
 }
-func (h *compositionHandlerImpl) SetHDRTextureView(tv *wgpu.TextureView) {
+func (h *handlerImpl) SetHDRTextureView(tv *wgpu.TextureView) {
 	h.hdrTextureViews[h.activeSlot] = tv
 }
-func (h *compositionHandlerImpl) MSAATexture() *wgpu.Texture     { return h.msaaTextures[h.activeSlot] }
-func (h *compositionHandlerImpl) SetMSAATexture(t *wgpu.Texture) { h.msaaTextures[h.activeSlot] = t }
-func (h *compositionHandlerImpl) MSAATextureView() *wgpu.TextureView {
+func (h *handlerImpl) MSAATexture() *wgpu.Texture     { return h.msaaTextures[h.activeSlot] }
+func (h *handlerImpl) SetMSAATexture(t *wgpu.Texture) { h.msaaTextures[h.activeSlot] = t }
+func (h *handlerImpl) MSAATextureView() *wgpu.TextureView {
 	return h.msaaTextureViews[h.activeSlot]
 }
-func (h *compositionHandlerImpl) SetMSAATextureView(tv *wgpu.TextureView) {
+func (h *handlerImpl) SetMSAATextureView(tv *wgpu.TextureView) {
 	h.msaaTextureViews[h.activeSlot] = tv
 }
-func (h *compositionHandlerImpl) DepthTexture() *wgpu.Texture     { return h.depthTextures[h.activeSlot] }
-func (h *compositionHandlerImpl) SetDepthTexture(t *wgpu.Texture) { h.depthTextures[h.activeSlot] = t }
-func (h *compositionHandlerImpl) DepthTextureView() *wgpu.TextureView {
+func (h *handlerImpl) DepthTexture() *wgpu.Texture     { return h.depthTextures[h.activeSlot] }
+func (h *handlerImpl) SetDepthTexture(t *wgpu.Texture) { h.depthTextures[h.activeSlot] = t }
+func (h *handlerImpl) DepthTextureView() *wgpu.TextureView {
 	return h.depthTextureViews[h.activeSlot]
 }
-func (h *compositionHandlerImpl) SetDepthTextureView(tv *wgpu.TextureView) {
+func (h *handlerImpl) SetDepthTextureView(tv *wgpu.TextureView) {
 	h.depthTextureViews[h.activeSlot] = tv
 }
-func (h *compositionHandlerImpl) LinearSampler() *wgpu.Sampler     { return h.linearSampler }
-func (h *compositionHandlerImpl) SetLinearSampler(s *wgpu.Sampler) { h.linearSampler = s }
+func (h *handlerImpl) LinearSampler() *wgpu.Sampler     { return h.linearSampler }
+func (h *handlerImpl) SetLinearSampler(s *wgpu.Sampler) { h.linearSampler = s }
 
-func (h *compositionHandlerImpl) AutoExposureEnabled() bool { return h.autoExposureEnabled }
-func (h *compositionHandlerImpl) SetAutoExposureEnabled(enabled bool) {
+func (h *handlerImpl) AutoExposureEnabled() bool { return h.autoExposureEnabled }
+func (h *handlerImpl) SetAutoExposureEnabled(enabled bool) {
 	h.autoExposureEnabled = enabled
 }
-func (h *compositionHandlerImpl) AdaptSpeed() float32              { return h.adaptSpeed }
-func (h *compositionHandlerImpl) SetAdaptSpeed(speed float32)      { h.adaptSpeed = speed }
-func (h *compositionHandlerImpl) MinExposure() float32             { return h.minExposure }
-func (h *compositionHandlerImpl) SetMinExposure(min float32)       { h.minExposure = min }
-func (h *compositionHandlerImpl) MaxExposure() float32             { return h.maxExposure }
-func (h *compositionHandlerImpl) SetMaxExposure(max float32)       { h.maxExposure = max }
-func (h *compositionHandlerImpl) LuminanceWorkgroupSize() int      { return h.luminanceWorkgroupSize }
-func (h *compositionHandlerImpl) ExposureBuffer() *wgpu.Buffer     { return h.exposureBuffer }
-func (h *compositionHandlerImpl) SetExposureBuffer(b *wgpu.Buffer) { h.exposureBuffer = b }
+func (h *handlerImpl) AdaptSpeed() float32              { return h.adaptSpeed }
+func (h *handlerImpl) SetAdaptSpeed(speed float32)      { h.adaptSpeed = speed }
+func (h *handlerImpl) MinExposure() float32             { return h.minExposure }
+func (h *handlerImpl) SetMinExposure(min float32)       { h.minExposure = min }
+func (h *handlerImpl) MaxExposure() float32             { return h.maxExposure }
+func (h *handlerImpl) SetMaxExposure(max float32)       { h.maxExposure = max }
+func (h *handlerImpl) LuminanceWorkgroupSize() int      { return h.luminanceWorkgroupSize }
+func (h *handlerImpl) ExposureBuffer() *wgpu.Buffer     { return h.exposureBuffer }
+func (h *handlerImpl) SetExposureBuffer(b *wgpu.Buffer) { h.exposureBuffer = b }
 
-func (h *compositionHandlerImpl) BloomEnabled() bool                  { return h.bloomEnabled }
-func (h *compositionHandlerImpl) SetBloomEnabled(enabled bool)        { h.bloomEnabled = enabled }
-func (h *compositionHandlerImpl) BloomThreshold() float32             { return h.bloomThreshold }
-func (h *compositionHandlerImpl) SetBloomThreshold(threshold float32) { h.bloomThreshold = threshold }
-func (h *compositionHandlerImpl) BloomIntensity() float32             { return h.bloomIntensity }
-func (h *compositionHandlerImpl) SetBloomIntensity(intensity float32) { h.bloomIntensity = intensity }
-func (h *compositionHandlerImpl) BloomMipCount() int                  { return h.bloomMipCount }
-func (h *compositionHandlerImpl) SetBloomMipCount(count int)          { h.bloomMipCount = count }
-func (h *compositionHandlerImpl) BloomDownTexture() *wgpu.Texture {
+func (h *handlerImpl) BloomEnabled() bool                  { return h.bloomEnabled }
+func (h *handlerImpl) SetBloomEnabled(enabled bool)        { h.bloomEnabled = enabled }
+func (h *handlerImpl) BloomThreshold() float32             { return h.bloomThreshold }
+func (h *handlerImpl) SetBloomThreshold(threshold float32) { h.bloomThreshold = threshold }
+func (h *handlerImpl) BloomIntensity() float32             { return h.bloomIntensity }
+func (h *handlerImpl) SetBloomIntensity(intensity float32) { h.bloomIntensity = intensity }
+func (h *handlerImpl) BloomMipCount() int                  { return h.bloomMipCount }
+func (h *handlerImpl) SetBloomMipCount(count int)          { h.bloomMipCount = count }
+func (h *handlerImpl) BloomDownTexture() *wgpu.Texture {
 	return h.bloomDownTextures[h.activeSlot]
 }
-func (h *compositionHandlerImpl) SetBloomDownTexture(t *wgpu.Texture) {
+func (h *handlerImpl) SetBloomDownTexture(t *wgpu.Texture) {
 	h.bloomDownTextures[h.activeSlot] = t
 }
-func (h *compositionHandlerImpl) BloomDownReadViews() []*wgpu.TextureView {
+func (h *handlerImpl) BloomDownReadViews() []*wgpu.TextureView {
 	return h.bloomDownReadViewsArr[h.activeSlot]
 }
-func (h *compositionHandlerImpl) SetBloomDownReadViews(views []*wgpu.TextureView) {
+func (h *handlerImpl) SetBloomDownReadViews(views []*wgpu.TextureView) {
 	h.bloomDownReadViewsArr[h.activeSlot] = views
 }
-func (h *compositionHandlerImpl) BloomDownStorageViews() []*wgpu.TextureView {
+func (h *handlerImpl) BloomDownStorageViews() []*wgpu.TextureView {
 	return h.bloomDownStorageViewsArr[h.activeSlot]
 }
-func (h *compositionHandlerImpl) SetBloomDownStorageViews(views []*wgpu.TextureView) {
+func (h *handlerImpl) SetBloomDownStorageViews(views []*wgpu.TextureView) {
 	h.bloomDownStorageViewsArr[h.activeSlot] = views
 }
-func (h *compositionHandlerImpl) BloomUpTexture() *wgpu.Texture {
+func (h *handlerImpl) BloomUpTexture() *wgpu.Texture {
 	return h.bloomUpTextures[h.activeSlot]
 }
-func (h *compositionHandlerImpl) SetBloomUpTexture(t *wgpu.Texture) {
+func (h *handlerImpl) SetBloomUpTexture(t *wgpu.Texture) {
 	h.bloomUpTextures[h.activeSlot] = t
 }
-func (h *compositionHandlerImpl) BloomUpReadViews() []*wgpu.TextureView {
+func (h *handlerImpl) BloomUpReadViews() []*wgpu.TextureView {
 	return h.bloomUpReadViewsArr[h.activeSlot]
 }
-func (h *compositionHandlerImpl) SetBloomUpReadViews(views []*wgpu.TextureView) {
+func (h *handlerImpl) SetBloomUpReadViews(views []*wgpu.TextureView) {
 	h.bloomUpReadViewsArr[h.activeSlot] = views
 }
-func (h *compositionHandlerImpl) BloomUpStorageViews() []*wgpu.TextureView {
+func (h *handlerImpl) BloomUpStorageViews() []*wgpu.TextureView {
 	return h.bloomUpStorageViewsArr[h.activeSlot]
 }
-func (h *compositionHandlerImpl) SetBloomUpStorageViews(views []*wgpu.TextureView) {
+func (h *handlerImpl) SetBloomUpStorageViews(views []*wgpu.TextureView) {
 	h.bloomUpStorageViewsArr[h.activeSlot] = views
 }
-func (h *compositionHandlerImpl) BloomUpMip0View() *wgpu.TextureView {
+func (h *handlerImpl) BloomUpMip0View() *wgpu.TextureView {
 	return h.bloomUpMip0Views[h.activeSlot]
 }
-func (h *compositionHandlerImpl) SetBloomUpMip0View(tv *wgpu.TextureView) {
+func (h *handlerImpl) SetBloomUpMip0View(tv *wgpu.TextureView) {
 	h.bloomUpMip0Views[h.activeSlot] = tv
 }
 
-func (h *compositionHandlerImpl) Resize(width, height int) {
+func (h *handlerImpl) Resize(width, height int) {
 	h.screenWidth = width
 	h.screenHeight = height
 }
 
-func (h *compositionHandlerImpl) Bgp(key string) bind_group_provider.BindGroupProvider {
+func (h *handlerImpl) Bgp(key string) bind_group_provider.BindGroupProvider {
 	return h.bgps[key]
 }
 
-func (h *compositionHandlerImpl) Bgps() map[string]bind_group_provider.BindGroupProvider {
+func (h *handlerImpl) Bgps() map[string]bind_group_provider.BindGroupProvider {
 	return h.bgps
 }
 
-func (h *compositionHandlerImpl) SetBgp(key string, bgp bind_group_provider.BindGroupProvider) {
+func (h *handlerImpl) SetBgp(key string, bgp bind_group_provider.BindGroupProvider) {
 	h.bgps[key] = bgp
 }

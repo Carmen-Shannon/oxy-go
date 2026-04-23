@@ -16,7 +16,10 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/loader"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/gbuffer"
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/composition"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssao"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssr"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/taa"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	"github.com/Carmen-Shannon/oxy-go/engine/window"
 )
@@ -65,7 +68,7 @@ func main() {
 		scene.WithScreenSize(eng.Window().Width(), eng.Window().Height()),
 		scene.WithLODEnabled(true),
 		scene.WithLODDistances(50.0, 150.0),
-		scene.WithGBufferHandler(gbuffer.NewGBufferHandler()),
+		scene.WithGBufferHandler(gbuffer.NewHandler()),
 		scene.WithLighting(light.NewLightingHandler(
 			light.WithShadowHandler(light.NewShadowHandler(
 				light.WithPCFRadius(1.0),
@@ -75,33 +78,33 @@ func main() {
 				light.WithShadowInnerRadius(50),
 			)),
 		)),
-		scene.WithSSAOHandler(postprocessing.NewSSAOHandler(
-			postprocessing.WithSSAOSampleCount(8),
-			postprocessing.WithSSAOScreenRadius(24.0),
-			postprocessing.WithSSAOBias(0.025),
-			postprocessing.WithSSAOPower(2.0),
-			postprocessing.WithSSAOBlurRadius(2),
-			postprocessing.WithSSAOHalfResolution(true),
+		scene.WithSSAOHandler(ssao.NewHandler(
+			ssao.WithSSAOSampleCount(8),
+			ssao.WithSSAOScreenRadius(24.0),
+			ssao.WithSSAOBias(0.025),
+			ssao.WithSSAOPower(2.0),
+			ssao.WithSSAOBlurRadius(2),
+			ssao.WithSSAOHalfResolution(true),
 		)),
-		scene.WithCompositionHandler(postprocessing.NewCompositionHandler(
-			postprocessing.WithToneMappingEnabled(true),
-			postprocessing.WithExposure(1.0),
-			postprocessing.WithAutoExposure(true),
-			postprocessing.WithAdaptSpeed(8.0),
-			postprocessing.WithMinExposure(0.001),
-			postprocessing.WithMaxExposure(2.0),
+		scene.WithCompositionHandler(composition.NewHandler(
+			composition.WithToneMappingEnabled(true),
+			composition.WithExposure(1.0),
+			composition.WithAutoExposure(true),
+			composition.WithAdaptSpeed(8.0),
+			composition.WithMinExposure(0.001),
+			composition.WithMaxExposure(2.0),
 		)),
-		scene.WithSSRHandler(postprocessing.NewSSRHandler(
-			postprocessing.WithSSRMaxSteps(32),
-			postprocessing.WithSSRMaxDistance(10.0),
-			postprocessing.WithSSRThickness(2.0),
-			postprocessing.WithSSRStride(1.5),
-			postprocessing.WithSSRRoughnessCutoff(0.5),
+		scene.WithSSRHandler(ssr.NewHandler(
+			ssr.WithSSRMaxSteps(32),
+			ssr.WithSSRMaxDistance(10.0),
+			ssr.WithSSRThickness(2.0),
+			ssr.WithSSRStride(1.5),
+			ssr.WithSSRRoughnessCutoff(0.5),
 		)),
-		scene.WithTAAHandler(postprocessing.NewTAAHandler(
-			postprocessing.WithTAAHistoryRectificationScale(1.0),
-			postprocessing.WithTAABlendFactor(0.1),
-			postprocessing.WithTAAJitterScale(0.6),
+		scene.WithTAAHandler(taa.NewHandler(
+			taa.WithTAAHistoryRectificationScale(1.0),
+			taa.WithTAABlendFactor(0.1),
+			taa.WithTAAJitterScale(0.6),
 		)),
 	)
 

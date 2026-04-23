@@ -1,10 +1,3 @@
-// annotations.go defines the annotation types, argument constants, and parser for the
-// Oxy WGSL shader pre-processor. Annotations are single-line WGSL comments prefixed
-// with @oxy: that drive automatic struct injection, bind group declaration, and resource
-// provider registration. The parsed results are stored as Annotation values and consumed
-// by the PreProcessor and Scene to wire GPU resources without manual low-level plumbing.
-//
-// See ANNOTATIONS_README.md at the repository root for full syntax documentation and examples.
 package shader
 
 import (

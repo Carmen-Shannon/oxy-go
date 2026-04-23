@@ -1,12 +1,13 @@
+// Package gbuffer contains the Handler interface and implementation for managing G-Buffer textures and pipeline keys used in the scene's GI rendering passes.
 package gbuffer
 
 import (
 	"github.com/cogentcore/webgpu/wgpu"
 )
 
-// GBufferHandler defines the interface for the scene's G-Buffer subsystem.
+// Handler defines the interface for the scene's G-Buffer subsystem.
 //
-// The GBufferHandler manages the multiple render target (MRT) textures that
+// The Handler manages the multiple render target (MRT) textures that
 // store per-pixel geometric and material data written during the G-Buffer
 // pre-pass. These textures are consumed by downstream screen-space effect
 // passes such as SSAO and SSR. GPU resources are initialized lazily by the
@@ -14,7 +15,7 @@ import (
 //
 // Thread safety is provided by the owning scene's mutex — the handler itself
 // does not perform internal locking.
-type GBufferHandler interface {
+type Handler interface {
 	// Enabled returns whether the G-Buffer subsystem has been GPU-initialized
 	// and is ready for rendering.
 	Enabled() bool
@@ -80,42 +81,42 @@ type GBufferHandler interface {
 	Resize(width, height int)
 }
 
-var _ GBufferHandler = &gBufferHandlerImpl{}
+var _ Handler = &handlerImpl{}
 
-func (h *gBufferHandlerImpl) Enabled() bool                    { return h.enabled }
-func (h *gBufferHandlerImpl) SetEnabled(enabled bool)          { h.enabled = enabled }
-func (h *gBufferHandlerImpl) ScreenWidth() int                 { return h.screenWidth }
-func (h *gBufferHandlerImpl) ScreenHeight() int                { return h.screenHeight }
-func (h *gBufferHandlerImpl) PipelineKey(name string) string   { return h.pipelineKeys[name] }
-func (h *gBufferHandlerImpl) PipelineKeys() map[string]string  { return h.pipelineKeys }
-func (h *gBufferHandlerImpl) SetPipelineKey(name, key string)  { h.pipelineKeys[name] = key }
-func (h *gBufferHandlerImpl) SetSlot(slot int)                 { h.activeSlot = slot }
-func (h *gBufferHandlerImpl) NormalTexture() *wgpu.Texture     { return h.normalTextures[h.activeSlot] }
-func (h *gBufferHandlerImpl) SetNormalTexture(t *wgpu.Texture) { h.normalTextures[h.activeSlot] = t }
-func (h *gBufferHandlerImpl) NormalTextureView() *wgpu.TextureView {
+func (h *handlerImpl) Enabled() bool                    { return h.enabled }
+func (h *handlerImpl) SetEnabled(enabled bool)          { h.enabled = enabled }
+func (h *handlerImpl) ScreenWidth() int                 { return h.screenWidth }
+func (h *handlerImpl) ScreenHeight() int                { return h.screenHeight }
+func (h *handlerImpl) PipelineKey(name string) string   { return h.pipelineKeys[name] }
+func (h *handlerImpl) PipelineKeys() map[string]string  { return h.pipelineKeys }
+func (h *handlerImpl) SetPipelineKey(name, key string)  { h.pipelineKeys[name] = key }
+func (h *handlerImpl) SetSlot(slot int)                 { h.activeSlot = slot }
+func (h *handlerImpl) NormalTexture() *wgpu.Texture     { return h.normalTextures[h.activeSlot] }
+func (h *handlerImpl) SetNormalTexture(t *wgpu.Texture) { h.normalTextures[h.activeSlot] = t }
+func (h *handlerImpl) NormalTextureView() *wgpu.TextureView {
 	return h.normalTextureViews[h.activeSlot]
 }
-func (h *gBufferHandlerImpl) SetNormalTextureView(tv *wgpu.TextureView) {
+func (h *handlerImpl) SetNormalTextureView(tv *wgpu.TextureView) {
 	h.normalTextureViews[h.activeSlot] = tv
 }
-func (h *gBufferHandlerImpl) AlbedoTexture() *wgpu.Texture     { return h.albedoTextures[h.activeSlot] }
-func (h *gBufferHandlerImpl) SetAlbedoTexture(t *wgpu.Texture) { h.albedoTextures[h.activeSlot] = t }
-func (h *gBufferHandlerImpl) AlbedoTextureView() *wgpu.TextureView {
+func (h *handlerImpl) AlbedoTexture() *wgpu.Texture     { return h.albedoTextures[h.activeSlot] }
+func (h *handlerImpl) SetAlbedoTexture(t *wgpu.Texture) { h.albedoTextures[h.activeSlot] = t }
+func (h *handlerImpl) AlbedoTextureView() *wgpu.TextureView {
 	return h.albedoTextureViews[h.activeSlot]
 }
-func (h *gBufferHandlerImpl) SetAlbedoTextureView(tv *wgpu.TextureView) {
+func (h *handlerImpl) SetAlbedoTextureView(tv *wgpu.TextureView) {
 	h.albedoTextureViews[h.activeSlot] = tv
 }
-func (h *gBufferHandlerImpl) DepthTexture() *wgpu.Texture     { return h.depthTextures[h.activeSlot] }
-func (h *gBufferHandlerImpl) SetDepthTexture(t *wgpu.Texture) { h.depthTextures[h.activeSlot] = t }
-func (h *gBufferHandlerImpl) DepthTextureView() *wgpu.TextureView {
+func (h *handlerImpl) DepthTexture() *wgpu.Texture     { return h.depthTextures[h.activeSlot] }
+func (h *handlerImpl) SetDepthTexture(t *wgpu.Texture) { h.depthTextures[h.activeSlot] = t }
+func (h *handlerImpl) DepthTextureView() *wgpu.TextureView {
 	return h.depthTextureViews[h.activeSlot]
 }
-func (h *gBufferHandlerImpl) SetDepthTextureView(tv *wgpu.TextureView) {
+func (h *handlerImpl) SetDepthTextureView(tv *wgpu.TextureView) {
 	h.depthTextureViews[h.activeSlot] = tv
 }
 
-func (h *gBufferHandlerImpl) Resize(width, height int) {
+func (h *handlerImpl) Resize(width, height int) {
 	h.screenWidth = width
 	h.screenHeight = height
 }

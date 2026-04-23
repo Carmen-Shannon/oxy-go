@@ -1,12 +1,12 @@
-package postprocessing
+package ssr
 
 import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/cogentcore/webgpu/wgpu"
 )
 
-// ssrHandlerImpl is the implementation of the SSRHandler interface.
-type ssrHandlerImpl struct {
+// handlerImpl is the implementation of the Handler interface.
+type handlerImpl struct {
 	enabled bool
 
 	screenWidth  int

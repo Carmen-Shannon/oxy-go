@@ -22,7 +22,10 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/gbuffer"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/material"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/composition"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssao"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssr"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/taa"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 	"github.com/cogentcore/webgpu/wgpu"
 )
@@ -89,13 +92,13 @@ type scene struct {
 
 	// Lighting subsystem — manages lights, shadow mapping, and Forward+ culling state.
 	lightHandler   light.LightingHandler
-	gBufferHandler gbuffer.GBufferHandler
+	gBufferHandler gbuffer.Handler
 
 	// Post-processing handlers — owned by the scene, initialized lazily.
-	ssaoHandler        postprocessing.SSAOHandler
-	ssrHandler         postprocessing.SSRHandler
-	compositionHandler postprocessing.CompositionHandler
-	taaHandler         postprocessing.TAAHandler
+	ssaoHandler        ssao.Handler
+	ssrHandler         ssr.Handler
+	compositionHandler composition.Handler
+	taaHandler         taa.Handler
 
 	lightObjects []game_object.GameObject // objects with attached lights (ephemeral and non-ephemeral)
 
@@ -292,7 +295,7 @@ func (s *scene) initSSAO() {
 	s.ssaoHandler.SetLinearSampler(linearSamp)
 
 	// 3. Register SSAO compute pipeline.
-	ssaoCompShader := shader.NewShader("_ssao_compute", shader.ShaderTypeCompute, "engine/renderer/postprocessing/assets/ssao-compute.wgsl", shader.WithInjections(s.injections))
+	ssaoCompShader := shader.NewShader("_ssao_compute", shader.ShaderTypeCompute, "engine/renderer/postprocessing/ssao/assets/ssao-compute.wgsl", shader.WithInjections(s.injections))
 	ssaoCompKey := "ssao_compute"
 	ssaoCompPipe := pipeline.NewPipeline(ssaoCompKey, pipeline.PipelineTypeCompute,
 		pipeline.WithComputeShader(ssaoCompShader),
@@ -303,7 +306,7 @@ func (s *scene) initSSAO() {
 	s.ssaoHandler.SetPipelineKey("ssao_compute", ssaoCompKey)
 
 	// 4. Register bilateral blur compute pipeline.
-	blurCompShader := shader.NewShader("_ssao_blur_compute", shader.ShaderTypeCompute, "engine/renderer/postprocessing/assets/ssao-blur-compute.wgsl", shader.WithInjections(s.injections))
+	blurCompShader := shader.NewShader("_ssao_blur_compute", shader.ShaderTypeCompute, "engine/renderer/postprocessing/ssao/assets/ssao-blur-compute.wgsl", shader.WithInjections(s.injections))
 	blurCompKey := "ssao_blur_compute"
 	blurCompPipe := pipeline.NewPipeline(blurCompKey, pipeline.PipelineTypeCompute,
 		pipeline.WithComputeShader(blurCompShader),
@@ -316,8 +319,8 @@ func (s *scene) initSSAO() {
 	// 5. Create SSAO compute bind group provider.
 	ssaoDesc := ssaoCompShader.BindGroupLayoutDescriptor(0)
 	ssaoSizeOverrides := map[int]uint64{
-		4: uint64((&postprocessing.GPUSSAOParams{}).Size()), // ssao_params uniform
-		5: 32 * 16,                                          // ssao_kernel: array<vec4<f32>, 32> = 512 bytes
+		4: uint64((&ssao.GPUSSAOParams{}).Size()), // ssao_params uniform
+		5: 32 * 16,                                // ssao_kernel: array<vec4<f32>, 32> = 512 bytes
 	}
 	ssaoBGP := s.ssaoHandler.Bgp("ssao_compute")
 	ssaoBGP.SetTextureView(0, s.gBufferHandler.DepthTextureView())
@@ -330,7 +333,7 @@ func (s *scene) initSSAO() {
 	// 6. Create blur bind group providers (bilateral blur, depth-aware).
 	blurDesc := blurCompShader.BindGroupLayoutDescriptor(0)
 	blurSizeOverrides := map[int]uint64{
-		2: uint64((&postprocessing.GPUBlurParams{}).Size()),
+		2: uint64((&ssao.GPUBlurParams{}).Size()),
 	}
 
 	// Horizontal: raw → scratch, depth from G-Buffer hardware depth texture.
@@ -1160,8 +1163,8 @@ func (s *scene) initComposition() {
 	ch.SetLinearSampler(linearSamp)
 
 	// 3. Load composition shaders and register the fullscreen pipeline.
-	compVert := shader.NewShader("_composition_vert", shader.ShaderTypeVertex, "engine/renderer/postprocessing/assets/composition-vert.wgsl", shader.WithInjections(s.injections))
-	compFrag := shader.NewShader("_composition_frag", shader.ShaderTypeFragment, "engine/renderer/postprocessing/assets/composition-frag.wgsl", shader.WithInjections(s.injections))
+	compVert := shader.NewShader("_composition_vert", shader.ShaderTypeVertex, "engine/renderer/postprocessing/composition/assets/composition-vert.wgsl", shader.WithInjections(s.injections))
+	compFrag := shader.NewShader("_composition_frag", shader.ShaderTypeFragment, "engine/renderer/postprocessing/composition/assets/composition-frag.wgsl", shader.WithInjections(s.injections))
 
 	compKey := "composition"
 	compPipe := pipeline.NewPipeline(compKey, pipeline.PipelineTypeRender,
@@ -1204,7 +1207,7 @@ func (s *scene) initComposition() {
 	s.initBloom(ch, compBGP, w, h)
 
 	sizeOverrides := map[int]uint64{
-		4: uint64((&postprocessing.GPUCompositionParams{}).Size()),
+		4: uint64((&composition.GPUCompositionParams{}).Size()),
 		5: 4, // exposure_buffer: single f32
 	}
 	if err := s.r.InitBindGroup(compBGP, compDesc, nil, sizeOverrides); err != nil {
@@ -1223,7 +1226,7 @@ func (s *scene) initComposition() {
 //
 // Must be called after the HDR texture view is set on ch and after bindings 0–3 are
 // set on compBGP, but before s.r.InitBindGroup(compBGP, ...) is called.
-func (s *scene) initLuminance(ch postprocessing.CompositionHandler, compBGP bind_group_provider.BindGroupProvider) {
+func (s *scene) initLuminance(ch composition.Handler, compBGP bind_group_provider.BindGroupProvider) {
 	expBuf, err := s.r.CreateBuffer("luminance_exposure", 4, wgpu.BufferUsageStorage|wgpu.BufferUsageCopySrc)
 	if err != nil {
 		panic(fmt.Sprintf("scene: failed to create luminance exposure buffer: %v", err))
@@ -1234,7 +1237,7 @@ func (s *scene) initLuminance(ch postprocessing.CompositionHandler, compBGP bind
 	s.r.WriteRawBuffer(expBuf, 0, initData)
 	ch.SetExposureBuffer(expBuf)
 
-	lumShader := shader.NewShader("_luminance_compute", shader.ShaderTypeCompute, "engine/renderer/postprocessing/assets/luminance-compute.wgsl", shader.WithInjections(s.injections))
+	lumShader := shader.NewShader("_luminance_compute", shader.ShaderTypeCompute, "engine/renderer/postprocessing/composition/assets/luminance-compute.wgsl", shader.WithInjections(s.injections))
 	lumPipe := pipeline.NewPipeline("luminance_compute", pipeline.PipelineTypeCompute,
 		pipeline.WithComputeShader(lumShader))
 	if err := s.r.RegisterPipelines(lumPipe); err != nil {
@@ -1246,7 +1249,7 @@ func (s *scene) initLuminance(ch postprocessing.CompositionHandler, compBGP bind
 	lumBGP.SetTextureView(0, ch.HDRTextureView())
 	lumBGP.SetBuffer(2, expBuf)
 	lumSizeOverrides := map[int]uint64{
-		1: (&postprocessing.GPULuminanceParams{}).Size(),
+		1: (&composition.GPULuminanceParams{}).Size(),
 	}
 	if err := s.r.InitBindGroup(lumBGP, lumDesc, nil, lumSizeOverrides); err != nil {
 		panic(fmt.Sprintf("scene: failed to init luminance compute bind group: %v", err))
@@ -1269,7 +1272,7 @@ func (s *scene) initLuminance(ch postprocessing.CompositionHandler, compBGP bind
 // initBloom creates bloom mip chain textures, registers bloom compute pipelines,
 // and creates per-mip downsample and upsample bind group providers. When bloom is
 // disabled, a 1×1 black fallback texture is bound at composition binding 6.
-func (s *scene) initBloom(ch postprocessing.CompositionHandler, compBGP bind_group_provider.BindGroupProvider, width, height int) {
+func (s *scene) initBloom(ch composition.Handler, compBGP bind_group_provider.BindGroupProvider, width, height int) {
 	if !ch.BloomEnabled() {
 		fallback := common.TextureStagingData{
 			Pixels: []byte{0, 0, 0, 0},
@@ -1303,7 +1306,7 @@ func (s *scene) initBloom(ch postprocessing.CompositionHandler, compBGP bind_gro
 	ch.SetBloomUpMip0View(upMip0View)
 	ch.SetBloomMipCount(mipCount)
 
-	downShader := shader.NewShader("_bloom_downsample", shader.ShaderTypeCompute, "engine/renderer/postprocessing/assets/bloom-downsample.wgsl", shader.WithInjections(s.injections))
+	downShader := shader.NewShader("_bloom_downsample", shader.ShaderTypeCompute, "engine/renderer/postprocessing/composition/assets/bloom-downsample.wgsl", shader.WithInjections(s.injections))
 	downPipe := pipeline.NewPipeline("bloom_downsample", pipeline.PipelineTypeCompute,
 		pipeline.WithComputeShader(downShader))
 	if err := s.r.RegisterPipelines(downPipe); err != nil {
@@ -1311,7 +1314,7 @@ func (s *scene) initBloom(ch postprocessing.CompositionHandler, compBGP bind_gro
 	}
 	ch.SetPipelineKey("bloom_downsample", "bloom_downsample")
 
-	upShader := shader.NewShader("_bloom_upsample", shader.ShaderTypeCompute, "engine/renderer/postprocessing/assets/bloom-upsample.wgsl", shader.WithInjections(s.injections))
+	upShader := shader.NewShader("_bloom_upsample", shader.ShaderTypeCompute, "engine/renderer/postprocessing/composition/assets/bloom-upsample.wgsl", shader.WithInjections(s.injections))
 	upPipe := pipeline.NewPipeline("bloom_upsample", pipeline.PipelineTypeCompute,
 		pipeline.WithComputeShader(upShader))
 	if err := s.r.RegisterPipelines(upPipe); err != nil {
@@ -1322,7 +1325,7 @@ func (s *scene) initBloom(ch postprocessing.CompositionHandler, compBGP bind_gro
 	linearSamp := ch.LinearSampler()
 
 	downDesc := downShader.BindGroupLayoutDescriptor(0)
-	bloomParamSize := uint64((&postprocessing.GPUBloomParams{}).Size())
+	bloomParamSize := uint64((&composition.GPUBloomParams{}).Size())
 	for i := 0; i < mipCount; i++ {
 		bgpName := fmt.Sprintf("bloom_down_%d", i)
 		bgp := bind_group_provider.NewBindGroupProvider(bgpName)
@@ -1377,7 +1380,7 @@ func (s *scene) prepareLuminance(dt float32) {
 		return
 	}
 
-	params := postprocessing.GPULuminanceParams{
+	params := composition.GPULuminanceParams{
 		ScreenWidth:         uint32(ch.ScreenWidth()),
 		ScreenHeight:        uint32(ch.ScreenHeight()),
 		AdaptSpeed:          ch.AdaptSpeed(),
@@ -1499,7 +1502,7 @@ func (s *scene) initSSR() {
 	ssrHandler.SetSlot(0)
 
 	// 4. Register Hi-Z init compute pipeline (copies depth → Hi-Z mip 0).
-	hizInitShader := shader.NewShader("_hiz_init", shader.ShaderTypeCompute, "engine/renderer/postprocessing/assets/hiz-init-compute.wgsl", shader.WithInjections(s.injections))
+	hizInitShader := shader.NewShader("_hiz_init", shader.ShaderTypeCompute, "engine/renderer/postprocessing/ssr/assets/hiz-init-compute.wgsl", shader.WithInjections(s.injections))
 	hizInitKey := "hiz_init"
 	hizInitPipe := pipeline.NewPipeline(hizInitKey, pipeline.PipelineTypeCompute,
 		pipeline.WithComputeShader(hizInitShader),
@@ -1529,7 +1532,7 @@ func (s *scene) initSSR() {
 	ssrHandler.SetBgp("hiz_init_max", hizInitMaxBGP)
 
 	// 6. Register Hi-Z downsample compute pipeline (min of 2×2 from prev mip).
-	hizDownShader := shader.NewShader("_hiz_downsample", shader.ShaderTypeCompute, "engine/renderer/postprocessing/assets/hiz-downsample-compute.wgsl", shader.WithInjections(s.injections))
+	hizDownShader := shader.NewShader("_hiz_downsample", shader.ShaderTypeCompute, "engine/renderer/postprocessing/ssr/assets/hiz-downsample-compute.wgsl", shader.WithInjections(s.injections))
 	hizDownKey := "hiz_downsample"
 	hizDownPipe := pipeline.NewPipeline(hizDownKey, pipeline.PipelineTypeCompute,
 		pipeline.WithComputeShader(hizDownShader),
@@ -1540,7 +1543,7 @@ func (s *scene) initSSR() {
 	ssrHandler.SetPipelineKey("hiz_downsample", hizDownKey)
 
 	// Register MAX downsample pipeline (max of 2×2 from prev mip).
-	hizDownMaxShader := shader.NewShader("_hiz_downsample_max", shader.ShaderTypeCompute, "engine/renderer/postprocessing/assets/hiz-downsample-max-compute.wgsl", shader.WithInjections(s.injections))
+	hizDownMaxShader := shader.NewShader("_hiz_downsample_max", shader.ShaderTypeCompute, "engine/renderer/postprocessing/ssr/assets/hiz-downsample-max-compute.wgsl", shader.WithInjections(s.injections))
 	hizDownMaxKey := "hiz_downsample_max"
 	hizDownMaxPipe := pipeline.NewPipeline(hizDownMaxKey, pipeline.PipelineTypeCompute,
 		pipeline.WithComputeShader(hizDownMaxShader),
@@ -1622,7 +1625,7 @@ func (s *scene) initSSR() {
 	}
 
 	// 8. Load SSR compute shader and register compute pipeline.
-	ssrCompShader := shader.NewShader("_ssr_compute", shader.ShaderTypeCompute, "engine/renderer/postprocessing/assets/ssr-compute.wgsl", shader.WithInjections(s.injections))
+	ssrCompShader := shader.NewShader("_ssr_compute", shader.ShaderTypeCompute, "engine/renderer/postprocessing/ssr/assets/ssr-compute.wgsl", shader.WithInjections(s.injections))
 	ssrCompKey := "ssr_compute"
 	ssrCompPipe := pipeline.NewPipeline(ssrCompKey, pipeline.PipelineTypeCompute,
 		pipeline.WithComputeShader(ssrCompShader),
@@ -1649,7 +1652,7 @@ func (s *scene) initSSR() {
 	ssrBGP.SetTextureView(5, hizView)
 
 	ssrSizeOverrides := map[int]uint64{
-		0: uint64((&postprocessing.GPUSSRParams{}).Size()),
+		0: uint64((&ssr.GPUSSRParams{}).Size()),
 	}
 	if err := s.r.InitBindGroup(ssrBGP, ssrDesc, nil, ssrSizeOverrides); err != nil {
 		panic(fmt.Sprintf("scene: failed to init SSR compute bind group: %v", err))
@@ -1721,7 +1724,7 @@ func (s *scene) initTAA() {
 
 	// 3. Register the TAA resolve compute pipeline.
 	taaShader := shader.NewShader("_taa_resolve", shader.ShaderTypeCompute,
-		"engine/renderer/postprocessing/assets/taa-resolve.wgsl", shader.WithInjections(s.injections))
+		"engine/renderer/postprocessing/taa/assets/taa-resolve.wgsl", shader.WithInjections(s.injections))
 	taaKey := "taa_resolve"
 	taaPipe := pipeline.NewPipeline(taaKey, pipeline.PipelineTypeCompute,
 		pipeline.WithComputeShader(taaShader),
@@ -1733,7 +1736,7 @@ func (s *scene) initTAA() {
 
 	// 3b. Register the CAS sharpening compute pipeline.
 	casShader := shader.NewShader("_taa_sharpen", shader.ShaderTypeCompute,
-		"engine/renderer/postprocessing/assets/taa-sharpen.wgsl", shader.WithInjections(s.injections))
+		"engine/renderer/postprocessing/taa/assets/taa-sharpen.wgsl", shader.WithInjections(s.injections))
 	casKey := "taa_sharpen"
 	casPipe := pipeline.NewPipeline(casKey, pipeline.PipelineTypeCompute,
 		pipeline.WithComputeShader(casShader),
@@ -1746,7 +1749,7 @@ func (s *scene) initTAA() {
 	casDesc := casShader.BindGroupLayoutDescriptor(0)
 	taaDesc := taaShader.BindGroupLayoutDescriptor(0)
 	taaSizeOverrides := map[int]uint64{
-		0: uint64((&postprocessing.GPUTAAParams{}).Size()),
+		0: uint64((&taa.GPUTAAParams{}).Size()),
 	}
 
 	// 4. Create BGP for slot 0: hdr=view0, history=view1, depth=gbH slot 0, resolved=view0 storage.
@@ -1811,10 +1814,10 @@ func (s *scene) initTAA() {
 	}
 
 	compFrag := shader.NewShader("_composition_frag_taa_rebind", shader.ShaderTypeFragment,
-		"engine/renderer/postprocessing/assets/composition-frag.wgsl", shader.WithInjections(s.injections))
+		"engine/renderer/postprocessing/composition/assets/composition-frag.wgsl", shader.WithInjections(s.injections))
 	compDesc := compFrag.BindGroupLayoutDescriptor(0)
 	compSizeOverrides := map[int]uint64{
-		4: uint64((&postprocessing.GPUCompositionParams{}).Size()),
+		4: uint64((&composition.GPUCompositionParams{}).Size()),
 	}
 
 	compBGP.SetSlot(0)
@@ -1902,10 +1905,10 @@ func (s *scene) initLighting(screenWidth, screenHeight int) {
 		if compBGP != nil && s.ssrHandler.SSRTextureView() != nil {
 			compBGP.SetTextureView(2, s.ssrHandler.SSRTextureView())
 			// Rebuild the composition bind group to pick up the real SSR texture.
-			compFrag := shader.NewShader("_composition_frag_rebind", shader.ShaderTypeFragment, "engine/renderer/postprocessing/assets/composition-frag.wgsl", shader.WithInjections(s.injections))
+			compFrag := shader.NewShader("_composition_frag_rebind", shader.ShaderTypeFragment, "engine/renderer/postprocessing/composition/assets/composition-frag.wgsl", shader.WithInjections(s.injections))
 			compDesc := compFrag.BindGroupLayoutDescriptor(0)
 			sizeOverrides := map[int]uint64{
-				4: uint64((&postprocessing.GPUCompositionParams{}).Size()),
+				4: uint64((&composition.GPUCompositionParams{}).Size()),
 			}
 			if err := s.r.InitBindGroup(compBGP, compDesc, nil, sizeOverrides); err != nil {
 				panic(fmt.Sprintf("scene: failed to re-init composition bind group with SSR texture: %v", err))
@@ -3405,10 +3408,10 @@ func (s *scene) resizePostProcessing(w, h int) {
 		if compBGP != nil && s.ssrHandler.SSRTextureView() != nil {
 			compBGP.SetTextureView(2, s.ssrHandler.SSRTextureView())
 			compFrag := shader.NewShader("_composition_frag_rebind", shader.ShaderTypeFragment,
-				"engine/renderer/postprocessing/assets/composition-frag.wgsl", shader.WithInjections(s.injections))
+				"engine/renderer/postprocessing/composition/assets/composition-frag.wgsl", shader.WithInjections(s.injections))
 			compDesc := compFrag.BindGroupLayoutDescriptor(0)
 			sizeOverrides := map[int]uint64{
-				4: uint64((&postprocessing.GPUCompositionParams{}).Size()),
+				4: uint64((&composition.GPUCompositionParams{}).Size()),
 			}
 			if err := s.r.InitBindGroup(compBGP, compDesc, nil, sizeOverrides); err != nil {
 				panic(fmt.Sprintf("scene: failed to re-init composition bind group on resize: %v", err))

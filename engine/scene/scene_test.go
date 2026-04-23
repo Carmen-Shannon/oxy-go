@@ -10,7 +10,7 @@ import (
 	game_object_mocks "github.com/Carmen-Shannon/oxy-go/engine/game_object/mocks"
 	"github.com/Carmen-Shannon/oxy-go/engine/physics"
 	renderer_mocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/mocks"
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/taa"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
@@ -274,7 +274,7 @@ func (suite *sceneTest) TestResize() {
 		r := renderer_mocks.NewMockRenderer(suite.T())
 		r.EXPECT().SetInjections(mock.Anything).Return().Maybe()
 		r.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0, nil).Maybe()
-		handler := postprocessing.NewTAAHandler(postprocessing.WithTAAScreenSize(640, 480))
+		handler := taa.NewHandler(taa.WithTAAScreenSize(640, 480))
 		handler.SetEnabled(true)
 		s := scene.NewScene("taa-resize", cam, r, scene.WithTAAHandler(handler))
 		r.EXPECT().Resize(1024, 768).Return().Once()
@@ -382,7 +382,7 @@ func (suite *sceneTest) TestWithTAAHandler() {
 		r := renderer_mocks.NewMockRenderer(suite.T())
 		r.EXPECT().SetInjections(mock.Anything).Return().Maybe()
 		r.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0, nil).Maybe()
-		handler := postprocessing.NewTAAHandler(postprocessing.WithTAAScreenSize(800, 600))
+		handler := taa.NewHandler(taa.WithTAAScreenSize(800, 600))
 		s := scene.NewScene("taa-test", cam, r, scene.WithTAAHandler(handler))
 		suite.NotNil(s)
 	})

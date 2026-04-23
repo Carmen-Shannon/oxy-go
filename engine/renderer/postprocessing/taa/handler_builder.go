@@ -1,13 +1,13 @@
-package postprocessing
+package taa
 
 import "github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 
-// TAAHandlerOption is a functional option for configuring a TAAHandler.
-type TAAHandlerOption func(*taaHandlerImpl)
+// HandlerOption is a functional option for configuring a Handler.
+type HandlerOption func(*handlerImpl)
 
 // WithTAAScreenSize sets the initial screen dimensions for TAA texture allocation.
-func WithTAAScreenSize(width, height int) TAAHandlerOption {
-	return func(h *taaHandlerImpl) {
+func WithTAAScreenSize(width, height int) HandlerOption {
+	return func(h *handlerImpl) {
 		h.screenWidth = width
 		h.screenHeight = height
 	}
@@ -16,29 +16,29 @@ func WithTAAScreenSize(width, height int) TAAHandlerOption {
 // WithTAABlendFactor sets the weight given to the current frame during temporal blending.
 // Lower values = more smoothing but more ghosting. Recommended range: 0.05-0.2.
 // Default: 0.1.
-func WithTAABlendFactor(f float32) TAAHandlerOption {
-	return func(h *taaHandlerImpl) { h.blendFactor = f }
+func WithTAABlendFactor(f float32) HandlerOption {
+	return func(h *handlerImpl) { h.blendFactor = f }
 }
 
 // WithTAAHistoryRectificationScale sets the diagnostic expansion scale applied to
 // the YCoCg history clamp box around the 3x3 neighborhood mean.
 // Default: 1.0.
-func WithTAAHistoryRectificationScale(scale float32) TAAHandlerOption {
-	return func(h *taaHandlerImpl) { h.historyRectificationScale = scale }
+func WithTAAHistoryRectificationScale(scale float32) HandlerOption {
+	return func(h *handlerImpl) { h.historyRectificationScale = scale }
 }
 
 // WithTAAJitterScale sets the multiplier applied to the Halton jitter offsets.
 // Higher values increase sub-pixel jitter amplitude; lower values reduce it.
 // Default: 1.0.
-func WithTAAJitterScale(scale float32) TAAHandlerOption {
-	return func(h *taaHandlerImpl) { h.jitterScale = scale }
+func WithTAAJitterScale(scale float32) HandlerOption {
+	return func(h *handlerImpl) { h.jitterScale = scale }
 }
 
-// NewTAAHandler creates a new TAAHandler with sensible defaults.
+// NewHandler creates a new Handler with sensible defaults.
 // Default blend factor: 0.1 (10% current frame, 90% history).
 // Default history rectification scale: 1.0.
-func NewTAAHandler(opts ...TAAHandlerOption) TAAHandler {
-	h := &taaHandlerImpl{
+func NewHandler(opts ...HandlerOption) Handler {
+	h := &handlerImpl{
 		enabled:                   false,
 		blendFactor:               0.1,
 		historyRectificationScale: 1.0,
