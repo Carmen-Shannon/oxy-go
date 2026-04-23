@@ -47,8 +47,10 @@ engine/
 ├── renderer/
 │   ├── animator/    GPU compute animation backends (simple + skeletal)
 │   ├── bind_group_provider/  Bind group creation and buffer writes
+│   ├── gbuffer/     G-Buffer pre-pass handler and texture resources
 │   ├── material/    Material GPU types (overlay, effect params)
 │   ├── pipeline/    Render and compute pipeline management
+│   ├── postprocessing/  SSAO, SSR, TAA, and composition handlers
 │   └── shader/      Shader loading, WGSL parsing, annotation pre-processor
 ├── scene/           Scene graph, draw calls, compute dispatch, resource wiring
 └── window/          GLFW window abstraction
@@ -67,7 +69,8 @@ The repository includes several runnable example scenes in the `examples` direct
 | `scene.go`         | Basic unlit scene with a rotating cube                   |
 | `scene_fox.go`     | Animated fox model with skeletal animation               |
 | `scene_lit.go`     | Full forward+ lit scene with shadows and multiple lights |
-| `physics_scene.go` | Physics simulation with rigid bodies and lighting        |
+| `scene_sponza.go`  | Sponza showcase scene with full renderer feature stack   |
+| `scene_physics.go` | Physics simulation with rigid bodies and lighting        |
 
 Run any example with:
 
@@ -98,10 +101,6 @@ func main() {
 
     eng.SetTickCallback(func(dt float32) {
         // game logic here
-    })
-
-    eng.SetRenderCallback(func(dt float32) {
-        // render calls here
     })
 
     eng.Run()
@@ -213,8 +212,10 @@ The [`engine`](README_ENGINE.md) package is the **main entrypoint** of oxy-go. I
 - [Renderer System](README_RENDERER.md) — Renderer interface, pipeline cache, frame lifecycle (compute → shadow → render → present), backend types, builder options, and sub-package index.
   - [Animator](README_ANIMATOR.md) — GPU compute animation backends (simple + skeletal), per-instance transform staging, frustum culling, skeletal clip blending, and GPU type definitions.
   - [Bind Group Provider](README_BGP.md) — GPU bind group abstraction, per-entity resource storage (buffers, textures, samplers), batched buffer writes, and release lifecycle.
+  - [G-Buffer](README_GBUFFER.md) — G-Buffer handler package for normal/albedo/depth pre-pass textures and geometry-pass resource wiring.
   - [Material](README_MATERIAL.md) — Material interface, surface properties, texture references, GPU uniform types (overlay/effect params), and builder options.
   - [Pipeline](README_PIPELINE.md) — Render and compute pipeline configuration, depth/blend/cull state, shader attachment, and builder options.
+  - [Post-Processing](README_POSTPROCESSOR.md) — SSAO, composition (tone mapping, exposure, bloom), SSR, and TAA handlers.
   - [Shader](README_SHADER.md) — WGSL shader loading, annotation pre-processor, bind group layout extraction, vertex layout parsing, and workgroup size resolution.
 - [Scene System](README_SCENE.md) — Scene interface, object management, animator pool, lighting/shadow/Forward+ initialization, frame lifecycle, parallel compute prep, and annotation-driven draw calls.
 - [Window System](README_WINDOW.md) — GLFW-based windowing, input callbacks, high-DPI handling, WebGPU surface creation, and builder options.

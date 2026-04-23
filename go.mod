@@ -5,7 +5,7 @@ go 1.25.6
 require (
 	github.com/Carmen-Shannon/automation v1.1.1
 	github.com/cogentcore/webgpu v0.23.0
-	github.com/go-gl/glfw/v3.3/glfw v0.0.0-20250301202403-da16c1255728
+	github.com/go-gl/glfw/v3.4/glfw v0.1.0-pre.1
 	github.com/stretchr/testify v1.11.1
 )
 
@@ -16,4 +16,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/cogentcore/webgpu => github.com/Carmen-Shannon/webgpu v0.23.1
+replace github.com/cogentcore/webgpu => github.com/Carmen-Shannon/webgpu v0.23.2

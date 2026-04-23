@@ -2,8 +2,8 @@ package gbuffer
 
 import "github.com/cogentcore/webgpu/wgpu"
 
-// gBufferHandlerImpl is the implementation of the GBufferHandler interface.
-type gBufferHandlerImpl struct {
+// handlerImpl is the implementation of the Handler interface.
+type handlerImpl struct {
 	enabled bool
 
 	screenWidth  int

@@ -42,13 +42,6 @@ type Engine interface {
 	//   - callback: function to call at the configured tick rate, receiving the delta time in seconds
 	SetTickCallback(callback func(deltaTime float32))
 
-	// SetRenderCallback registers the function called each render frame.
-	// Use this for GPU buffer updates and scene rendering.
-	//
-	// Parameters:
-	//   - callback: function to call each render frame, receiving the delta time in seconds
-	SetRenderCallback(callback func(deltaTime float32))
-
 	// SetRenderFrameLimit sets an optional render frame rate cap in frames per second.
 	// Pass 0 to uncap the render loop (default).
 	//
@@ -97,16 +90,15 @@ type Engine interface {
 
 var _ Engine = &engine{}
 
-func (e *engine) Quit()                                              { e.signalQuit() }
-func (e *engine) EnableProfiler()                                    { e.profilingEnabled = true }
-func (e *engine) DisableProfiler()                                   { e.profilingEnabled = false }
-func (e *engine) SetTickCallback(callback func(deltaTime float32))   { e.tickCallback = callback }
-func (e *engine) SetRenderCallback(callback func(deltaTime float32)) { e.renderCallback = callback }
-func (e *engine) AddScene(key int, s scene.Scene)                    { e.scenes[key] = s }
-func (e *engine) RemoveScene(key int)                                { delete(e.scenes, key) }
-func (e *engine) Scene(key int) scene.Scene                          { return e.scenes[key] }
-func (e *engine) Scenes() map[int]scene.Scene                        { return e.scenes }
-func (e *engine) Window() window.Window                              { return e.window }
+func (e *engine) Quit()                                            { e.signalQuit() }
+func (e *engine) EnableProfiler()                                  { e.profilingEnabled = true }
+func (e *engine) DisableProfiler()                                 { e.profilingEnabled = false }
+func (e *engine) SetTickCallback(callback func(deltaTime float32)) { e.tickCallback = callback }
+func (e *engine) AddScene(key int, s scene.Scene)                  { e.scenes[key] = s }
+func (e *engine) RemoveScene(key int)                              { delete(e.scenes, key) }
+func (e *engine) Scene(key int) scene.Scene                        { return e.scenes[key] }
+func (e *engine) Scenes() map[int]scene.Scene                      { return e.scenes }
+func (e *engine) Window() window.Window                            { return e.window }
 
 func (e *engine) Run() {
 	e.handle()

@@ -1,22 +1,23 @@
-package postprocessing
+// Package ssao provides the screen-space ambient occlusion postprocessing subsystem.
+package ssao
 
 import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/cogentcore/webgpu/wgpu"
 )
 
-// SSAOHandler defines the interface for the scene's SSAO subsystem.
+// Handler defines the interface for the scene's SSAO subsystem.
 //
-// The SSAOHandler manages the hemisphere sample kernel, noise texture, raw and
+// The Handler manages the hemisphere sample kernel, noise texture, raw and
 // blurred occlusion textures, compute pipeline keys, and bind group providers
 // needed by the SSAO compute and bilateral blur shaders. It is created via
-// NewSSAOHandler with builder options and attached to a scene via
+// NewHandler with builder options and attached to a scene via
 // the GI configuration. GPU resources are initialized lazily by the owning
 // scene when SSAO is first enabled.
 //
 // Thread safety is provided by the owning scene's mutex — the handler itself
 // does not perform internal locking.
-type SSAOHandler interface {
+type Handler interface {
 	// Enabled returns whether the SSAO subsystem has been GPU-initialized
 	// and is ready for rendering.
 	//
@@ -246,62 +247,62 @@ type SSAOHandler interface {
 	SetHalfResolution(enabled bool)
 }
 
-var _ SSAOHandler = &ssaoHandlerImpl{}
+var _ Handler = &handlerImpl{}
 
-func (h *ssaoHandlerImpl) Enabled() bool                     { return h.enabled }
-func (h *ssaoHandlerImpl) SetEnabled(enabled bool)           { h.enabled = enabled }
-func (h *ssaoHandlerImpl) ScreenWidth() int                  { return h.screenWidth }
-func (h *ssaoHandlerImpl) ScreenHeight() int                 { return h.screenHeight }
-func (h *ssaoHandlerImpl) SampleCount() int                  { return h.sampleCount }
-func (h *ssaoHandlerImpl) MaxSamples() int                   { return h.maxSamples }
-func (h *ssaoHandlerImpl) ScreenRadius() float32             { return h.screenRadius }
-func (h *ssaoHandlerImpl) Bias() float32                     { return h.bias }
-func (h *ssaoHandlerImpl) Power() float32                    { return h.power }
-func (h *ssaoHandlerImpl) BlurRadius() int                   { return h.blurRadius }
-func (h *ssaoHandlerImpl) PipelineKey(name string) string    { return h.pipelineKeys[name] }
-func (h *ssaoHandlerImpl) PipelineKeys() map[string]string   { return h.pipelineKeys }
-func (h *ssaoHandlerImpl) SetPipelineKey(name, key string)   { h.pipelineKeys[name] = key }
-func (h *ssaoHandlerImpl) SetSlot(slot int)                  { h.activeSlot = slot }
-func (h *ssaoHandlerImpl) RawTexture() *wgpu.Texture         { return h.rawTextures[h.activeSlot] }
-func (h *ssaoHandlerImpl) SetRawTexture(t *wgpu.Texture)     { h.rawTextures[h.activeSlot] = t }
-func (h *ssaoHandlerImpl) RawTextureView() *wgpu.TextureView { return h.rawTextureViews[h.activeSlot] }
-func (h *ssaoHandlerImpl) SetRawTextureView(tv *wgpu.TextureView) {
+func (h *handlerImpl) Enabled() bool                     { return h.enabled }
+func (h *handlerImpl) SetEnabled(enabled bool)           { h.enabled = enabled }
+func (h *handlerImpl) ScreenWidth() int                  { return h.screenWidth }
+func (h *handlerImpl) ScreenHeight() int                 { return h.screenHeight }
+func (h *handlerImpl) SampleCount() int                  { return h.sampleCount }
+func (h *handlerImpl) MaxSamples() int                   { return h.maxSamples }
+func (h *handlerImpl) ScreenRadius() float32             { return h.screenRadius }
+func (h *handlerImpl) Bias() float32                     { return h.bias }
+func (h *handlerImpl) Power() float32                    { return h.power }
+func (h *handlerImpl) BlurRadius() int                   { return h.blurRadius }
+func (h *handlerImpl) PipelineKey(name string) string    { return h.pipelineKeys[name] }
+func (h *handlerImpl) PipelineKeys() map[string]string   { return h.pipelineKeys }
+func (h *handlerImpl) SetPipelineKey(name, key string)   { h.pipelineKeys[name] = key }
+func (h *handlerImpl) SetSlot(slot int)                  { h.activeSlot = slot }
+func (h *handlerImpl) RawTexture() *wgpu.Texture         { return h.rawTextures[h.activeSlot] }
+func (h *handlerImpl) SetRawTexture(t *wgpu.Texture)     { h.rawTextures[h.activeSlot] = t }
+func (h *handlerImpl) RawTextureView() *wgpu.TextureView { return h.rawTextureViews[h.activeSlot] }
+func (h *handlerImpl) SetRawTextureView(tv *wgpu.TextureView) {
 	h.rawTextureViews[h.activeSlot] = tv
 }
-func (h *ssaoHandlerImpl) BlurredTexture() *wgpu.Texture     { return h.blurredTextures[h.activeSlot] }
-func (h *ssaoHandlerImpl) SetBlurredTexture(t *wgpu.Texture) { h.blurredTextures[h.activeSlot] = t }
-func (h *ssaoHandlerImpl) BlurredTextureView() *wgpu.TextureView {
+func (h *handlerImpl) BlurredTexture() *wgpu.Texture     { return h.blurredTextures[h.activeSlot] }
+func (h *handlerImpl) SetBlurredTexture(t *wgpu.Texture) { h.blurredTextures[h.activeSlot] = t }
+func (h *handlerImpl) BlurredTextureView() *wgpu.TextureView {
 	return h.blurredTextureViews[h.activeSlot]
 }
-func (h *ssaoHandlerImpl) SetBlurredTextureView(tv *wgpu.TextureView) {
+func (h *handlerImpl) SetBlurredTextureView(tv *wgpu.TextureView) {
 	h.blurredTextureViews[h.activeSlot] = tv
 }
-func (h *ssaoHandlerImpl) ScratchTexture() *wgpu.Texture     { return h.scratchTextures[h.activeSlot] }
-func (h *ssaoHandlerImpl) SetScratchTexture(t *wgpu.Texture) { h.scratchTextures[h.activeSlot] = t }
-func (h *ssaoHandlerImpl) ScratchTextureView() *wgpu.TextureView {
+func (h *handlerImpl) ScratchTexture() *wgpu.Texture     { return h.scratchTextures[h.activeSlot] }
+func (h *handlerImpl) SetScratchTexture(t *wgpu.Texture) { h.scratchTextures[h.activeSlot] = t }
+func (h *handlerImpl) ScratchTextureView() *wgpu.TextureView {
 	return h.scratchTextureViews[h.activeSlot]
 }
-func (h *ssaoHandlerImpl) SetScratchTextureView(tv *wgpu.TextureView) {
+func (h *handlerImpl) SetScratchTextureView(tv *wgpu.TextureView) {
 	h.scratchTextureViews[h.activeSlot] = tv
 }
-func (h *ssaoHandlerImpl) LinearSampler() *wgpu.Sampler     { return h.linearSampler }
-func (h *ssaoHandlerImpl) SetLinearSampler(s *wgpu.Sampler) { h.linearSampler = s }
-func (h *ssaoHandlerImpl) HalfResolution() bool             { return h.halfResolution }
-func (h *ssaoHandlerImpl) SetHalfResolution(enabled bool)   { h.halfResolution = enabled }
+func (h *handlerImpl) LinearSampler() *wgpu.Sampler     { return h.linearSampler }
+func (h *handlerImpl) SetLinearSampler(s *wgpu.Sampler) { h.linearSampler = s }
+func (h *handlerImpl) HalfResolution() bool             { return h.halfResolution }
+func (h *handlerImpl) SetHalfResolution(enabled bool)   { h.halfResolution = enabled }
 
-func (h *ssaoHandlerImpl) Bgp(key string) bind_group_provider.BindGroupProvider {
+func (h *handlerImpl) Bgp(key string) bind_group_provider.BindGroupProvider {
 	return h.bgps[key]
 }
 
-func (h *ssaoHandlerImpl) Bgps() map[string]bind_group_provider.BindGroupProvider {
+func (h *handlerImpl) Bgps() map[string]bind_group_provider.BindGroupProvider {
 	return h.bgps
 }
 
-func (h *ssaoHandlerImpl) SetBgp(key string, bgp bind_group_provider.BindGroupProvider) {
+func (h *handlerImpl) SetBgp(key string, bgp bind_group_provider.BindGroupProvider) {
 	h.bgps[key] = bgp
 }
 
-func (h *ssaoHandlerImpl) Resize(width, height int) {
+func (h *handlerImpl) Resize(width, height int) {
 	h.screenWidth = width
 	h.screenHeight = height
 }

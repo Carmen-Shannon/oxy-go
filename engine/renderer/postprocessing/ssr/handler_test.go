@@ -1,10 +1,10 @@
-package postprocessing_test
+package ssr_test
 
 import (
 	"testing"
 
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssr"
 	"github.com/cogentcore/webgpu/wgpu"
 	"github.com/stretchr/testify/suite"
 )
@@ -15,22 +15,22 @@ func TestRunSSRHandlerTests(t *testing.T) {
 
 type ssrHandlerTest struct {
 	suite.Suite
-	handler postprocessing.SSRHandler
+	handler ssr.Handler
 }
 
 func (suite *ssrHandlerTest) SetupSubTest() {
-	suite.handler = postprocessing.NewSSRHandler()
+	suite.handler = ssr.NewHandler()
 }
 
 func (suite *ssrHandlerTest) TestNewSSRHandler() {
 	suite.Run("should create a new SSR handler with provided options", func() {
-		h := postprocessing.NewSSRHandler(
-			postprocessing.WithSSRScreenSize(1920, 1080),
-			postprocessing.WithSSRMaxSteps(128),
-			postprocessing.WithSSRMaxDistance(100.0),
-			postprocessing.WithSSRThickness(0.2),
-			postprocessing.WithSSRStride(2.0),
-			postprocessing.WithSSRRoughnessCutoff(0.3),
+		h := ssr.NewHandler(
+			ssr.WithSSRScreenSize(1920, 1080),
+			ssr.WithSSRMaxSteps(128),
+			ssr.WithSSRMaxDistance(100.0),
+			ssr.WithSSRThickness(0.2),
+			ssr.WithSSRStride(2.0),
+			ssr.WithSSRRoughnessCutoff(0.3),
 		)
 		suite.NotNil(h)
 	})

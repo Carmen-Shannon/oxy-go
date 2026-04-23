@@ -136,18 +136,6 @@ func (suite *engineTest) TestSetTickCallback() {
 	})
 }
 
-func (suite *engineTest) TestSetRenderCallback() {
-	suite.Run("should set the render callback function", func() {
-		called := false
-		dummyCallback := func(deltaTime float32) { called = true }
-		suite.engine.SetRenderCallback(dummyCallback)
-		eImpl := suite.engine.(*engine)
-		suite.NotNil(eImpl.renderCallback)
-		eImpl.renderCallback(0)
-		suite.True(called)
-	})
-}
-
 func (suite *engineTest) TestSetRenderFrameLimit() {
 	suite.Run("should update the render frame limit", func() {
 		suite.engine.SetRenderFrameLimit(30)

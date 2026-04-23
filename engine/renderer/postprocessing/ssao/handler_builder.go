@@ -1,12 +1,12 @@
-package postprocessing
+package ssao
 
 import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 )
 
-// SSAOHandlerOption is a functional option for configuring an SSAOHandler
-// during construction via NewSSAOHandler.
-type SSAOHandlerOption func(*ssaoHandlerImpl)
+// HandlerOption is a functional option for configuring a Handler
+// during construction via NewHandler.
+type HandlerOption func(*handlerImpl)
 
 // WithSSAOScreenSize sets the initial screen dimensions used for SSAO texture
 // allocation. These should match the surface dimensions at the time of
@@ -17,9 +17,9 @@ type SSAOHandlerOption func(*ssaoHandlerImpl)
 //   - height: the screen height in pixels
 //
 // Returns:
-//   - SSAOHandlerOption: a function that applies the screen size option to an ssaoHandlerImpl
-func WithSSAOScreenSize(width, height int) SSAOHandlerOption {
-	return func(h *ssaoHandlerImpl) {
+//   - HandlerOption: a function that applies the screen size option to a handlerImpl
+func WithSSAOScreenSize(width, height int) HandlerOption {
+	return func(h *handlerImpl) {
 		h.screenWidth = width
 		h.screenHeight = height
 	}
@@ -33,9 +33,9 @@ func WithSSAOScreenSize(width, height int) SSAOHandlerOption {
 //   - count: the number of samples (recommended: 16)
 //
 // Returns:
-//   - SSAOHandlerOption: a function that applies the sample count option to an ssaoHandlerImpl
-func WithSSAOSampleCount(count int) SSAOHandlerOption {
-	return func(h *ssaoHandlerImpl) {
+//   - HandlerOption: a function that applies the sample count option to a handlerImpl
+func WithSSAOSampleCount(count int) HandlerOption {
+	return func(h *handlerImpl) {
 		h.sampleCount = count
 	}
 }
@@ -47,9 +47,9 @@ func WithSSAOSampleCount(count int) SSAOHandlerOption {
 //   - max: the maximum number of samples (recommended: 32)
 //
 // Returns:
-//   - SSAOHandlerOption: a function that applies the max samples option to an ssaoHandlerImpl
-func WithSSAOMaxSamples(max int) SSAOHandlerOption {
-	return func(h *ssaoHandlerImpl) {
+//   - HandlerOption: a function that applies the max samples option to a handlerImpl
+func WithSSAOMaxSamples(max int) HandlerOption {
+	return func(h *handlerImpl) {
 		h.maxSamples = max
 	}
 }
@@ -63,9 +63,9 @@ func WithSSAOMaxSamples(max int) SSAOHandlerOption {
 //   - pixels: the screen-space radius in pixels (recommended: 24.0)
 //
 // Returns:
-//   - SSAOHandlerOption: a function that applies the screen radius option to an ssaoHandlerImpl
-func WithSSAOScreenRadius(pixels float32) SSAOHandlerOption {
-	return func(h *ssaoHandlerImpl) {
+//   - HandlerOption: a function that applies the screen radius option to a handlerImpl
+func WithSSAOScreenRadius(pixels float32) HandlerOption {
+	return func(h *handlerImpl) {
 		h.screenRadius = pixels
 	}
 }
@@ -77,9 +77,9 @@ func WithSSAOScreenRadius(pixels float32) SSAOHandlerOption {
 //   - bias: the depth bias (recommended: 0.025)
 //
 // Returns:
-//   - SSAOHandlerOption: a function that applies the bias option to an ssaoHandlerImpl
-func WithSSAOBias(bias float32) SSAOHandlerOption {
-	return func(h *ssaoHandlerImpl) {
+//   - HandlerOption: a function that applies the bias option to a handlerImpl
+func WithSSAOBias(bias float32) HandlerOption {
+	return func(h *handlerImpl) {
 		h.bias = bias
 	}
 }
@@ -91,9 +91,9 @@ func WithSSAOBias(bias float32) SSAOHandlerOption {
 //   - power: the power exponent (recommended: 2.0)
 //
 // Returns:
-//   - SSAOHandlerOption: a function that applies the power option to an ssaoHandlerImpl
-func WithSSAOPower(power float32) SSAOHandlerOption {
-	return func(h *ssaoHandlerImpl) {
+//   - HandlerOption: a function that applies the power option to a handlerImpl
+func WithSSAOPower(power float32) HandlerOption {
+	return func(h *handlerImpl) {
 		h.power = power
 	}
 }
@@ -105,9 +105,9 @@ func WithSSAOPower(power float32) SSAOHandlerOption {
 //   - radius: the blur kernel half-width in texels (recommended: 4)
 //
 // Returns:
-//   - SSAOHandlerOption: a function that applies the blur radius option to an ssaoHandlerImpl
-func WithSSAOBlurRadius(radius int) SSAOHandlerOption {
-	return func(h *ssaoHandlerImpl) {
+//   - HandlerOption: a function that applies the blur radius option to a handlerImpl
+func WithSSAOBlurRadius(radius int) HandlerOption {
+	return func(h *handlerImpl) {
 		h.blurRadius = radius
 	}
 }
@@ -122,14 +122,14 @@ func WithSSAOBlurRadius(radius int) SSAOHandlerOption {
 //   - enabled: true to enable half-resolution SSAO
 //
 // Returns:
-//   - SSAOHandlerOption: a function that applies the half-resolution option to an ssaoHandlerImpl
-func WithSSAOHalfResolution(enabled bool) SSAOHandlerOption {
-	return func(h *ssaoHandlerImpl) {
+//   - HandlerOption: a function that applies the half-resolution option to a handlerImpl
+func WithSSAOHalfResolution(enabled bool) HandlerOption {
+	return func(h *handlerImpl) {
 		h.halfResolution = enabled
 	}
 }
 
-// NewSSAOHandler creates a new SSAOHandler with sensible defaults and any
+// NewHandler creates a new Handler with sensible defaults and any
 // provided options applied. GPU resources are not allocated until the owning
 // scene calls the appropriate initialization methods.
 //
@@ -141,12 +141,12 @@ func WithSSAOHalfResolution(enabled bool) SSAOHandlerOption {
 //   - BlurRadius: 4
 //
 // Parameters:
-//   - opts: variadic list of SSAOHandlerOption functions to configure the handler
+//   - opts: variadic list of HandlerOption functions to configure the handler
 //
 // Returns:
-//   - SSAOHandler: a new handler instance ready to be attached to a scene
-func NewSSAOHandler(opts ...SSAOHandlerOption) SSAOHandler {
-	h := &ssaoHandlerImpl{
+//   - Handler: a new handler instance ready to be attached to a scene
+func NewHandler(opts ...HandlerOption) Handler {
+	h := &handlerImpl{
 		enabled:      false,
 		sampleCount:  16,
 		maxSamples:   32,

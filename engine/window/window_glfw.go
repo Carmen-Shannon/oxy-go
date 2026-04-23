@@ -6,7 +6,7 @@ import (
 
 	"github.com/cogentcore/webgpu/wgpu"
 	"github.com/cogentcore/webgpu/wgpuglfw"
-	"github.com/go-gl/glfw/v3.3/glfw"
+	"github.com/go-gl/glfw/v3.4/glfw"
 )
 
 // glfwWindow holds the GLFW-specific window state.
@@ -19,7 +19,7 @@ type glfwWindow struct {
 // newPlatformWindow creates the GLFW window with input callbacks and returns it as a platformBackend.
 //
 // GLFW reference: https://www.glfw.org/docs/latest/window_guide.html
-// go-gl/glfw: https://pkg.go.dev/github.com/go-gl/glfw/v3.3/glfw
+// go-gl/glfw: https://pkg.go.dev/github.com/go-gl/glfw/v3.4/glfw
 func newPlatformWindow(w *window) (platformBackend, error) {
 	runtime.LockOSThread()
 
@@ -44,7 +44,7 @@ func newPlatformWindow(w *window) (platformBackend, error) {
 	}
 
 	// Register GLFW callbacks for input and window events.
-	// Reference: https://pkg.go.dev/github.com/go-gl/glfw/v3.3/glfw#Window.SetKeyCallback
+	// Reference: https://pkg.go.dev/github.com/go-gl/glfw/v3.4/glfw#Window.SetKeyCallback
 	win.SetKeyCallback(func(_ *glfw.Window, key glfw.Key, scancode int, action glfw.Action, mods glfw.ModifierKey) {
 		if key == glfw.KeyEscape && action == glfw.Press {
 			gw.running = false
@@ -63,14 +63,14 @@ func newPlatformWindow(w *window) (platformBackend, error) {
 		}
 	})
 
-	// Reference: https://pkg.go.dev/github.com/go-gl/glfw/v3.3/glfw#Window.SetScrollCallback
+	// Reference: https://pkg.go.dev/github.com/go-gl/glfw/v3.4/glfw#Window.SetScrollCallback
 	win.SetScrollCallback(func(_ *glfw.Window, xoff, yoff float64) {
 		if w.onScroll != nil {
 			w.onScroll(float32(yoff))
 		}
 	})
 
-	// Reference: https://pkg.go.dev/github.com/go-gl/glfw/v3.3/glfw#Window.SetMouseButtonCallback
+	// Reference: https://pkg.go.dev/github.com/go-gl/glfw/v3.4/glfw#Window.SetMouseButtonCallback
 	win.SetMouseButtonCallback(func(_ *glfw.Window, button glfw.MouseButton, action glfw.Action, mods glfw.ModifierKey) {
 		if button == glfw.MouseButtonMiddle {
 			xpos, ypos := win.GetCursorPos()
@@ -87,7 +87,7 @@ func newPlatformWindow(w *window) (platformBackend, error) {
 		}
 	})
 
-	// Reference: https://pkg.go.dev/github.com/go-gl/glfw/v3.3/glfw#Window.SetCursorPosCallback
+	// Reference: https://pkg.go.dev/github.com/go-gl/glfw/v3.4/glfw#Window.SetCursorPosCallback
 	win.SetCursorPosCallback(func(_ *glfw.Window, xpos, ypos float64) {
 		if w.onMouseMove != nil {
 			w.onMouseMove(int32(xpos), int32(ypos))
@@ -97,7 +97,7 @@ func newPlatformWindow(w *window) (platformBackend, error) {
 	// Use framebuffer size callback for pixel-accurate resize events.
 	// On high-DPI displays (e.g., macOS Retina), framebuffer size differs from window size.
 	// The renderer requires pixel dimensions for correct surface configuration.
-	// Reference: https://pkg.go.dev/github.com/go-gl/glfw/v3.3/glfw#Window.SetFramebufferSizeCallback
+	// Reference: https://pkg.go.dev/github.com/go-gl/glfw/v3.4/glfw#Window.SetFramebufferSizeCallback
 	win.SetFramebufferSizeCallback(func(_ *glfw.Window, width, height int) {
 		w.width = width
 		w.height = height

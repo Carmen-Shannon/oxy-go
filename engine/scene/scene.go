@@ -25,7 +25,10 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/animator"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/composition"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssao"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssr"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/taa"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 )
 
@@ -547,7 +550,7 @@ func (s *scene) PrepareSSAO() {
 	worldRadius := screenRadius * (2.0 * camDist * float32(math.Tan(float64(fov/2.0)))) / float32(ssaoH)
 
 	// Build and write SSAO uniform parameters.
-	ssaoParams := postprocessing.GPUSSAOParams{
+	ssaoParams := ssao.GPUSSAOParams{
 		Projection:     s.cam.ViewProjectionMatrix(),
 		InvViewProj:    invVP,
 		Radius:         worldRadius,
@@ -565,12 +568,12 @@ func (s *scene) PrepareSSAO() {
 	blurVBGP := s.ssaoHandler.Bgp("ssao_blur_v")
 
 	// Write SSAO params to the compute BGP uniform buffer.
-	hParams := postprocessing.GPUBlurParams{
+	hParams := ssao.GPUBlurParams{
 		Direction:    [2]int32{1, 0},
 		Radius:       int32(s.ssaoHandler.BlurRadius()),
 		GBufferScale: gbufferScaleI,
 	}
-	vParams := postprocessing.GPUBlurParams{
+	vParams := ssao.GPUBlurParams{
 		Direction:    [2]int32{0, 1},
 		Radius:       int32(s.ssaoHandler.BlurRadius()),
 		GBufferScale: gbufferScaleI,
@@ -695,7 +698,7 @@ func (s *scene) PrepareSSR() {
 	}
 
 	// Build and write SSR uniform parameters.
-	ssrParams := postprocessing.GPUSSRParams{
+	ssrParams := ssr.GPUSSRParams{
 		Projection:      s.cam.ProjectionMatrix(),
 		InvProjection:   s.cam.InverseProjectionMatrix(),
 		View:            s.cam.ViewMatrix(),
@@ -824,7 +827,7 @@ func (s *scene) PrepareBloom() {
 	// Write bloom params for each downsample BGP.
 	writes := make([]bind_group_provider.BufferWrite, mipCount)
 	for i := 0; i < mipCount; i++ {
-		params := postprocessing.GPUBloomParams{}
+		params := composition.GPUBloomParams{}
 		if i == 0 {
 			params.Threshold = ch.BloomThreshold()
 		}
@@ -939,7 +942,7 @@ func (s *scene) prepareTAA() {
 		rawHistoryOnly = 1.0
 	}
 
-	params := postprocessing.GPUTAAParams{
+	params := taa.GPUTAAParams{
 		InvCurrViewProj:           invCurrVP,
 		PrevViewProj:              s.cam.PrevViewProjectionMatrix(),
 		JitterCurr:                [2]float32{taaH.JitterX(), taaH.JitterY()},
@@ -1002,7 +1005,7 @@ func (s *scene) PrepareComposition() {
 	}
 
 	// Write composition params uniform.
-	compParams := postprocessing.GPUCompositionParams{
+	compParams := composition.GPUCompositionParams{
 		Exposure: compHandler.Exposure(),
 	}
 	if compHandler.ToneMappingEnabled() {

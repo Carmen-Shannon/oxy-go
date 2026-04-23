@@ -1,10 +1,10 @@
-package postprocessing_test
+package taa_test
 
 import (
 	"testing"
 
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/taa"
 	"github.com/cogentcore/webgpu/wgpu"
 	"github.com/stretchr/testify/suite"
 )
@@ -15,11 +15,11 @@ func TestRunTAAHandlerTests(t *testing.T) {
 
 type taaHandlerTest struct {
 	suite.Suite
-	handler postprocessing.TAAHandler
+	handler taa.Handler
 }
 
 func (suite *taaHandlerTest) SetupSubTest() {
-	suite.handler = postprocessing.NewTAAHandler()
+	suite.handler = taa.NewHandler()
 }
 
 func (suite *taaHandlerTest) TestNewTAAHandler() {
@@ -33,9 +33,9 @@ func (suite *taaHandlerTest) TestNewTAAHandler() {
 	})
 
 	suite.Run("should apply screen size and blend factor options", func() {
-		h := postprocessing.NewTAAHandler(
-			postprocessing.WithTAAScreenSize(1280, 720),
-			postprocessing.WithTAABlendFactor(0.2),
+		h := taa.NewHandler(
+			taa.WithTAAScreenSize(1280, 720),
+			taa.WithTAABlendFactor(0.2),
 		)
 		suite.Equal(1280, h.ScreenWidth())
 		suite.Equal(720, h.ScreenHeight())
@@ -43,15 +43,15 @@ func (suite *taaHandlerTest) TestNewTAAHandler() {
 	})
 
 	suite.Run("should apply jitter scale option", func() {
-		h := postprocessing.NewTAAHandler(
-			postprocessing.WithTAAJitterScale(0.5),
+		h := taa.NewHandler(
+			taa.WithTAAJitterScale(0.5),
 		)
 		suite.Equal(float32(0.5), h.JitterScale())
 	})
 
 	suite.Run("should apply history rectification scale option", func() {
-		h := postprocessing.NewTAAHandler(
-			postprocessing.WithTAAHistoryRectificationScale(2.0),
+		h := taa.NewHandler(
+			taa.WithTAAHistoryRectificationScale(2.0),
 		)
 		suite.Equal(float32(2.0), h.HistoryRectificationScale())
 	})

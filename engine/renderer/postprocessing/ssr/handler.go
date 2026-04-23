@@ -1,21 +1,22 @@
-package postprocessing
+// Package ssr provides the screen-space reflections postprocessing subsystem.
+package ssr
 
 import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/cogentcore/webgpu/wgpu"
 )
 
-// SSRHandler defines the interface for the scene's screen-space reflections subsystem.
+// Handler defines the interface for the scene's screen-space reflections subsystem.
 //
-// The SSRHandler manages the ray march configuration, the SSR result texture, compute
+// The Handler manages the ray march configuration, the SSR result texture, compute
 // pipeline keys, and bind group providers needed by the SSR compute shader. It is
-// created via NewSSRHandler with builder options and attached to a scene's lighting
+// created via NewHandler with builder options and attached to a scene's lighting
 // handler. GPU resources are initialized lazily by the owning scene when SSR is first
 // enabled.
 //
 // Thread safety is provided by the owning scene's mutex — the handler itself
 // does not perform internal locking.
-type SSRHandler interface {
+type Handler interface {
 	// Enabled returns whether the SSR subsystem has been GPU-initialized
 	// and is ready for rendering.
 	//
@@ -283,83 +284,83 @@ type SSRHandler interface {
 	SetHiZMaxStorageViews(views []*wgpu.TextureView)
 }
 
-var _ SSRHandler = &ssrHandlerImpl{}
+var _ Handler = &handlerImpl{}
 
-func (h *ssrHandlerImpl) Enabled() bool                     { return h.enabled }
-func (h *ssrHandlerImpl) SetEnabled(enabled bool)           { h.enabled = enabled }
-func (h *ssrHandlerImpl) ScreenWidth() int                  { return h.screenWidth }
-func (h *ssrHandlerImpl) ScreenHeight() int                 { return h.screenHeight }
-func (h *ssrHandlerImpl) MaxSteps() int                     { return h.maxSteps }
-func (h *ssrHandlerImpl) MaxDistance() float32              { return h.maxDistance }
-func (h *ssrHandlerImpl) Thickness() float32                { return h.thickness }
-func (h *ssrHandlerImpl) Stride() float32                   { return h.stride }
-func (h *ssrHandlerImpl) RoughnessCutoff() float32          { return h.roughnessCutoff }
-func (h *ssrHandlerImpl) PipelineKey(name string) string    { return h.pipelineKeys[name] }
-func (h *ssrHandlerImpl) PipelineKeys() map[string]string   { return h.pipelineKeys }
-func (h *ssrHandlerImpl) SetPipelineKey(name, key string)   { h.pipelineKeys[name] = key }
-func (h *ssrHandlerImpl) SetSlot(slot int)                  { h.activeSlot = slot }
-func (h *ssrHandlerImpl) SSRTexture() *wgpu.Texture         { return h.ssrTextures[h.activeSlot] }
-func (h *ssrHandlerImpl) SetSSRTexture(t *wgpu.Texture)     { h.ssrTextures[h.activeSlot] = t }
-func (h *ssrHandlerImpl) SSRTextureView() *wgpu.TextureView { return h.ssrTextureViews[h.activeSlot] }
-func (h *ssrHandlerImpl) SetSSRTextureView(tv *wgpu.TextureView) {
+func (h *handlerImpl) Enabled() bool                     { return h.enabled }
+func (h *handlerImpl) SetEnabled(enabled bool)           { h.enabled = enabled }
+func (h *handlerImpl) ScreenWidth() int                  { return h.screenWidth }
+func (h *handlerImpl) ScreenHeight() int                 { return h.screenHeight }
+func (h *handlerImpl) MaxSteps() int                     { return h.maxSteps }
+func (h *handlerImpl) MaxDistance() float32              { return h.maxDistance }
+func (h *handlerImpl) Thickness() float32                { return h.thickness }
+func (h *handlerImpl) Stride() float32                   { return h.stride }
+func (h *handlerImpl) RoughnessCutoff() float32          { return h.roughnessCutoff }
+func (h *handlerImpl) PipelineKey(name string) string    { return h.pipelineKeys[name] }
+func (h *handlerImpl) PipelineKeys() map[string]string   { return h.pipelineKeys }
+func (h *handlerImpl) SetPipelineKey(name, key string)   { h.pipelineKeys[name] = key }
+func (h *handlerImpl) SetSlot(slot int)                  { h.activeSlot = slot }
+func (h *handlerImpl) SSRTexture() *wgpu.Texture         { return h.ssrTextures[h.activeSlot] }
+func (h *handlerImpl) SetSSRTexture(t *wgpu.Texture)     { h.ssrTextures[h.activeSlot] = t }
+func (h *handlerImpl) SSRTextureView() *wgpu.TextureView { return h.ssrTextureViews[h.activeSlot] }
+func (h *handlerImpl) SetSSRTextureView(tv *wgpu.TextureView) {
 	h.ssrTextureViews[h.activeSlot] = tv
 }
-func (h *ssrHandlerImpl) LinearSampler() *wgpu.Sampler      { return h.linearSampler }
-func (h *ssrHandlerImpl) SetLinearSampler(s *wgpu.Sampler)  { h.linearSampler = s }
-func (h *ssrHandlerImpl) HiZTexture() *wgpu.Texture         { return h.hizTextures[h.activeSlot] }
-func (h *ssrHandlerImpl) SetHiZTexture(t *wgpu.Texture)     { h.hizTextures[h.activeSlot] = t }
-func (h *ssrHandlerImpl) HiZTextureView() *wgpu.TextureView { return h.hizTextureViews[h.activeSlot] }
-func (h *ssrHandlerImpl) SetHiZTextureView(tv *wgpu.TextureView) {
+func (h *handlerImpl) LinearSampler() *wgpu.Sampler      { return h.linearSampler }
+func (h *handlerImpl) SetLinearSampler(s *wgpu.Sampler)  { h.linearSampler = s }
+func (h *handlerImpl) HiZTexture() *wgpu.Texture         { return h.hizTextures[h.activeSlot] }
+func (h *handlerImpl) SetHiZTexture(t *wgpu.Texture)     { h.hizTextures[h.activeSlot] = t }
+func (h *handlerImpl) HiZTextureView() *wgpu.TextureView { return h.hizTextureViews[h.activeSlot] }
+func (h *handlerImpl) SetHiZTextureView(tv *wgpu.TextureView) {
 	h.hizTextureViews[h.activeSlot] = tv
 }
-func (h *ssrHandlerImpl) HiZMipCount() int         { return h.hizMipCount }
-func (h *ssrHandlerImpl) SetHiZMipCount(count int) { h.hizMipCount = count }
-func (h *ssrHandlerImpl) HiZMipReadViews() []*wgpu.TextureView {
+func (h *handlerImpl) HiZMipCount() int         { return h.hizMipCount }
+func (h *handlerImpl) SetHiZMipCount(count int) { h.hizMipCount = count }
+func (h *handlerImpl) HiZMipReadViews() []*wgpu.TextureView {
 	return h.hizMipReadViewsArr[h.activeSlot]
 }
-func (h *ssrHandlerImpl) SetHiZMipReadViews(views []*wgpu.TextureView) {
+func (h *handlerImpl) SetHiZMipReadViews(views []*wgpu.TextureView) {
 	h.hizMipReadViewsArr[h.activeSlot] = views
 }
-func (h *ssrHandlerImpl) HiZStorageViews() []*wgpu.TextureView {
+func (h *handlerImpl) HiZStorageViews() []*wgpu.TextureView {
 	return h.hizStorageViewsArr[h.activeSlot]
 }
-func (h *ssrHandlerImpl) SetHiZStorageViews(views []*wgpu.TextureView) {
+func (h *handlerImpl) SetHiZStorageViews(views []*wgpu.TextureView) {
 	h.hizStorageViewsArr[h.activeSlot] = views
 }
-func (h *ssrHandlerImpl) HiZMaxTexture() *wgpu.Texture     { return h.maxHizTextures[h.activeSlot] }
-func (h *ssrHandlerImpl) SetHiZMaxTexture(t *wgpu.Texture) { h.maxHizTextures[h.activeSlot] = t }
-func (h *ssrHandlerImpl) HiZMaxTextureView() *wgpu.TextureView {
+func (h *handlerImpl) HiZMaxTexture() *wgpu.Texture     { return h.maxHizTextures[h.activeSlot] }
+func (h *handlerImpl) SetHiZMaxTexture(t *wgpu.Texture) { h.maxHizTextures[h.activeSlot] = t }
+func (h *handlerImpl) HiZMaxTextureView() *wgpu.TextureView {
 	return h.maxHizTextureViews[h.activeSlot]
 }
-func (h *ssrHandlerImpl) SetHiZMaxTextureView(tv *wgpu.TextureView) {
+func (h *handlerImpl) SetHiZMaxTextureView(tv *wgpu.TextureView) {
 	h.maxHizTextureViews[h.activeSlot] = tv
 }
-func (h *ssrHandlerImpl) HiZMaxMipReadViews() []*wgpu.TextureView {
+func (h *handlerImpl) HiZMaxMipReadViews() []*wgpu.TextureView {
 	return h.maxHizMipReadViewsArr[h.activeSlot]
 }
-func (h *ssrHandlerImpl) SetHiZMaxMipReadViews(views []*wgpu.TextureView) {
+func (h *handlerImpl) SetHiZMaxMipReadViews(views []*wgpu.TextureView) {
 	h.maxHizMipReadViewsArr[h.activeSlot] = views
 }
-func (h *ssrHandlerImpl) HiZMaxStorageViews() []*wgpu.TextureView {
+func (h *handlerImpl) HiZMaxStorageViews() []*wgpu.TextureView {
 	return h.maxHizStorageViewsArr[h.activeSlot]
 }
-func (h *ssrHandlerImpl) SetHiZMaxStorageViews(views []*wgpu.TextureView) {
+func (h *handlerImpl) SetHiZMaxStorageViews(views []*wgpu.TextureView) {
 	h.maxHizStorageViewsArr[h.activeSlot] = views
 }
 
-func (h *ssrHandlerImpl) Bgp(key string) bind_group_provider.BindGroupProvider {
+func (h *handlerImpl) Bgp(key string) bind_group_provider.BindGroupProvider {
 	return h.bgps[key]
 }
 
-func (h *ssrHandlerImpl) Bgps() map[string]bind_group_provider.BindGroupProvider {
+func (h *handlerImpl) Bgps() map[string]bind_group_provider.BindGroupProvider {
 	return h.bgps
 }
 
-func (h *ssrHandlerImpl) SetBgp(key string, bgp bind_group_provider.BindGroupProvider) {
+func (h *handlerImpl) SetBgp(key string, bgp bind_group_provider.BindGroupProvider) {
 	h.bgps[key] = bgp
 }
 
-func (h *ssrHandlerImpl) Resize(width, height int) {
+func (h *handlerImpl) Resize(width, height int) {
 	h.screenWidth = width
 	h.screenHeight = height
 }

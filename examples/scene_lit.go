@@ -20,7 +20,9 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/gbuffer"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/material"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/composition"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssao"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssr"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	"github.com/Carmen-Shannon/oxy-go/engine/window"
 	"github.com/cogentcore/webgpu/wgpu"
@@ -68,7 +70,7 @@ func main() {
 	sc := scene.NewScene("Lit Scene", cam, r,
 		scene.WithActive(true),
 		scene.WithScreenSize(eng.Window().Width(), eng.Window().Height()),
-		scene.WithGBufferHandler(gbuffer.NewGBufferHandler()),
+		scene.WithGBufferHandler(gbuffer.NewHandler()),
 		scene.WithLighting(light.NewLightingHandler(
 			light.WithShadowHandler(light.NewShadowHandler(
 				light.WithPCFRadius(2.0),
@@ -78,31 +80,31 @@ func main() {
 				light.WithShadowInnerRadius(250),
 			)),
 		)),
-		scene.WithSSAOHandler(postprocessing.NewSSAOHandler(
-			postprocessing.WithSSAOSampleCount(8),
-			postprocessing.WithSSAOScreenRadius(24.0),
-			postprocessing.WithSSAOBias(0.025),
-			postprocessing.WithSSAOPower(2.0),
-			postprocessing.WithSSAOBlurRadius(4),
-			postprocessing.WithSSAOHalfResolution(false),
+		scene.WithSSAOHandler(ssao.NewHandler(
+			ssao.WithSSAOSampleCount(8),
+			ssao.WithSSAOScreenRadius(24.0),
+			ssao.WithSSAOBias(0.025),
+			ssao.WithSSAOPower(2.0),
+			ssao.WithSSAOBlurRadius(4),
+			ssao.WithSSAOHalfResolution(false),
 		)),
-		scene.WithCompositionHandler(postprocessing.NewCompositionHandler(
-			postprocessing.WithToneMappingEnabled(true),
-			postprocessing.WithExposure(1.5),
-			postprocessing.WithAutoExposure(true),
-			postprocessing.WithAdaptSpeed(8.0),
-			postprocessing.WithMinExposure(0.02),
-			postprocessing.WithMaxExposure(30.0),
-			postprocessing.WithBloomEnabled(true),
-			postprocessing.WithBloomThreshold(1.0),
-			postprocessing.WithBloomIntensity(0.5),
+		scene.WithCompositionHandler(composition.NewHandler(
+			composition.WithToneMappingEnabled(true),
+			composition.WithExposure(1.5),
+			composition.WithAutoExposure(true),
+			composition.WithAdaptSpeed(8.0),
+			composition.WithMinExposure(0.02),
+			composition.WithMaxExposure(30.0),
+			composition.WithBloomEnabled(true),
+			composition.WithBloomThreshold(1.0),
+			composition.WithBloomIntensity(0.5),
 		)),
-		scene.WithSSRHandler(postprocessing.NewSSRHandler(
-			postprocessing.WithSSRMaxSteps(64),
-			postprocessing.WithSSRMaxDistance(300.0),
-			postprocessing.WithSSRThickness(2.0),
-			postprocessing.WithSSRStride(1.5),
-			postprocessing.WithSSRRoughnessCutoff(0.5),
+		scene.WithSSRHandler(ssr.NewHandler(
+			ssr.WithSSRMaxSteps(64),
+			ssr.WithSSRMaxDistance(300.0),
+			ssr.WithSSRThickness(2.0),
+			ssr.WithSSRStride(1.5),
+			ssr.WithSSRRoughnessCutoff(0.5),
 		)),
 	)
 

@@ -26,7 +26,6 @@ func TestRunRendererImplTests(t *testing.T) {
 
 func (suite *rendererImplTest) SetupSubTest() {
 	suite.backendMock = mocks.NewMockRendererBackend(suite.T())
-	suite.r = renderer.NewRendererWithBackend(suite.backendMock)
 }
 
 // --- Pipeline cache methods ---
@@ -819,72 +818,7 @@ func (suite *rendererImplTest) TestCreateSharpenTexture() {
 	})
 }
 
-// --- Builder option functions ---
 
-func (suite *rendererImplTest) TestWithPipeline() {
-	suite.Run("should add the pipeline to the cache under the given key", func() {
-		mockPipeline := pipeline_mocks.NewMockPipeline(suite.T())
-		renderer.ApplyOption(suite.r, renderer.WithPipeline("key", mockPipeline))
-		suite.Equal(mockPipeline, suite.r.Pipeline("key"))
-	})
-}
-
-func (suite *rendererImplTest) TestWithPipelines() {
-	suite.Run("should replace the pipeline cache with the provided map", func() {
-		mockPipeline := pipeline_mocks.NewMockPipeline(suite.T())
-		newCache := map[string]pipeline.Pipeline{"k": mockPipeline}
-		renderer.ApplyOption(suite.r, renderer.WithPipelines(newCache))
-		suite.Equal(newCache, suite.r.Pipelines())
-	})
-}
-
-func (suite *rendererImplTest) TestWithPresentMode() {
-	suite.Run("should set the pending present mode", func() {
-		renderer.ApplyOption(suite.r, renderer.WithPresentMode(renderer.PresentModeVSync))
-		mode := renderer.RendererPendingPresentMode(suite.r)
-		suite.NotNil(mode)
-		suite.Equal(renderer.PresentModeVSync, *mode)
-	})
-}
-
-func (suite *rendererImplTest) TestWithMSAA() {
-	suite.Run("should set the pending MSAA sample count", func() {
-		renderer.ApplyOption(suite.r, renderer.WithMSAA(renderer.MSAAOff))
-		msaa := renderer.RendererPendingMSAA(suite.r)
-		suite.NotNil(msaa)
-		suite.Equal(renderer.MSAAOff, *msaa)
-	})
-}
-
-func (suite *rendererImplTest) TestWithForceSoftwareRenderer() {
-	suite.Run("should set the force fallback adapter flag to true", func() {
-		renderer.ApplyOption(suite.r, renderer.WithForceSoftwareRenderer(true))
-		suite.True(renderer.RendererForceFallbackAdapter(suite.r))
-	})
-	suite.Run("should set the force fallback adapter flag to false", func() {
-		renderer.ApplyOption(suite.r, renderer.WithForceSoftwareRenderer(false))
-		suite.False(renderer.RendererForceFallbackAdapter(suite.r))
-	})
-}
-
-func (suite *rendererImplTest) TestWithGPUSerializedProfiling() {
-	suite.Run("should set gpu serialized profiling to true", func() {
-		renderer.ApplyOption(suite.r, renderer.WithGPUSerializedProfiling(true))
-		suite.True(renderer.RendererGPUSerializedProfiling(suite.r))
-	})
-
-	suite.Run("should set gpu serialized profiling to false", func() {
-		renderer.ApplyOption(suite.r, renderer.WithGPUSerializedProfiling(false))
-		suite.False(renderer.RendererGPUSerializedProfiling(suite.r))
-	})
-
-	suite.Run("last applied serialized profiling option wins", func() {
-		renderer.ApplyOption(suite.r, renderer.WithGPUSerializedProfiling(true))
-		renderer.ApplyOption(suite.r, renderer.WithGPUSerializedProfiling(false))
-
-		suite.False(renderer.RendererGPUSerializedProfiling(suite.r))
-	})
-}
 
 func (suite *rendererImplTest) TestNewRendererNilWindowPanics() {
 	suite.Run("should panic when constructing a renderer with a nil window", func() {

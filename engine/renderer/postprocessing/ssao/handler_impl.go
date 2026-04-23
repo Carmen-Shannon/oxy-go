@@ -1,12 +1,12 @@
-package postprocessing
+package ssao
 
 import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/cogentcore/webgpu/wgpu"
 )
 
-// ssaoHandlerImpl is the implementation of the SSAOHandler interface.
-type ssaoHandlerImpl struct {
+// handlerImpl is the implementation of the Handler interface.
+type handlerImpl struct {
 	enabled bool
 
 	screenWidth  int

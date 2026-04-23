@@ -1,12 +1,12 @@
-package postprocessing
+package composition
 
 import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/cogentcore/webgpu/wgpu"
 )
 
-// compositionHandlerImpl is the implementation of the CompositionHandler interface.
-type compositionHandlerImpl struct {
+// handlerImpl is the implementation of the Handler interface.
+type handlerImpl struct {
 	enabled bool
 
 	screenWidth  int
