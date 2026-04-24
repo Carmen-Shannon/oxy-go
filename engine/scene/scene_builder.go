@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Carmen-Shannon/automation/tools/worker"
+	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/camera"
 	"github.com/Carmen-Shannon/oxy-go/engine/game_object"
 	"github.com/Carmen-Shannon/oxy-go/engine/light"
@@ -133,6 +134,12 @@ func WithLighting(handler light.LightingHandler) SceneBuilderOption {
 }
 
 // WithGBufferHandler attaches a pre-configured GBufferHandler to the scene.
+//
+// Parameters:
+//   - handler: the pre-configured GBufferHandler
+//
+// Returns:
+//   - SceneBuilderOption: option function to apply
 func WithGBufferHandler(handler gbuffer.Handler) SceneBuilderOption {
 	return func(s *scene) {
 		s.gBufferHandler = handler
@@ -195,7 +202,7 @@ func WithTAAHandler(handler taa.Handler) SceneBuilderOption {
 	}
 }
 
-// WithPhysics creates a Physics instance with the given options and attaches it
+// WithPhysicsHandler creates a Physics instance with the given options and attaches it
 // to the scene. GPU resources are initialized lazily when the first rigid body
 // object is added via Add. If not called, objects with RigidBodies will be
 // rendered without physics simulation — no forces, collisions, or integration
@@ -206,9 +213,9 @@ func WithTAAHandler(handler taa.Handler) SceneBuilderOption {
 //
 // Returns:
 //   - SceneBuilderOption: option function to apply
-func WithPhysics(opts ...physics.PhysicsBuilderOption) SceneBuilderOption {
+func WithPhysicsHandler(handler physics.Physics) SceneBuilderOption {
 	return func(s *scene) {
-		s.physicsHandler = physics.NewPhysics(opts...)
+		s.SetPhysicsHandler(handler)
 	}
 }
 
@@ -315,6 +322,7 @@ func NewScene(name string, cam camera.Camera, r renderer.Renderer, options ...Sc
 
 	s := &scene{
 		mu:                     &sync.RWMutex{},
+		DelegateImpl:           &common.DelegateImpl[Scene]{},
 		name:                   name,
 		active:                 false,
 		cam:                    cam,
@@ -386,5 +394,6 @@ func NewScene(name string, cam camera.Camera, r renderer.Renderer, options ...Sc
 		s.hizFallbackView = hizView
 	}
 
+	s.Delegate = s
 	return s
 }

@@ -3,6 +3,7 @@ package physics
 import (
 	"math"
 
+	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/cogentcore/webgpu/wgpu"
 )
@@ -11,8 +12,6 @@ import (
 // rigid body simulation state including body/particle registration, fixed-timestep
 // accumulation, staged buffer writes, and asynchronous GPU readback.
 type physicsImpl struct {
-	enabled bool
-
 	bodies        []RigidBody
 	bodiesMap     map[uint64]int
 	bodiesCount   int
@@ -50,6 +49,8 @@ type physicsImpl struct {
 	readbackPending   bool
 	stagingBuffer     *wgpu.Buffer
 	stagedWriteData   []bind_group_provider.BufferWrite
+
+	lc lifecycle.Lifecycle
 }
 
 // eulerToQuaternion converts XYZ Euler angles (in radians) to a unit quaternion

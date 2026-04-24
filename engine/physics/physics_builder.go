@@ -1,6 +1,9 @@
 package physics
 
-import "github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
+import (
+	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
+)
 
 // PhysicsBuilderOption is a functional option for configuring a physicsImpl during construction.
 type PhysicsBuilderOption func(*physicsImpl)
@@ -165,7 +168,6 @@ func WithBoundaryPlanes(planes [][6]float32) PhysicsBuilderOption {
 //   - Physics: a new Physics instance
 func NewPhysics(options ...PhysicsBuilderOption) Physics {
 	r := &physicsImpl{
-		enabled:         false,
 		bodiesMap:       make(map[uint64]int),
 		stagedWriteData: make([]bind_group_provider.BufferWrite, 0, 16),
 		buffers:         bind_group_provider.NewBindGroupProvider("physics_buffers"),
@@ -191,6 +193,7 @@ func NewPhysics(options ...PhysicsBuilderOption) Physics {
 		shearCoeff:   0.5,
 		slotsPerCell: 16,
 		bodyIdxMask:  0xFFFFFF,
+		lc:           lifecycle.NewLifecycle(),
 	}
 	for _, opt := range options {
 		opt(r)

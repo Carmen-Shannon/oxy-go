@@ -5,6 +5,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
 	"github.com/Carmen-Shannon/oxy-go/engine/physics"
 	"github.com/stretchr/testify/suite"
 )
@@ -56,8 +57,9 @@ func (suite *physicsTest) TestNewPhysics() {
 		suite.Equal(uint32(0xFFFFFF), suite.p.BodyIdxMask())
 	})
 
-	suite.Run("Enabled defaults to false", func() {
-		suite.False(suite.p.Enabled())
+	suite.Run("Lifecycle defaults to registered state", func() {
+		suite.NotNil(suite.p.Lifecycle())
+		suite.Equal(lifecycle.LifecycleStateRegistered, suite.p.Lifecycle().State())
 	})
 
 	suite.Run("BodiesCount defaults to 0", func() {
@@ -73,9 +75,10 @@ func (suite *physicsTest) TestNewPhysics() {
 	})
 }
 
-func (suite *physicsTest) TestEnabled() {
-	suite.Run("false initially", func() {
-		suite.False(suite.p.Enabled())
+func (suite *physicsTest) TestLifecycle() {
+	suite.Run("registered initially", func() {
+		suite.NotNil(suite.p.Lifecycle())
+		suite.Equal(lifecycle.LifecycleStateRegistered, suite.p.Lifecycle().State())
 	})
 }
 
@@ -258,10 +261,11 @@ func (suite *physicsTest) TestRegisterBody() {
 		suite.Equal(1, suite.p.BodiesCount())
 	})
 
-	suite.Run("enabled becomes true after first registration", func() {
+	suite.Run("lifecycle remains registered after first registration", func() {
 		rb := physics.NewRigidBody()
 		suite.p.RegisterBody(1, [3]float32{}, [3]float32{}, rb, 0)
-		suite.True(suite.p.Enabled())
+		suite.NotNil(suite.p.Lifecycle())
+		suite.Equal(lifecycle.LifecycleStateRegistered, suite.p.Lifecycle().State())
 	})
 
 	suite.Run("slot reuse: second body after remove is assigned index 0", func() {
@@ -390,20 +394,22 @@ func (suite *physicsTest) TestRemoveBody() {
 		suite.Equal(uint32(0), binary.LittleEndian.Uint32(writes[1].Data))
 	})
 
-	suite.Run("enabled becomes false when last body is removed", func() {
+	suite.Run("lifecycle remains registered when last body is removed", func() {
 		rb := physics.NewRigidBody()
 		suite.p.RegisterBody(1, [3]float32{}, [3]float32{}, rb, 0)
 		suite.p.RemoveBody(1)
-		suite.False(suite.p.Enabled())
+		suite.NotNil(suite.p.Lifecycle())
+		suite.Equal(lifecycle.LifecycleStateRegistered, suite.p.Lifecycle().State())
 	})
 
-	suite.Run("enabled stays true when other bodies remain after removal", func() {
+	suite.Run("lifecycle remains registered when other bodies remain after removal", func() {
 		rb1 := physics.NewRigidBody()
 		rb2 := physics.NewRigidBody()
 		suite.p.RegisterBody(1, [3]float32{}, [3]float32{}, rb1, 0)
 		suite.p.RegisterBody(2, [3]float32{}, [3]float32{}, rb2, 0)
 		suite.p.RemoveBody(1)
-		suite.True(suite.p.Enabled())
+		suite.NotNil(suite.p.Lifecycle())
+		suite.Equal(lifecycle.LifecycleStateRegistered, suite.p.Lifecycle().State())
 	})
 }
 
@@ -560,10 +566,11 @@ func (suite *physicsTest) TestBuilderOptions() {
 }
 
 func (suite *physicsTest) TestPrepareStep() {
-	suite.Run("disabled with no bodies registered returns 0 and nil", func() {
+	suite.Run("with no bodies registered substeps are still computed", func() {
+		suite.p = physics.NewPhysics(physics.WithFixedDt(0.01), physics.WithMaxSubsteps(4))
 		substeps, globalsData := suite.p.PrepareStep(0.05)
-		suite.Equal(0, substeps)
-		suite.Nil(globalsData)
+		suite.Equal(4, substeps)
+		suite.NotNil(globalsData)
 	})
 
 	suite.Run("substeps=0 when dt is too small for fixedDt", func() {
@@ -636,7 +643,7 @@ func (suite *physicsTest) TestPrepareStep() {
 		rb2 := physics.NewRigidBody()
 		suite.p.RegisterBody(1, [3]float32{}, [3]float32{}, rb1, 0)
 		suite.p.RegisterBody(2, [3]float32{}, [3]float32{}, rb2, 0)
-		suite.p.RemoveBody(1) // bodies[0]=nil, bodies[1]=rb2, enabled still true
+		suite.p.RemoveBody(1) // bodies[0]=nil, bodies[1]=rb2
 		suite.p.StagedWriteData()
 		substeps, _ := suite.p.PrepareStep(0.05)
 		suite.Equal(4, substeps)

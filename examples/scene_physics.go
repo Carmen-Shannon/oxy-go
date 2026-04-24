@@ -12,6 +12,7 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine"
 	"github.com/Carmen-Shannon/oxy-go/engine/camera"
 	"github.com/Carmen-Shannon/oxy-go/engine/game_object"
+	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
 	"github.com/Carmen-Shannon/oxy-go/engine/light"
 	"github.com/Carmen-Shannon/oxy-go/engine/loader"
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
@@ -19,6 +20,7 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/material"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/taa"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	"github.com/Carmen-Shannon/oxy-go/engine/window"
 )
@@ -164,8 +166,12 @@ func main() {
 		scene.WithActive(true),
 		scene.WithScreenSize(eng.Window().Width(), eng.Window().Height()),
 		scene.WithLighting(lightingHandler),
+		scene.WithTAAHandler(taa.NewHandler(
+			taa.WithTAAHistoryRectificationScale(0.1),
+			taa.WithTAAJitterScale(0.6),
+		)),
+		scene.WithPhysicsHandler(ph),
 	)
-	sc.SetPhysicsHandler(ph)
 
 	// ── Lighting ───────────────────────────────────────────────────────
 	// Directional sun light offset from center, angled toward the box.
@@ -292,6 +298,7 @@ func main() {
 	fmt.Println("║  Camera: WASD=Pan  Q/E=Up/Down  Scroll=Zoom        ║")
 	fmt.Println("║          Middle-mouse drag=Orbit                    ║")
 	fmt.Println("║  Space: Toggle spawning on/off                      ║")
+	fmt.Println("║  P: Toggle physics pause/resume                     ║")
 	fmt.Println("║                                                     ║")
 	fmt.Println("║  Streaming fluid: 30 droplets/sec from a source.    ║")
 	fmt.Println("║  Oldest droplets removed when pool reaches 250000.  ║")
@@ -701,6 +708,24 @@ func setupFluidInput(
 				fmt.Println("[Spawn] ON")
 			} else {
 				fmt.Println("[Spawn] OFF")
+			}
+		}
+
+		if keyCode == common.KeyP {
+			lc := ph.Lifecycle()
+			switch lc.State() {
+			case lifecycle.LifecycleStateRunning:
+				if err := lc.SetState(lifecycle.LifecycleStatePaused); err != nil {
+					fmt.Printf("[Physics] Pause failed: %v\n", err)
+				} else {
+					fmt.Println("[Physics] Paused")
+				}
+			case lifecycle.LifecycleStatePaused:
+				if err := lc.SetState(lifecycle.LifecycleStateRunning); err != nil {
+					fmt.Printf("[Physics] Resume failed: %v\n", err)
+				} else {
+					fmt.Println("[Physics] Running")
+				}
 			}
 		}
 	})

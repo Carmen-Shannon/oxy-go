@@ -19,6 +19,7 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/camera"
 	"github.com/Carmen-Shannon/oxy-go/engine/game_object"
+	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
 	"github.com/Carmen-Shannon/oxy-go/engine/light"
 	"github.com/Carmen-Shannon/oxy-go/engine/physics"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer"
@@ -39,6 +40,8 @@ import (
 // Scenes can be hot-swapped via the Active flag to switch between different views or levels.
 // Thread-safe for concurrent access.
 type Scene interface {
+	common.Delegate[Scene]
+
 	// Name returns the scene's identifier.
 	Name() string
 
@@ -309,6 +312,12 @@ type Scene interface {
 	// Returns:
 	//   - error: an error if the HDR frame could not be started
 	BeginHDRFrame() error
+
+	// PhysicsHandler returns the scene's physics handler, which manages GPU-side rigid body simulation state.
+	//
+	// Returns:
+	//   - physics.Physics: the scene's physics handler
+	PhysicsHandler() physics.Physics
 }
 
 var _ Scene = &scene{}
@@ -321,12 +330,20 @@ func (s *scene) Camera() camera.Camera                { return s.cam }
 func (s *scene) SetCamera(cam camera.Camera)          { s.cam = cam }
 func (s *scene) Renderer() renderer.Renderer          { return s.r }
 func (s *scene) SetRenderer(r renderer.Renderer)      { s.r = r }
-func (s *scene) SetPhysicsHandler(ph physics.Physics) { s.physicsHandler = ph }
+func (s *scene) PhysicsHandler() physics.Physics      { return s.physicsHandler }
 func (s *scene) CullingDisabled() bool                { return s.cullingDisabled }
 func (s *scene) SetCullingDisabled(disabled bool)     { s.cullingDisabled = disabled }
 func (s *scene) AmbientColor() [3]float32             { return s.lightHandler.AmbientColor() }
 func (s *scene) SetAmbientColor(color [3]float32)     { s.lightHandler.SetAmbientColor(color) }
 func (s *scene) Get(id uint64) game_object.GameObject { return s.registry[id] }
+
+func (s *scene) SetPhysicsHandler(ph physics.Physics) {
+	ph.Lifecycle().OnTransitionTo(lifecycle.LifecycleStateStarting, lifecycle.Hook(func() error {
+		s.initPhysics()
+		return nil
+	}))
+	s.physicsHandler = ph
+}
 
 func (s *scene) AddLight(l light.Light) {
 	if !s.lightHandler.Enabled() {
@@ -1975,11 +1992,15 @@ func (s *scene) AddGameObject(obj game_object.GameObject, pipelineOpts ...pipeli
 		s.lightHandler.AddLight(l)
 	}
 
-	if obj.RigidBody() != nil && s.physicsHandler != nil {
-		bodyIndex := s.physicsHandler.RegisterBody(obj.ID(), [3]float32{pos[0], pos[1], pos[2]}, [3]float32{rot[0], rot[1], rot[2]}, obj.RigidBody(), uint32(obj.AnimatorInstanceID()))
-		if !s.physicsGPUReady {
-			s.initPhysics()
-			s.physicsGPUReady = true
+	ph := s.Delegate.PhysicsHandler()
+	if obj.RigidBody() != nil && ph != nil {
+		bodyIndex := ph.RegisterBody(obj.ID(), [3]float32{pos[0], pos[1], pos[2]}, [3]float32{rot[0], rot[1], rot[2]}, obj.RigidBody(), uint32(obj.AnimatorInstanceID()))
+
+		if ph.Lifecycle().State() == lifecycle.LifecycleStateRegistered {
+			ph.Lifecycle().SetState(lifecycle.LifecycleStateStarting)
+		}
+		if ph.Lifecycle().State() == lifecycle.LifecycleStateStarting {
+			ph.Lifecycle().SetState(lifecycle.LifecycleStateRunning)
 		}
 
 		// Ensure this animator has a sync group. Each unique Animator that
@@ -2086,9 +2107,10 @@ func (s *scene) RemoveGameObject(id uint64) {
 	}
 
 	// Sentinel the removed body's sync_map entry and deactivate its GPU slot.
-	if s.physicsHandler != nil {
+	ph := s.Delegate.PhysicsHandler()
+	if ph != nil {
 		s.patchSyncMapEntry(anim, obj.ID(), 0xFFFFFFFF)
-		s.physicsHandler.RemoveBody(obj.ID())
+		ph.RemoveBody(obj.ID())
 	}
 
 	s.drawCacheDirty = true
@@ -2327,7 +2349,8 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 	// grid insert → collision → compute momenta → integrate. Between substeps,
 	// only the AABB atomics buffer is reset; body and particle data persist in the
 	// storage buffers across stages.
-	if ph := s.physicsHandler; ph != nil && ph.Enabled() {
+	ph := s.Delegate.PhysicsHandler()
+	if ph != nil && ph.Lifecycle().State() == lifecycle.LifecycleStateRunning {
 		// Process any pending GPU→CPU readback from the previous frame's copy command.
 		// By this point the compute command buffer containing the CopyBufferToBuffer has
 		// been submitted (EndComputeFrame from the prior frame), so the staging buffer is

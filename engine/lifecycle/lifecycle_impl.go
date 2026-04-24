@@ -23,13 +23,17 @@ type lifecycleTransition struct {
 var (
 	lifecycleTransitions = []lifecycleTransition{
 		{from: LifecycleStateRegistered, to: LifecycleStateStarting},
-		{from: LifecycleStateRegistered, to: LifecycleStateStarting},
+		{from: LifecycleStateRegistered, to: LifecycleStateStopped},
 		{from: LifecycleStateStarting, to: LifecycleStateRunning},
+		{from: LifecycleStateStarting, to: LifecycleStateErrored},
 		{from: LifecycleStateRunning, to: LifecycleStatePaused},
-		{from: LifecycleStatePaused, to: LifecycleStateRunning},
 		{from: LifecycleStateRunning, to: LifecycleStateDraining},
-		{from: LifecycleStateDraining, to: LifecycleStateStopped},
 		{from: LifecycleStateRunning, to: LifecycleStateErrored},
+		{from: LifecycleStatePaused, to: LifecycleStateRunning},
+		{from: LifecycleStatePaused, to: LifecycleStateStopped},
+		{from: LifecycleStateDraining, to: LifecycleStateRunning},
+		{from: LifecycleStateDraining, to: LifecycleStateStopped},
+		{from: LifecycleStateDraining, to: LifecycleStateErrored},
 		{from: LifecycleStateErrored, to: LifecycleStateDraining},
 		{from: LifecycleStateStopped, to: LifecycleStateRemoved},
 	}

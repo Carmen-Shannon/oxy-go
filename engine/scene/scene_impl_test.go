@@ -17,6 +17,7 @@ import (
 	camera_mocks "github.com/Carmen-Shannon/oxy-go/engine/camera/mocks"
 	"github.com/Carmen-Shannon/oxy-go/engine/game_object"
 	game_object_mocks "github.com/Carmen-Shannon/oxy-go/engine/game_object/mocks"
+	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
 	"github.com/Carmen-Shannon/oxy-go/engine/light"
 	light_mocks "github.com/Carmen-Shannon/oxy-go/engine/light/mocks"
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
@@ -74,6 +75,7 @@ func (suite *sceneImplTest) SetupSubTest() {
 	suite.rendererMock = renderer_mocks.NewMockRenderer(suite.T())
 	suite.scene = &scene{
 		mu:                     &sync.RWMutex{},
+		DelegateImpl:           &common.DelegateImpl[Scene]{},
 		r:                      suite.rendererMock,
 		lightHandler:           light.NewLightingHandler(),
 		gBufferHandler:         gbuffer.NewGBufferHandler(),
@@ -86,6 +88,7 @@ func (suite *sceneImplTest) SetupSubTest() {
 		shadowIndirectBuffers:  make(map[animator.Animator]*wgpu.Buffer),
 		animIndirectBinding:    make(map[animator.Animator]int),
 	}
+	suite.scene.SetDelegate(suite.scene)
 }
 
 func (suite *sceneImplTest) TestGenerateSSAOKernel() {
@@ -3135,7 +3138,7 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		suite.Len(suite.scene.lightHandler.Lights(), 1)
 	})
 
-	suite.Run("physics gpuReady=true pre-set sync maps", func() {
+	suite.Run("physics pre-set sync maps", func() {
 		suite.scene.buildInjectionMap()
 		suite.scene.instanceLookup = make(map[animator.Animator]map[uint32]uint64)
 		suite.scene.registry = make(map[uint64]game_object.GameObject)
@@ -3155,7 +3158,6 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		syncBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 
 		suite.scene.physicsHandler = physics.NewPhysics()
-		suite.scene.physicsGPUReady = true
 		suite.scene.physicsSyncAnimMap = map[animator.Animator]int{animMock: 0}
 		suite.scene.physicsSyncGroup = map[int]bind_group_provider.BindGroupProvider{0: syncBGPMock}
 
@@ -3177,7 +3179,7 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		suite.NotPanics(func() { suite.scene.AddGameObject(objMock) })
 	})
 
-	suite.Run("physics gpuReady=false nil sync maps triggers initPhysics", func() {
+	suite.Run("physics lifecycle starting with nil sync maps initializes", func() {
 		suite.scene.buildInjectionMap()
 
 		syncShader := shader.NewShader("_test_sync", shader.ShaderTypeCompute,
@@ -3209,8 +3211,7 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{poolKey: {animMock}}
 		suite.scene.instanceLookup = make(map[animator.Animator]map[uint32]uint64)
 		suite.scene.registry = make(map[uint64]game_object.GameObject)
-		suite.scene.physicsHandler = physics.NewPhysics()
-		suite.scene.physicsGPUReady = false
+		suite.scene.SetPhysicsHandler(physics.NewPhysics())
 		suite.rendererMock.EXPECT().CurrentFrameSlot().Return(0).Once()
 
 		rb := physics.NewRigidBody()
@@ -3229,7 +3230,9 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		objMock.EXPECT().AnimatorInstanceID().Return(int(0)).Maybe()
 
 		suite.NotPanics(func() { suite.scene.AddGameObject(objMock) })
-		suite.True(suite.scene.physicsGPUReady)
+		suite.Equal(lifecycle.LifecycleStateRunning, suite.scene.physicsHandler.Lifecycle().State())
+		suite.NotNil(suite.scene.physicsSyncAnimMap)
+		suite.NotNil(suite.scene.physicsSyncGroup)
 	})
 
 	suite.Run("physics kinematic triggers bone particle group early return", func() {
@@ -3252,7 +3255,6 @@ func (suite *sceneImplTest) TestAddGameObject() {
 
 		syncBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		suite.scene.physicsHandler = physics.NewPhysics()
-		suite.scene.physicsGPUReady = true
 		suite.scene.physicsSyncAnimMap = map[animator.Animator]int{animMock: 0}
 		suite.scene.physicsSyncGroup = map[int]bind_group_provider.BindGroupProvider{0: syncBGPMock}
 
@@ -3988,7 +3990,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	suite.Run("physics Enabled false skips", func() {
+	suite.Run("physics lifecycle not running skips", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
 		camMock.EXPECT().ViewProjectionMatrix().Return([16]float32{}).Once()
@@ -3997,12 +3999,12 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.scene.cam = camMock
 		suite.scene.writePool = []bind_group_provider.BufferWrite{}
 		phMock := physics_mocks.NewMockPhysics(suite.T())
-		phMock.EXPECT().Enabled().Return(false).Once()
+		phMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle()).Once()
 		suite.scene.physicsHandler = phMock
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
-	suite.Run("physics Enabled ReadbackPending false substeps 0 no physWrites", func() {
+	suite.Run("physics running ReadbackPending false substeps 0 no physWrites", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
 		camMock.EXPECT().ViewProjectionMatrix().Return([16]float32{}).Once()
@@ -4011,7 +4013,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.scene.cam = camMock
 		suite.scene.writePool = []bind_group_provider.BufferWrite{}
 		phMock := physics_mocks.NewMockPhysics(suite.T())
-		phMock.EXPECT().Enabled().Return(true).Once()
+		phMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Once()
 		phMock.EXPECT().ReadbackPending().Return(false).Once()
 		phMock.EXPECT().PrepareStep(mock.Anything).Return(0, nil).Once()
 		phMock.EXPECT().BodiesCount().Return(0).Once()
@@ -4029,7 +4031,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.scene.cam = camMock
 		suite.scene.writePool = []bind_group_provider.BufferWrite{}
 		phMock := physics_mocks.NewMockPhysics(suite.T())
-		phMock.EXPECT().Enabled().Return(true).Once()
+		phMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Once()
 		phMock.EXPECT().ReadbackPending().Return(false).Once()
 		phMock.EXPECT().PrepareStep(mock.Anything).Return(0, nil).Once()
 		phMock.EXPECT().BodiesCount().Return(0).Once()
@@ -4049,7 +4051,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.scene.writePool = []bind_group_provider.BufferWrite{}
 		suite.scene.physicsSyncWrites = []bind_group_provider.BufferWrite{{Binding: 1}}
 		phMock := physics_mocks.NewMockPhysics(suite.T())
-		phMock.EXPECT().Enabled().Return(true).Once()
+		phMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Once()
 		phMock.EXPECT().ReadbackPending().Return(false).Once()
 		phMock.EXPECT().PrepareStep(mock.Anything).Return(0, nil).Once()
 		phMock.EXPECT().BodiesCount().Return(0).Once()
@@ -4069,7 +4071,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.scene.cam = camMock
 		suite.scene.writePool = []bind_group_provider.BufferWrite{}
 		phMock := physics_mocks.NewMockPhysics(suite.T())
-		phMock.EXPECT().Enabled().Return(true).Once()
+		phMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Once()
 		phMock.EXPECT().ReadbackPending().Return(true).Once()
 		phMock.EXPECT().BodiesCount().Return(0).Twice()
 		phMock.EXPECT().ClearReadbackPending().Return().Once()
@@ -4089,7 +4091,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.scene.writePool = []bind_group_provider.BufferWrite{}
 		stagingBuf := &wgpu.Buffer{}
 		phMock := physics_mocks.NewMockPhysics(suite.T())
-		phMock.EXPECT().Enabled().Return(true).Once()
+		phMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Once()
 		phMock.EXPECT().ReadbackPending().Return(true).Once()
 		phMock.EXPECT().BodiesCount().Return(1).Twice()
 		phMock.EXPECT().StagingBuffer().Return(stagingBuf).Once()
@@ -4112,7 +4114,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		stagingBuf := &wgpu.Buffer{}
 		readData := make([]byte, 16)
 		phMock := physics_mocks.NewMockPhysics(suite.T())
-		phMock.EXPECT().Enabled().Return(true).Once()
+		phMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Once()
 		phMock.EXPECT().ReadbackPending().Return(true).Once()
 		phMock.EXPECT().BodiesCount().Return(1).Twice()
 		phMock.EXPECT().StagingBuffer().Return(stagingBuf).Once()
@@ -4136,7 +4138,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		stageBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		bufBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		phMock := physics_mocks.NewMockPhysics(suite.T())
-		phMock.EXPECT().Enabled().Return(true).Once()
+		phMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Once()
 		phMock.EXPECT().ReadbackPending().Return(false).Once()
 		phMock.EXPECT().PrepareStep(mock.Anything).Return(1, make([]byte, 16)).Once()
 		phMock.EXPECT().StagedWriteData().Return(nil).Once()
@@ -4167,7 +4169,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
 		mockPipe.EXPECT().Shader(shader.ShaderTypeCompute).Return(nil).Times(8)
 		phMock := physics_mocks.NewMockPhysics(suite.T())
-		phMock.EXPECT().Enabled().Return(true).Once()
+		phMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Once()
 		phMock.EXPECT().ReadbackPending().Return(false).Once()
 		phMock.EXPECT().PrepareStep(mock.Anything).Return(1, make([]byte, 16)).Once()
 		phMock.EXPECT().StagedWriteData().Return(nil).Once()
@@ -4198,7 +4200,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		bufBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		suite.scene.physicsSyncGroup = map[int]bind_group_provider.BindGroupProvider{0: syncBGP}
 		phMock := physics_mocks.NewMockPhysics(suite.T())
-		phMock.EXPECT().Enabled().Return(true).Once()
+		phMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Once()
 		phMock.EXPECT().ReadbackPending().Return(false).Once()
 		phMock.EXPECT().PrepareStep(mock.Anything).Return(1, make([]byte, 16)).Once()
 		phMock.EXPECT().StagedWriteData().Return(nil).Once()
@@ -4227,7 +4229,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		stageBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		bufBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		phMock := physics_mocks.NewMockPhysics(suite.T())
-		phMock.EXPECT().Enabled().Return(true).Once()
+		phMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Once()
 		phMock.EXPECT().ReadbackPending().Return(false).Once()
 		phMock.EXPECT().PrepareStep(mock.Anything).Return(1, make([]byte, 16)).Once()
 		phMock.EXPECT().StagedWriteData().Return(nil).Once()
@@ -4259,7 +4261,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		bufBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		bufBGP.EXPECT().Buffer(0).Return(nil).Once()
 		phMock := physics_mocks.NewMockPhysics(suite.T())
-		phMock.EXPECT().Enabled().Return(true).Once()
+		phMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Once()
 		phMock.EXPECT().ReadbackPending().Return(false).Once()
 		phMock.EXPECT().PrepareStep(mock.Anything).Return(1, make([]byte, 16)).Once()
 		phMock.EXPECT().StagedWriteData().Return(nil).Once()
@@ -4321,7 +4323,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 			{bgp: bgpMock, particleCount: 5},
 		}
 		phMock := physics_mocks.NewMockPhysics(suite.T())
-		phMock.EXPECT().Enabled().Return(false).Once()
+		phMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle()).Once()
 		phMock.EXPECT().PipelineKey("bone_update").Return("bone_key").Once()
 		suite.scene.physicsHandler = phMock
 		suite.rendererMock.EXPECT().Pipeline("bone_key").Return(nil).Once()
@@ -4343,7 +4345,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		mockBonePipe := pipeline_mocks.NewMockPipeline(suite.T())
 		mockBonePipe.EXPECT().Shader(shader.ShaderTypeCompute).Return(nil).Once()
 		phMock := physics_mocks.NewMockPhysics(suite.T())
-		phMock.EXPECT().Enabled().Return(false).Once()
+		phMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle()).Once()
 		phMock.EXPECT().PipelineKey("bone_update").Return("bone_key").Once()
 		suite.scene.physicsHandler = phMock
 		suite.rendererMock.EXPECT().Pipeline("bone_key").Return(mockBonePipe).Once()
@@ -4373,7 +4375,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 			{bgp: bgp2, particleCount: 3},
 		}
 		phMock := physics_mocks.NewMockPhysics(suite.T())
-		phMock.EXPECT().Enabled().Return(false).Once()
+		phMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle()).Once()
 		phMock.EXPECT().PipelineKey("bone_update").Return("bone_key42").Once()
 		suite.scene.physicsHandler = phMock
 		suite.rendererMock.EXPECT().Pipeline("bone_key42").Return(realBonePipe).Once()
@@ -4400,7 +4402,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		stageBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		bufBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		phMock := physics_mocks.NewMockPhysics(suite.T())
-		phMock.EXPECT().Enabled().Return(true).Once()
+		phMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Once()
 		phMock.EXPECT().ReadbackPending().Return(false).Once()
 		phMock.EXPECT().PrepareStep(mock.Anything).Return(1, make([]byte, 16)).Once()
 		phMock.EXPECT().StagedWriteData().Return(nil).Once()
@@ -4478,7 +4480,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 			{bgp: bgp2, particleCount: 5},
 		}
 		phMock := physics_mocks.NewMockPhysics(suite.T())
-		phMock.EXPECT().Enabled().Return(false).Once()
+		phMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle()).Once()
 		phMock.EXPECT().PipelineKey("bone_update").Return("bone_key45").Once()
 		suite.scene.physicsHandler = phMock
 		suite.rendererMock.EXPECT().Pipeline("bone_key45").Return(mockBonePipe).Once()
@@ -6005,7 +6007,7 @@ func (suite *sceneImplTest) TestWithLighting() {
 func (suite *sceneImplTest) TestWithPhysics() {
 	suite.Run("sets physicsHandler", func() {
 		s := &scene{mu: &sync.RWMutex{}}
-		opt := WithPhysics()
+		opt := WithPhysicsHandler(physics.NewPhysics())
 		opt(s)
 		suite.NotNil(s.physicsHandler)
 	})

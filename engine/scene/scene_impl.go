@@ -53,6 +53,8 @@ type drawCacheKey struct {
 type scene struct {
 	mu *sync.RWMutex
 
+	*common.DelegateImpl[Scene]
+
 	name   string
 	active bool
 
@@ -61,7 +63,6 @@ type scene struct {
 	nextID       uint64
 
 	physicsHandler  physics.Physics
-	physicsGPUReady bool // true once initPhysicsGPU has run
 
 	// Per-animator sync dispatch state. Each unique Animator that has physics
 	// bodies gets its own group with a dedicated sync_map buffer and AnimationData
