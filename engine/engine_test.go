@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
 	"github.com/Carmen-Shannon/oxy-go/engine/profiler"
 	renderer_mocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/mocks"
 	scene_mocks "github.com/Carmen-Shannon/oxy-go/engine/scene/mocks"
@@ -21,15 +22,43 @@ func TestRunEngineTests(t *testing.T) {
 
 type engineTest struct {
 	suite.Suite
-	windowMock *window_mocks.MockWindow
-	sceneMock  *scene_mocks.MockScene
-	engine     Engine
+	windowMock     *window_mocks.MockWindow
+	sceneMock      *scene_mocks.MockScene
+	sceneLifecycle lifecycle.Lifecycle
+	engine         Engine
+}
+
+func newSceneMockWithLifecycle(t *testing.T, name string, state lifecycle.LifecycleState) (*scene_mocks.MockScene, lifecycle.Lifecycle) {
+	sceneMock := scene_mocks.NewMockScene(t)
+	lc := lifecycle.NewLifecycle(lifecycle.WithState(state))
+	sceneMock.EXPECT().Lifecycle().Return(lc).Maybe()
+	sceneMock.EXPECT().Name().Return(name).Maybe()
+	return sceneMock, lc
+}
+
+func (suite *engineTest) configurePrimaryScene(name string, state lifecycle.LifecycleState) (*scene_mocks.MockScene, lifecycle.Lifecycle) {
+	sceneMock, lc := newSceneMockWithLifecycle(suite.T(), name, state)
+	eImpl := suite.engine.(*engine)
+	for key := range eImpl.scenes {
+		delete(eImpl.scenes, key)
+	}
+	eImpl.scenes[0] = sceneMock
+	suite.sceneMock = sceneMock
+	suite.sceneLifecycle = lc
+	return sceneMock, lc
+}
+
+func (suite *engineTest) setSceneAtKey(key int, name string, state lifecycle.LifecycleState) (*scene_mocks.MockScene, lifecycle.Lifecycle) {
+	sceneMock, lc := newSceneMockWithLifecycle(suite.T(), name, state)
+	eImpl := suite.engine.(*engine)
+	eImpl.scenes[key] = sceneMock
+	return sceneMock, lc
 }
 
 func (suite *engineTest) SetupSubTest() {
 	suite.windowMock = window_mocks.NewMockWindow(suite.T())
 	suite.windowMock.EXPECT().SetResizeCallback(mock.Anything).Return().Maybe()
-	suite.sceneMock = scene_mocks.NewMockScene(suite.T())
+	suite.sceneMock, suite.sceneLifecycle = newSceneMockWithLifecycle(suite.T(), "setup-scene", lifecycle.LifecycleStateStopped)
 	suite.engine = NewEngine(WithWindow(suite.windowMock), WithScene(0, suite.sceneMock))
 }
 
@@ -152,13 +181,26 @@ func (suite *engineTest) TestSetRenderFrameLimit() {
 
 func (suite *engineTest) TestAddScene() {
 	suite.Run("should add a scene to the engine", func() {
-		suite.engine.AddScene(1, suite.sceneMock)
+		newSceneMock, _ := newSceneMockWithLifecycle(suite.T(), "added-scene", lifecycle.LifecycleStateStopped)
+		suite.engine.AddScene(1, newSceneMock)
 		scene := suite.engine.Scene(1)
-		suite.Equal(suite.sceneMock, scene)
+		suite.Equal(newSceneMock, scene)
+	})
+
+	suite.Run("should transition registered scenes to running", func() {
+		newSceneMock, lc := newSceneMockWithLifecycle(suite.T(), "registered-scene", lifecycle.LifecycleStateRegistered)
+		suite.engine.AddScene(2, newSceneMock)
+		suite.Equal(lifecycle.LifecycleStateRunning, lc.State())
+	})
+
+	suite.Run("should transition starting scenes to running", func() {
+		newSceneMock, lc := newSceneMockWithLifecycle(suite.T(), "starting-scene", lifecycle.LifecycleStateStarting)
+		suite.engine.AddScene(3, newSceneMock)
+		suite.Equal(lifecycle.LifecycleStateRunning, lc.State())
 	})
 
 	suite.Run("should overwrite an existing scene with the same key", func() {
-		newSceneMock := scene_mocks.NewMockScene(suite.T())
+		newSceneMock, _ := newSceneMockWithLifecycle(suite.T(), "replacement-scene", lifecycle.LifecycleStateStopped)
 		suite.engine.AddScene(0, newSceneMock)
 		scene := suite.engine.Scene(0)
 		suite.Equal(newSceneMock, scene)
@@ -166,10 +208,46 @@ func (suite *engineTest) TestAddScene() {
 }
 
 func (suite *engineTest) TestRemoveScene() {
-	suite.Run("should remove a scene from the engine", func() {
+	suite.Run("should remove a stopped scene from the engine", func() {
 		suite.engine.RemoveScene(0)
 		scene := suite.engine.Scene(0)
 		suite.Nil(scene)
+		suite.Equal(lifecycle.LifecycleStateRemoved, suite.sceneLifecycle.State())
+	})
+
+	suite.Run("should transition registered scene through stopped to removed", func() {
+		_, lc := suite.setSceneAtKey(1, "registered-remove", lifecycle.LifecycleStateRegistered)
+		suite.engine.RemoveScene(1)
+		suite.Nil(suite.engine.Scene(1))
+		suite.Equal(lifecycle.LifecycleStateRemoved, lc.State())
+	})
+
+	suite.Run("should transition running scene through draining and stopped to removed", func() {
+		_, lc := suite.setSceneAtKey(2, "running-remove", lifecycle.LifecycleStateRunning)
+		suite.engine.RemoveScene(2)
+		suite.Nil(suite.engine.Scene(2))
+		suite.Equal(lifecycle.LifecycleStateRemoved, lc.State())
+	})
+
+	suite.Run("should transition paused scene through stopped to removed", func() {
+		_, lc := suite.setSceneAtKey(3, "paused-remove", lifecycle.LifecycleStatePaused)
+		suite.engine.RemoveScene(3)
+		suite.Nil(suite.engine.Scene(3))
+		suite.Equal(lifecycle.LifecycleStateRemoved, lc.State())
+	})
+
+	suite.Run("should transition draining scene through stopped to removed", func() {
+		_, lc := suite.setSceneAtKey(4, "draining-remove", lifecycle.LifecycleStateDraining)
+		suite.engine.RemoveScene(4)
+		suite.Nil(suite.engine.Scene(4))
+		suite.Equal(lifecycle.LifecycleStateRemoved, lc.State())
+	})
+
+	suite.Run("should transition errored scene through draining and stopped to removed", func() {
+		_, lc := suite.setSceneAtKey(5, "errored-remove", lifecycle.LifecycleStateErrored)
+		suite.engine.RemoveScene(5)
+		suite.Nil(suite.engine.Scene(5))
+		suite.Equal(lifecycle.LifecycleStateRemoved, lc.State())
 	})
 }
 
@@ -196,7 +274,6 @@ func (suite *engineTest) TestScenes() {
 func (suite *engineTest) TestRun() {
 	suite.Run("should start the engine loop and process window messages", func() {
 		suite.windowMock.EXPECT().ProcessMessages().Return().Once()
-		suite.sceneMock.EXPECT().Active().Return(false).Maybe()
 		suite.engine.Run()
 		engineImpl := suite.engine.(*engine)
 		suite.True(engineImpl.running)
@@ -282,7 +359,7 @@ func (suite *engineTest) TestHandleEngine() {
 func (suite *engineTest) TestHandleRender() {
 	suite.Run("should exit cleanly when quit channel is closed", func() {
 		eImpl := suite.engine.(*engine)
-		suite.sceneMock.EXPECT().Active().Return(false).Maybe()
+		suite.configurePrimaryScene("stopped-scene", lifecycle.LifecycleStateStopped)
 
 		eImpl.wg.Add(1)
 		go eImpl.handleRender()
@@ -302,6 +379,7 @@ func (suite *engineTest) TestHandleRender() {
 	suite.Run("should execute the full HDR render path when renderer and scenes are available", func() {
 		eImpl := suite.engine.(*engine)
 		rendererMock := renderer_mocks.NewMockRenderer(suite.T())
+		sceneMock, _ := suite.configurePrimaryScene("running-scene", lifecycle.LifecycleStateRunning)
 
 		rendered := make(chan struct{}, 1)
 		var once sync.Once
@@ -309,31 +387,30 @@ func (suite *engineTest) TestHandleRender() {
 			once.Do(func() { rendered <- struct{}{} })
 		}).Maybe()
 
-		suite.sceneMock.EXPECT().Active().Return(true).Maybe()
-		suite.sceneMock.EXPECT().Renderer().Return(rendererMock).Maybe()
+		sceneMock.EXPECT().Renderer().Return(rendererMock).Maybe()
 		rendererMock.EXPECT().BeginComputeFrame().Return(nil).Maybe()
-		suite.sceneMock.EXPECT().PrepareCompute(mock.AnythingOfType("float32")).Return().Maybe()
+		sceneMock.EXPECT().PrepareCompute(mock.AnythingOfType("float32")).Return().Maybe()
 		rendererMock.EXPECT().EndComputeFrame().Return().Maybe()
 		rendererMock.EXPECT().BeginGeometryFrame().Return(nil).Maybe()
-		suite.sceneMock.EXPECT().PrepareShadows().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareLights().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareGBuffer().Return().Maybe()
+		sceneMock.EXPECT().PrepareShadows().Return().Maybe()
+		sceneMock.EXPECT().PrepareLights().Return().Maybe()
+		sceneMock.EXPECT().PrepareGBuffer().Return().Maybe()
 		rendererMock.EXPECT().EndGeometryFrame().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareLightCulling().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareSSAO().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareContactShadows().Return().Maybe()
-		suite.sceneMock.EXPECT().BeginHDRFrame().Return(nil).Maybe()
-		suite.sceneMock.EXPECT().DrawCalls().Return(nil).Maybe()
+		sceneMock.EXPECT().PrepareLightCulling().Return().Maybe()
+		sceneMock.EXPECT().PrepareSSAO().Return().Maybe()
+		sceneMock.EXPECT().PrepareContactShadows().Return().Maybe()
+		sceneMock.EXPECT().BeginHDRFrame().Return(nil).Maybe()
+		sceneMock.EXPECT().DrawCalls().Return(nil).Maybe()
 		rendererMock.EXPECT().EndFrame().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareSSR().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareLuminance(mock.AnythingOfType("float32")).Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareBloom().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareTAA().Return().Maybe()
+		sceneMock.EXPECT().PrepareSSR().Return().Maybe()
+		sceneMock.EXPECT().PrepareLuminance(mock.AnythingOfType("float32")).Return().Maybe()
+		sceneMock.EXPECT().PrepareBloom().Return().Maybe()
+		sceneMock.EXPECT().PrepareTAA().Return().Maybe()
 		rendererMock.EXPECT().SyncGPUTimestamps().Return().Maybe()
 		rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
-		suite.sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
-		suite.sceneMock.EXPECT().AcquireCompositionFrame().Return(nil).Maybe()
-		suite.sceneMock.EXPECT().PrepareComposition().Return().Maybe()
+		sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
+		sceneMock.EXPECT().AcquireCompositionFrame().Return(nil).Maybe()
+		sceneMock.EXPECT().PrepareComposition().Return().Maybe()
 		rendererMock.EXPECT().FlushFrame().Return(wgpu.SubmissionIndex(0)).Maybe()
 
 		eImpl.wg.Add(1)
@@ -356,9 +433,61 @@ func (suite *engineTest) TestHandleRender() {
 		}
 	})
 
+	suite.Run("should execute compute-only path and flush for paused scenes", func() {
+		eImpl := suite.engine.(*engine)
+		rendererMock := renderer_mocks.NewMockRenderer(suite.T())
+		sceneMock, _ := suite.configurePrimaryScene("paused-scene", lifecycle.LifecycleStatePaused)
+
+		flushed := make(chan struct{}, 1)
+		var once sync.Once
+		rendererMock.EXPECT().FlushFrame().RunAndReturn(func() wgpu.SubmissionIndex {
+			once.Do(func() { flushed <- struct{}{} })
+			return wgpu.SubmissionIndex(0)
+		}).Maybe()
+
+		sceneMock.EXPECT().Renderer().Return(rendererMock).Maybe()
+		rendererMock.EXPECT().SyncGPUTimestamps().Return().Maybe()
+		rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
+		sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
+		rendererMock.EXPECT().BeginComputeFrame().Return(nil).Maybe()
+		sceneMock.EXPECT().PrepareCompute(mock.AnythingOfType("float32")).Return().Maybe()
+		rendererMock.EXPECT().EndComputeFrame().Return().Maybe()
+
+		eImpl.wg.Add(1)
+		go eImpl.handleRender()
+
+		select {
+		case <-flushed:
+		case <-time.After(2 * time.Second):
+			suite.Fail("paused compute-only render path was not executed within timeout")
+		}
+
+		eImpl.signalQuit()
+
+		done := make(chan struct{})
+		go func() { eImpl.wg.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			suite.Fail("handleRender did not exit within timeout")
+		}
+
+		sceneMock.AssertNotCalled(suite.T(), "PrepareShadows")
+		sceneMock.AssertNotCalled(suite.T(), "PrepareLights")
+		sceneMock.AssertNotCalled(suite.T(), "PrepareGBuffer")
+		sceneMock.AssertNotCalled(suite.T(), "PrepareLightCulling")
+		sceneMock.AssertNotCalled(suite.T(), "PrepareSSAO")
+		sceneMock.AssertNotCalled(suite.T(), "PrepareContactShadows")
+		sceneMock.AssertNotCalled(suite.T(), "BeginHDRFrame")
+		sceneMock.AssertNotCalled(suite.T(), "DrawCalls")
+		sceneMock.AssertNotCalled(suite.T(), "PrepareComposition")
+		rendererMock.AssertNotCalled(suite.T(), "Present")
+	})
+
 	suite.Run("should fall back to the basic frame path when HDR frame initialization fails", func() {
 		eImpl := suite.engine.(*engine)
 		rendererMock := renderer_mocks.NewMockRenderer(suite.T())
+		sceneMock, _ := suite.configurePrimaryScene("running-fallback-scene", lifecycle.LifecycleStateRunning)
 
 		rendered := make(chan struct{}, 1)
 		var once sync.Once
@@ -366,25 +495,24 @@ func (suite *engineTest) TestHandleRender() {
 			once.Do(func() { rendered <- struct{}{} })
 		}).Maybe()
 
-		suite.sceneMock.EXPECT().Active().Return(true).Maybe()
-		suite.sceneMock.EXPECT().Renderer().Return(rendererMock).Maybe()
+		sceneMock.EXPECT().Renderer().Return(rendererMock).Maybe()
 		rendererMock.EXPECT().BeginComputeFrame().Return(nil).Maybe()
-		suite.sceneMock.EXPECT().PrepareCompute(mock.AnythingOfType("float32")).Return().Maybe()
+		sceneMock.EXPECT().PrepareCompute(mock.AnythingOfType("float32")).Return().Maybe()
 		rendererMock.EXPECT().EndComputeFrame().Return().Maybe()
 		rendererMock.EXPECT().BeginGeometryFrame().Return(nil).Maybe()
-		suite.sceneMock.EXPECT().PrepareShadows().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareLights().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareGBuffer().Return().Maybe()
+		sceneMock.EXPECT().PrepareShadows().Return().Maybe()
+		sceneMock.EXPECT().PrepareLights().Return().Maybe()
+		sceneMock.EXPECT().PrepareGBuffer().Return().Maybe()
 		rendererMock.EXPECT().EndGeometryFrame().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareLightCulling().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareSSAO().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareContactShadows().Return().Maybe()
+		sceneMock.EXPECT().PrepareLightCulling().Return().Maybe()
+		sceneMock.EXPECT().PrepareSSAO().Return().Maybe()
+		sceneMock.EXPECT().PrepareContactShadows().Return().Maybe()
 		rendererMock.EXPECT().SyncGPUTimestamps().Return().Maybe()
 		rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
-		suite.sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
-		suite.sceneMock.EXPECT().BeginHDRFrame().Return(fmt.Errorf("hdr unavailable")).Maybe()
+		sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
+		sceneMock.EXPECT().BeginHDRFrame().Return(fmt.Errorf("hdr unavailable")).Maybe()
 		rendererMock.EXPECT().BeginFrame().Return(nil).Maybe()
-		suite.sceneMock.EXPECT().DrawCalls().Return(nil).Maybe()
+		sceneMock.EXPECT().DrawCalls().Return(nil).Maybe()
 		rendererMock.EXPECT().EndFrame().Return().Maybe()
 		rendererMock.EXPECT().FlushFrame().Return(wgpu.SubmissionIndex(0)).Maybe()
 
@@ -408,10 +536,10 @@ func (suite *engineTest) TestHandleRender() {
 		}
 	})
 
-	suite.Run("should skip the renderer pipeline when the active scene has no renderer", func() {
+	suite.Run("should skip the renderer pipeline when the running scene has no renderer", func() {
 		eImpl := suite.engine.(*engine)
-		suite.sceneMock.EXPECT().Active().Return(true).Maybe()
-		suite.sceneMock.EXPECT().Renderer().Return(nil).Maybe()
+		sceneMock, _ := suite.configurePrimaryScene("running-no-renderer-scene", lifecycle.LifecycleStateRunning)
+		sceneMock.EXPECT().Renderer().Return(nil).Maybe()
 
 		called := make(chan struct{}, 1)
 		var once sync.Once
@@ -441,7 +569,7 @@ func (suite *engineTest) TestHandleRender() {
 
 	suite.Run("should invoke the render callback each frame", func() {
 		eImpl := suite.engine.(*engine)
-		suite.sceneMock.EXPECT().Active().Return(false).Maybe()
+		suite.configurePrimaryScene("stopped-callback-scene", lifecycle.LifecycleStateStopped)
 
 		called := make(chan struct{}, 1)
 		var once sync.Once
@@ -474,25 +602,25 @@ func (suite *engineTest) TestHandleRender() {
 	suite.Run("should recover from a panic in the render goroutine and signal quit", func() {
 		eImpl := suite.engine.(*engine)
 		rendererMock := renderer_mocks.NewMockRenderer(suite.T())
+		sceneMock, _ := suite.configurePrimaryScene("running-panic-scene", lifecycle.LifecycleStateRunning)
 
-		suite.sceneMock.EXPECT().Active().Return(true).Maybe()
-		suite.sceneMock.EXPECT().Renderer().Return(rendererMock).Maybe()
+		sceneMock.EXPECT().Renderer().Return(rendererMock).Maybe()
 		rendererMock.EXPECT().BeginComputeFrame().Return(nil).Maybe()
-		suite.sceneMock.EXPECT().PrepareCompute(mock.AnythingOfType("float32")).Return().Maybe()
+		sceneMock.EXPECT().PrepareCompute(mock.AnythingOfType("float32")).Return().Maybe()
 		rendererMock.EXPECT().EndComputeFrame().Return().Maybe()
 		rendererMock.EXPECT().BeginGeometryFrame().Return(nil).Maybe()
-		suite.sceneMock.EXPECT().PrepareShadows().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareLights().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareGBuffer().Return().Maybe()
+		sceneMock.EXPECT().PrepareShadows().Return().Maybe()
+		sceneMock.EXPECT().PrepareLights().Return().Maybe()
+		sceneMock.EXPECT().PrepareGBuffer().Return().Maybe()
 		rendererMock.EXPECT().EndGeometryFrame().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareLightCulling().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareSSAO().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareContactShadows().Return().Maybe()
+		sceneMock.EXPECT().PrepareLightCulling().Return().Maybe()
+		sceneMock.EXPECT().PrepareSSAO().Return().Maybe()
+		sceneMock.EXPECT().PrepareContactShadows().Return().Maybe()
 		rendererMock.EXPECT().SyncGPUTimestamps().Return().Maybe()
 		rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
-		suite.sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
-		suite.sceneMock.EXPECT().BeginHDRFrame().Return(nil).Maybe()
-		suite.sceneMock.EXPECT().DrawCalls().RunAndReturn(func() error {
+		sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
+		sceneMock.EXPECT().BeginHDRFrame().Return(nil).Maybe()
+		sceneMock.EXPECT().DrawCalls().RunAndReturn(func() error {
 			panic("test render panic")
 		}).Maybe()
 
@@ -512,7 +640,7 @@ func (suite *engineTest) TestHandleRender() {
 
 	suite.Run("should tick the profiler each frame when profiling is enabled", func() {
 		eImpl := suite.engine.(*engine)
-		suite.sceneMock.EXPECT().Active().Return(false).Maybe()
+		suite.configurePrimaryScene("stopped-profiler-scene", lifecycle.LifecycleStateStopped)
 
 		eImpl.profilingEnabled = true
 		eImpl.profiler = profiler.NewProfiler()
@@ -545,7 +673,7 @@ func (suite *engineTest) TestHandleRender() {
 
 	suite.Run("should sleep to enforce the render frame limit when set", func() {
 		eImpl := suite.engine.(*engine)
-		suite.sceneMock.EXPECT().Active().Return(false).Maybe()
+		suite.configurePrimaryScene("stopped-frame-limit-scene", lifecycle.LifecycleStateStopped)
 		eImpl.renderFrameLimit = 1 * time.Millisecond
 
 		called := make(chan struct{}, 2)
@@ -584,6 +712,7 @@ func (suite *engineTest) TestHandleRender() {
 	suite.Run("should invoke profiler sections through the full HDR render path", func() {
 		eImpl := suite.engine.(*engine)
 		rendererMock := renderer_mocks.NewMockRenderer(suite.T())
+		sceneMock, _ := suite.configurePrimaryScene("running-profiled-scene", lifecycle.LifecycleStateRunning)
 
 		eImpl.profilingEnabled = true
 		eImpl.profiler = profiler.NewProfiler()
@@ -594,31 +723,30 @@ func (suite *engineTest) TestHandleRender() {
 			once.Do(func() { rendered <- struct{}{} })
 		}).Maybe()
 
-		suite.sceneMock.EXPECT().Active().Return(true).Maybe()
-		suite.sceneMock.EXPECT().Renderer().Return(rendererMock).Maybe()
+		sceneMock.EXPECT().Renderer().Return(rendererMock).Maybe()
 		rendererMock.EXPECT().SyncGPUTimestamps().Return().Maybe()
 		rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
-		suite.sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
+		sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
 		rendererMock.EXPECT().BeginComputeFrame().Return(nil).Maybe()
-		suite.sceneMock.EXPECT().PrepareCompute(mock.AnythingOfType("float32")).Return().Maybe()
+		sceneMock.EXPECT().PrepareCompute(mock.AnythingOfType("float32")).Return().Maybe()
 		rendererMock.EXPECT().EndComputeFrame().Return().Maybe()
 		rendererMock.EXPECT().BeginGeometryFrame().Return(nil).Maybe()
-		suite.sceneMock.EXPECT().PrepareShadows().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareLights().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareGBuffer().Return().Maybe()
+		sceneMock.EXPECT().PrepareShadows().Return().Maybe()
+		sceneMock.EXPECT().PrepareLights().Return().Maybe()
+		sceneMock.EXPECT().PrepareGBuffer().Return().Maybe()
 		rendererMock.EXPECT().EndGeometryFrame().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareLightCulling().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareSSAO().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareContactShadows().Return().Maybe()
-		suite.sceneMock.EXPECT().BeginHDRFrame().Return(nil).Maybe()
-		suite.sceneMock.EXPECT().DrawCalls().Return(nil).Maybe()
+		sceneMock.EXPECT().PrepareLightCulling().Return().Maybe()
+		sceneMock.EXPECT().PrepareSSAO().Return().Maybe()
+		sceneMock.EXPECT().PrepareContactShadows().Return().Maybe()
+		sceneMock.EXPECT().BeginHDRFrame().Return(nil).Maybe()
+		sceneMock.EXPECT().DrawCalls().Return(nil).Maybe()
 		rendererMock.EXPECT().EndFrame().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareSSR().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareLuminance(mock.AnythingOfType("float32")).Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareBloom().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareTAA().Return().Maybe()
-		suite.sceneMock.EXPECT().AcquireCompositionFrame().Return(nil).Maybe()
-		suite.sceneMock.EXPECT().PrepareComposition().Return().Maybe()
+		sceneMock.EXPECT().PrepareSSR().Return().Maybe()
+		sceneMock.EXPECT().PrepareLuminance(mock.AnythingOfType("float32")).Return().Maybe()
+		sceneMock.EXPECT().PrepareBloom().Return().Maybe()
+		sceneMock.EXPECT().PrepareTAA().Return().Maybe()
+		sceneMock.EXPECT().AcquireCompositionFrame().Return(nil).Maybe()
+		sceneMock.EXPECT().PrepareComposition().Return().Maybe()
 		rendererMock.EXPECT().FlushFrame().Return(wgpu.SubmissionIndex(0)).Maybe()
 
 		eImpl.wg.Add(1)
@@ -643,9 +771,8 @@ func (suite *engineTest) TestHandleRender() {
 
 	suite.Run("should deliver resize event to all scenes within the render loop", func() {
 		eImpl := suite.engine.(*engine)
-		suite.sceneMock.EXPECT().Active().Return(true).Maybe()
-		suite.sceneMock.EXPECT().Renderer().Return(nil).Maybe()
-		suite.sceneMock.EXPECT().Resize(800, 600).Return().Once()
+		sceneMock, _ := suite.configurePrimaryScene("stopped-resize-scene", lifecycle.LifecycleStateStopped)
+		sceneMock.EXPECT().Resize(800, 600).Return().Once()
 
 		eImpl.resizeEvents <- [2]int{800, 600}
 
@@ -678,6 +805,7 @@ func (suite *engineTest) TestHandleRender() {
 	suite.Run("should skip PrepareComposition when AcquireCompositionFrame fails but still flush and present", func() {
 		eImpl := suite.engine.(*engine)
 		rendererMock := renderer_mocks.NewMockRenderer(suite.T())
+		sceneMock, _ := suite.configurePrimaryScene("running-acquire-fail-scene", lifecycle.LifecycleStateRunning)
 
 		rendered := make(chan struct{}, 1)
 		var once sync.Once
@@ -685,30 +813,29 @@ func (suite *engineTest) TestHandleRender() {
 			once.Do(func() { rendered <- struct{}{} })
 		}).Maybe()
 
-		suite.sceneMock.EXPECT().Active().Return(true).Maybe()
-		suite.sceneMock.EXPECT().Renderer().Return(rendererMock).Maybe()
+		sceneMock.EXPECT().Renderer().Return(rendererMock).Maybe()
 		rendererMock.EXPECT().SyncGPUTimestamps().Return().Maybe()
 		rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
-		suite.sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
+		sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
 		rendererMock.EXPECT().BeginComputeFrame().Return(nil).Maybe()
-		suite.sceneMock.EXPECT().PrepareCompute(mock.AnythingOfType("float32")).Return().Maybe()
+		sceneMock.EXPECT().PrepareCompute(mock.AnythingOfType("float32")).Return().Maybe()
 		rendererMock.EXPECT().EndComputeFrame().Return().Maybe()
 		rendererMock.EXPECT().BeginGeometryFrame().Return(nil).Maybe()
-		suite.sceneMock.EXPECT().PrepareShadows().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareLights().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareGBuffer().Return().Maybe()
+		sceneMock.EXPECT().PrepareShadows().Return().Maybe()
+		sceneMock.EXPECT().PrepareLights().Return().Maybe()
+		sceneMock.EXPECT().PrepareGBuffer().Return().Maybe()
 		rendererMock.EXPECT().EndGeometryFrame().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareLightCulling().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareSSAO().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareContactShadows().Return().Maybe()
-		suite.sceneMock.EXPECT().BeginHDRFrame().Return(nil).Maybe()
-		suite.sceneMock.EXPECT().DrawCalls().Return(nil).Maybe()
+		sceneMock.EXPECT().PrepareLightCulling().Return().Maybe()
+		sceneMock.EXPECT().PrepareSSAO().Return().Maybe()
+		sceneMock.EXPECT().PrepareContactShadows().Return().Maybe()
+		sceneMock.EXPECT().BeginHDRFrame().Return(nil).Maybe()
+		sceneMock.EXPECT().DrawCalls().Return(nil).Maybe()
 		rendererMock.EXPECT().EndFrame().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareSSR().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareLuminance(mock.AnythingOfType("float32")).Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareBloom().Return().Maybe()
-		suite.sceneMock.EXPECT().PrepareTAA().Return().Maybe()
-		suite.sceneMock.EXPECT().AcquireCompositionFrame().Return(fmt.Errorf("surface lost")).Maybe()
+		sceneMock.EXPECT().PrepareSSR().Return().Maybe()
+		sceneMock.EXPECT().PrepareLuminance(mock.AnythingOfType("float32")).Return().Maybe()
+		sceneMock.EXPECT().PrepareBloom().Return().Maybe()
+		sceneMock.EXPECT().PrepareTAA().Return().Maybe()
+		sceneMock.EXPECT().AcquireCompositionFrame().Return(fmt.Errorf("surface lost")).Maybe()
 		rendererMock.EXPECT().FlushFrame().Return(wgpu.SubmissionIndex(0)).Maybe()
 
 		eImpl.wg.Add(1)
@@ -729,11 +856,13 @@ func (suite *engineTest) TestHandleRender() {
 		case <-time.After(2 * time.Second):
 			suite.Fail("handleRender did not exit within timeout")
 		}
+
+		sceneMock.AssertNotCalled(suite.T(), "PrepareComposition")
 	})
 
 	suite.Run("should skip the rate-limit sleep when frame already exceeded the limit", func() {
 		eImpl := suite.engine.(*engine)
-		suite.sceneMock.EXPECT().Active().Return(false).Maybe()
+		suite.configurePrimaryScene("stopped-over-limit-scene", lifecycle.LifecycleStateStopped)
 		eImpl.renderFrameLimit = 1 * time.Nanosecond
 
 		called := make(chan struct{}, 1)
@@ -764,7 +893,7 @@ func (suite *engineTest) TestHandleRender() {
 
 	suite.Run("should exit from the rate-limit timer select when quit is signaled", func() {
 		eImpl := suite.engine.(*engine)
-		suite.sceneMock.EXPECT().Active().Return(false).Maybe()
+		suite.configurePrimaryScene("stopped-rate-limit-scene", lifecycle.LifecycleStateStopped)
 		eImpl.renderFrameLimit = 1 * time.Second
 
 		firstFrame := make(chan struct{}, 1)

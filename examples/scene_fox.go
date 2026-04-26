@@ -62,9 +62,7 @@ func main() {
 	)
 
 	// ── Scene ───────────────────────────────────────────────────────────
-	sc := scene.NewScene("Fox Animation Test", cam, r,
-		scene.WithActive(true),
-	)
+	sc := scene.NewScene("Fox Animation Test", cam, r)
 
 	// ── Load Fox Model ──────────────────────────────────────────────────
 	ldr := loader.NewLoader(loader.BackendTypeGLTF)

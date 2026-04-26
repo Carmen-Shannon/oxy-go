@@ -9,6 +9,7 @@ import (
 	"github.com/Carmen-Shannon/automation/tools/worker"
 	"github.com/Carmen-Shannon/oxy-go/engine/camera"
 	"github.com/Carmen-Shannon/oxy-go/engine/game_object"
+	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
 	"github.com/Carmen-Shannon/oxy-go/engine/light"
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
 	"github.com/Carmen-Shannon/oxy-go/engine/physics"
@@ -27,19 +28,6 @@ import (
 // SceneBuilderOption is a functional option for configuring a Scene.
 // Use the With* functions to create options.
 type SceneBuilderOption func(s *scene)
-
-// WithActive sets whether the scene is active for rendering.
-//
-// Parameters:
-//   - active: whether the scene is active
-//
-// Returns:
-//   - SceneBuilderOption: option function to apply
-func WithActive(active bool) SceneBuilderOption {
-	return func(s *scene) {
-		s.active = active
-	}
-}
 
 // WithObjects adds initial objects to the scene.
 // Objects without IDs will be assigned new IDs.
@@ -306,7 +294,7 @@ func NewScene(name string, cam camera.Camera, r renderer.Renderer, options ...Sc
 	s := &scene{
 		mu:                       &sync.RWMutex{},
 		name:                     name,
-		active:                   false,
+		lc:                       lifecycle.NewLifecycle(),
 		cam:                      cam,
 		r:                        r,
 		animatorPool:             make(map[model.Model][]animator.Animator),
@@ -378,5 +366,6 @@ func NewScene(name string, cam camera.Camera, r renderer.Renderer, options ...Sc
 	}
 
 	s.Delegate = s
+	s.registerLifecycleHooks()
 	return s
 }

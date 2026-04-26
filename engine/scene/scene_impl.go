@@ -2,6 +2,7 @@ package scene
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand"
@@ -56,8 +57,8 @@ type scene struct {
 
 	common.DelegateImpl[Scene]
 
-	name   string
-	active bool
+	name string
+	lc   lifecycle.Lifecycle
 
 	animatorPool map[model.Model][]animator.Animator
 	registry     map[uint64]game_object.GameObject // non-ephemeral objects by ID
@@ -154,6 +155,504 @@ type scene struct {
 	// consumed directly by the serial draw loop each frame.
 	drawBindGroupCache map[drawCacheKey][]bind_group_provider.BindGroupProvider
 	drawCacheDirty     bool
+}
+
+// sceneLifecycleChildren snapshots the current scene lifecycle children.
+//
+// Returns:
+//   - []animator.Animator: snapshot of all registered animators
+//   - physics.Physics: current physics handler, if present
+func (s *scene) sceneLifecycleChildren() ([]animator.Animator, physics.Physics) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	anims := make([]animator.Animator, 0)
+	for _, group := range s.animatorPool {
+		for _, a := range group {
+			if a != nil {
+				anims = append(anims, a)
+			}
+		}
+	}
+
+	return anims, s.physicsHandler
+}
+
+// transitionChildLifecycle advances a child lifecycle toward the requested target state
+// using only legal lifecycle transitions.
+//
+// Parameters:
+//   - lc: child lifecycle to transition
+//   - target: target lifecycle state
+//
+// Returns:
+//   - error: error if any attempted transition fails
+func transitionChildLifecycle(lc lifecycle.Lifecycle, target lifecycle.LifecycleState) error {
+	if lc == nil {
+		return nil
+	}
+
+	switch target {
+	case lifecycle.LifecycleStateRunning:
+		switch lc.State() {
+		case lifecycle.LifecycleStateRunning:
+			return nil
+		case lifecycle.LifecycleStatePaused, lifecycle.LifecycleStateDraining:
+			return lc.SetState(lifecycle.LifecycleStateRunning)
+		default:
+			return nil
+		}
+
+	case lifecycle.LifecycleStatePaused:
+		if lc.State() == lifecycle.LifecycleStateRunning {
+			return lc.SetState(lifecycle.LifecycleStatePaused)
+		}
+		return nil
+
+	case lifecycle.LifecycleStateDraining:
+		switch lc.State() {
+		case lifecycle.LifecycleStateDraining:
+			return nil
+		case lifecycle.LifecycleStateRunning, lifecycle.LifecycleStateErrored:
+			return lc.SetState(lifecycle.LifecycleStateDraining)
+		default:
+			return nil
+		}
+
+	case lifecycle.LifecycleStateStopped:
+		switch lc.State() {
+		case lifecycle.LifecycleStateStopped:
+			return nil
+		case lifecycle.LifecycleStateRegistered, lifecycle.LifecycleStatePaused, lifecycle.LifecycleStateDraining:
+			return lc.SetState(lifecycle.LifecycleStateStopped)
+		case lifecycle.LifecycleStateRunning:
+			if err := lc.SetState(lifecycle.LifecycleStateDraining); err != nil {
+				return err
+			}
+			if lc.State() == lifecycle.LifecycleStateDraining {
+				return lc.SetState(lifecycle.LifecycleStateStopped)
+			}
+			return nil
+		case lifecycle.LifecycleStateErrored:
+			if err := lc.SetState(lifecycle.LifecycleStateDraining); err != nil {
+				return err
+			}
+			if lc.State() == lifecycle.LifecycleStateDraining {
+				return lc.SetState(lifecycle.LifecycleStateStopped)
+			}
+			return nil
+		default:
+			return nil
+		}
+
+	case lifecycle.LifecycleStateRemoved:
+		if lc.State() == lifecycle.LifecycleStateRemoved {
+			return nil
+		}
+		if err := transitionChildLifecycle(lc, lifecycle.LifecycleStateStopped); err != nil {
+			return err
+		}
+		if lc.State() == lifecycle.LifecycleStateStopped {
+			return lc.SetState(lifecycle.LifecycleStateRemoved)
+		}
+		return nil
+
+	default:
+		return nil
+	}
+}
+
+// transitionSceneChildren transitions all scene child lifecycles to the target state.
+//
+// Parameters:
+//   - target: target lifecycle state
+//
+// Returns:
+//   - error: joined errors from failed child transitions
+func (s *scene) transitionSceneChildren(target lifecycle.LifecycleState) error {
+	anims, ph := s.sceneLifecycleChildren()
+
+	var errs []error
+	for _, a := range anims {
+		if a == nil {
+			continue
+		}
+		if err := transitionChildLifecycle(a.Lifecycle(), target); err != nil {
+			modelName := "<nil>"
+			if mdl := a.Model(); mdl != nil {
+				modelName = mdl.Name()
+			}
+			errs = append(errs, fmt.Errorf("animator %q lifecycle transition to %v failed: %w", modelName, target, err))
+		}
+	}
+
+	if ph != nil {
+		if err := transitionChildLifecycle(ph.Lifecycle(), target); err != nil {
+			errs = append(errs, fmt.Errorf("physics lifecycle transition to %v failed: %w", target, err))
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+// registerLifecycleHooks wires scene lifecycle transitions to child lifecycle fan-out
+// and scene resource cleanup.
+func (s *scene) registerLifecycleHooks() {
+	if s.lc == nil {
+		return
+	}
+
+	s.lc.OnTransitionTo(lifecycle.LifecycleStateRunning, lifecycle.Hook(func() error {
+		return s.transitionSceneChildren(lifecycle.LifecycleStateRunning)
+	}))
+
+	s.lc.OnTransitionTo(lifecycle.LifecycleStatePaused, lifecycle.Hook(func() error {
+		return s.transitionSceneChildren(lifecycle.LifecycleStatePaused)
+	}))
+
+	s.lc.OnTransitionTo(lifecycle.LifecycleStateDraining, lifecycle.Hook(func() error {
+		return s.transitionSceneChildren(lifecycle.LifecycleStateDraining)
+	}))
+
+	s.lc.OnTransitionTo(lifecycle.LifecycleStateStopped, lifecycle.Hook(func() error {
+		return s.transitionSceneChildren(lifecycle.LifecycleStateStopped)
+	}))
+
+	s.lc.OnTransitionTo(lifecycle.LifecycleStateRemoved, lifecycle.Hook(func() error {
+		childErr := s.transitionSceneChildren(lifecycle.LifecycleStateRemoved)
+		cleanupErr := s.releaseSceneResources()
+		return errors.Join(childErr, cleanupErr)
+	}))
+}
+
+// releaseSceneResources releases scene-owned GPU resources for lifecycle Removed.
+//
+// Returns:
+//   - error: joined errors if cleanup fails
+func (s *scene) releaseSceneResources() error {
+	if s.r != nil {
+		s.r.WaitIdle()
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.releaseResolutionDependentResources()
+	s.releaseLightingResources()
+	s.releasePostProcessingResources()
+	s.releasePhysicsResources()
+
+	if s.hizFallbackView != nil {
+		s.hizFallbackView.Release()
+		s.hizFallbackView = nil
+	}
+	if s.hizFallbackTexture != nil {
+		s.hizFallbackTexture.Release()
+		s.hizFallbackTexture = nil
+	}
+
+	s.lightObjects = nil
+	s.lightShadowEntries = nil
+	s.lightShadowMap = nil
+	s.lightPrevSlotMap = nil
+	s.writePool = nil
+	s.drawBindGroupsPool = nil
+	s.drawDeclsPool = nil
+	s.drawGroupProvidersPool = nil
+	s.drawBindGroupCache = nil
+	s.shadowIndirectBuffers = nil
+	s.animIndirectBinding = nil
+	s.shadowAnimationProviders = nil
+	s.instanceLookup = nil
+	s.lodLevelCache = nil
+	s.injections = nil
+	s.drawCacheDirty = true
+	s.postProcessingInitialized = false
+	s.tileBufferCapacity = 0
+
+	s.animatorPool = make(map[model.Model][]animator.Animator)
+	s.registry = make(map[uint64]game_object.GameObject)
+	s.physicsSyncGroup = make(map[int]bind_group_provider.BindGroupProvider)
+	s.physicsSyncAnimMap = make(map[animator.Animator]int)
+
+	return nil
+}
+
+// releasePhysicsResources releases physics GPU resources owned by the scene and
+// clears any shared buffer references before releasing dependent providers.
+func (s *scene) releasePhysicsResources() {
+	for _, bgp := range s.physicsSyncGroup {
+		if bgp == nil {
+			continue
+		}
+		for slot := 0; slot < 2; slot++ {
+			bgp.SetSlot(slot)
+			bgp.SetBuffer(0, nil)
+			bgp.SetBuffer(2, nil)
+			bgp.SetBuffer(3, nil)
+		}
+		bgp.Release()
+	}
+	s.physicsSyncGroup = make(map[int]bind_group_provider.BindGroupProvider)
+	s.physicsSyncAnimMap = make(map[animator.Animator]int)
+	s.physicsSyncWrites = nil
+
+	for _, group := range s.boneParticleUpdateGroups {
+		if group == nil || group.bgp == nil {
+			continue
+		}
+		for slot := 0; slot < 2; slot++ {
+			group.bgp.SetSlot(slot)
+			group.bgp.SetBuffer(0, nil)
+			group.bgp.SetBuffer(1, nil)
+			group.bgp.SetBuffer(2, nil)
+			group.bgp.SetBuffer(4, nil)
+		}
+		group.bgp.Release()
+	}
+	s.boneParticleUpdateGroups = nil
+
+	ph := s.physicsHandler
+	if ph == nil {
+		return
+	}
+
+	for key, bgp := range ph.Bgps() {
+		if bgp == nil {
+			continue
+		}
+		for slot := 0; slot < 2; slot++ {
+			bgp.SetSlot(slot)
+			bgp.SetBuffers(nil)
+		}
+		bgp.Release()
+		ph.Bgps()[key] = nil
+	}
+
+	if buffers := ph.Buffers(); buffers != nil {
+		buffers.Release()
+	}
+
+	if staging := ph.StagingBuffer(); staging != nil {
+		staging.Release()
+		ph.SetStagingBuffer(nil)
+	}
+
+	s.physicsHandler = nil
+}
+
+// releaseLightingResources releases lighting and shadow GPU resources that are not
+// handled by resolution-dependent cleanup.
+func (s *scene) releaseLightingResources() {
+	lh := s.lightHandler
+	if lh == nil {
+		return
+	}
+
+	csHandler := lh.ContactShadowHandler()
+	contactEnabled := csHandler != nil && csHandler.Enabled()
+
+	if csHandler != nil {
+		for key, bgp := range csHandler.Bgps() {
+			if bgp == nil {
+				continue
+			}
+			bgp.SetTextureViews(nil)
+			bgp.Release()
+			csHandler.SetBgp(key, nil)
+		}
+	}
+
+	sh := lh.ShadowHandler()
+	var csmShadowLit bind_group_provider.BindGroupProvider
+	if sh != nil {
+		csmShadowLit = sh.Bgp("csm_shadow_lit")
+		if csmShadowLit != nil {
+			if contactEnabled {
+				csmShadowLit.SetTextureView(5, nil)
+				csmShadowLit.SetSampler(6, nil)
+				if csSampler := csHandler.LinearSampler(); csSampler != nil {
+					csSampler.Release()
+					csHandler.SetLinearSampler(nil)
+				}
+			}
+			csmShadowLit.Release()
+			sh.SetBgp("csm_shadow_lit", nil)
+		} else if contactEnabled {
+			if csSampler := csHandler.LinearSampler(); csSampler != nil {
+				csSampler.Release()
+				csHandler.SetLinearSampler(nil)
+			}
+		}
+
+		for key, bgp := range sh.Bgps() {
+			if bgp == nil || key == "csm_shadow_lit" {
+				continue
+			}
+			bgp.Release()
+			sh.SetBgp(key, nil)
+		}
+
+		if csmShadowLit == nil {
+			if view := sh.CSMAtlasTextureView(); view != nil {
+				view.Release()
+			}
+			if view := sh.LightShadowAtlasView(); view != nil {
+				view.Release()
+			}
+			if cmpSampler := sh.ComparisonSampler(); cmpSampler != nil {
+				cmpSampler.Release()
+			}
+		}
+
+		if tex := sh.CSMAtlasTexture(); tex != nil {
+			tex.Release()
+		}
+		if tex := sh.LightShadowAtlas(); tex != nil {
+			tex.Release()
+		}
+
+		sh.SetCSMAtlasTexture(nil)
+		sh.SetCSMAtlasTextureView(nil)
+		sh.SetLightShadowAtlas(nil)
+		sh.SetLightShadowAtlasView(nil)
+		sh.SetComparisonSampler(nil)
+	}
+
+	if tileBGP := lh.Bgp("tile_lit"); tileBGP != nil {
+		for slot := 0; slot < 2; slot++ {
+			tileBGP.SetSlot(slot)
+			tileBGP.SetBuffer(1, nil)
+			tileBGP.SetBuffer(2, nil)
+		}
+		tileBGP.Release()
+		lh.Bgps()["tile_lit"] = nil
+	}
+
+	if cullBGP := lh.Bgp("light_cull"); cullBGP != nil {
+		for slot := 0; slot < 2; slot++ {
+			cullBGP.SetSlot(slot)
+			cullBGP.SetBuffer(1, nil)
+		}
+		cullBGP.Release()
+		lh.Bgps()["light_cull"] = nil
+	}
+
+	if lightsBGP := lh.Bgp("lights"); lightsBGP != nil {
+		lightsBGP.Release()
+		lh.Bgps()["lights"] = nil
+	}
+
+	if ssaoLitBGP := lh.Bgp("ssao_lit"); ssaoLitBGP != nil {
+		if s.ssaoHandler != nil && s.ssaoHandler.Enabled() {
+			ssaoLitBGP.SetTextureViews(nil)
+		}
+		ssaoLitBGP.Release()
+		lh.Bgps()["ssao_lit"] = nil
+		if s.ssaoHandler != nil {
+			s.ssaoHandler.SetLinearSampler(nil)
+		}
+	}
+
+	if csHandler != nil {
+		csHandler.SetEnabled(false)
+		csHandler.SetLinearSampler(nil)
+	}
+
+	lh.SetEnabled(false)
+}
+
+// releasePostProcessingResources releases post-processing providers and any persistent
+// non-resolution resources that remain after resolution-dependent cleanup.
+func (s *scene) releasePostProcessingResources() {
+	if ch := s.compositionHandler; ch != nil {
+		lumBGP := ch.Bgp("luminance_compute")
+		if lumBGP != nil {
+			lumBGP.SetTextureViews(nil)
+			for slot := 0; slot < 2; slot++ {
+				lumBGP.SetSlot(slot)
+				lumBGP.SetBuffer(2, nil)
+			}
+			lumBGP.Release()
+			ch.SetBgp("luminance_compute", nil)
+		}
+
+		compBGP := ch.Bgp("composition")
+		if compBGP != nil {
+			compBGP.SetTextureView(0, nil)
+			if s.ssrHandler != nil && s.ssrHandler.Enabled() {
+				compBGP.SetTextureView(2, nil)
+			}
+			if ch.BloomEnabled() {
+				compBGP.SetTextureView(6, nil)
+			}
+			compBGP.SetSampler(1, nil)
+			compBGP.SetSampler(3, nil)
+			compBGP.Release()
+			ch.SetBgp("composition", nil)
+		} else {
+			if expBuf := ch.ExposureBuffer(); expBuf != nil {
+				expBuf.Release()
+			}
+		}
+
+		if samp := ch.LinearSampler(); samp != nil {
+			samp.Release()
+		}
+
+		ch.SetExposureBuffer(nil)
+		ch.SetLinearSampler(nil)
+		ch.SetEnabled(false)
+	}
+
+	if ssaoH := s.ssaoHandler; ssaoH != nil {
+		for _, key := range []string{"ssao_compute", "ssao_blur_h", "ssao_blur_v"} {
+			bgp := ssaoH.Bgp(key)
+			if bgp == nil {
+				continue
+			}
+			bgp.SetTextureViews(nil)
+			bgp.Release()
+			ssaoH.SetBgp(key, nil)
+		}
+		ssaoH.SetEnabled(false)
+	}
+
+	if ssrH := s.ssrHandler; ssrH != nil {
+		for key, bgp := range ssrH.Bgps() {
+			if bgp == nil {
+				continue
+			}
+			bgp.SetTextureViews(nil)
+			bgp.SetSamplers(nil)
+			bgp.Release()
+			ssrH.SetBgp(key, nil)
+		}
+		if samp := ssrH.LinearSampler(); samp != nil {
+			samp.Release()
+		}
+		ssrH.SetLinearSampler(nil)
+		ssrH.SetEnabled(false)
+	}
+
+	if taaH := s.taaHandler; taaH != nil {
+		if samp := taaH.LinearSampler(); samp != nil {
+			samp.Release()
+		}
+		taaH.SetLinearSampler(nil)
+
+		for key, bgp := range taaH.Bgps() {
+			if bgp == nil {
+				continue
+			}
+			bgp.SetTextureViews(nil)
+			bgp.SetSamplers(nil)
+			bgp.Release()
+			taaH.SetBgp(key, nil)
+		}
+
+		taaH.SetEnabled(false)
+	}
 }
 
 // shadowPipelineKey resolves the shadow depth pipeline key for the given model
@@ -3406,6 +3905,8 @@ func (s *scene) releaseResolutionDependentResources() {
 		}
 		ch.SetSlot(0)
 		if bgp := ch.Bgp("composition"); bgp != nil {
+			bgp.SetSampler(1, nil)
+			bgp.SetSampler(3, nil)
 			if bg := bgp.BindGroup(); bg != nil {
 				bg.Release()
 			}
@@ -3419,12 +3920,18 @@ func (s *scene) releaseResolutionDependentResources() {
 		}
 		for i := 0; i < mipCount; i++ {
 			if bgp := ch.Bgp(fmt.Sprintf("bloom_down_%d", i)); bgp != nil {
+				bgp.SetSamplers(nil)
 				bgp.Release()
 			}
 			if bgp := ch.Bgp(fmt.Sprintf("bloom_up_%d", i)); bgp != nil {
+				bgp.SetSamplers(nil)
 				bgp.Release()
 			}
 		}
+		if samp := ch.LinearSampler(); samp != nil {
+			samp.Release()
+		}
+		ch.SetLinearSampler(nil)
 	}
 
 	ssrH := s.ssrHandler
@@ -3592,10 +4099,13 @@ func (s *scene) resizePostProcessing(w, h int) {
 }
 
 // pruneAnimator removes an empty animator from the pool and releases all GPU
-// resources it owns. Must be called with s.mu held (write lock).
+// resources it owns.
 // Mesh provider GPU resources are not released — they are model-owned and may
 // be shared across animators.
 func (s *scene) pruneAnimator(a animator.Animator) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	// Remove from animatorPool.
 	mdl := a.Model()
 	if mdl != nil {

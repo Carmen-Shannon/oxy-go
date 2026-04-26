@@ -163,7 +163,6 @@ func main() {
 	)
 
 	sc := scene.NewScene("Fluid Physics", cam, r,
-		scene.WithActive(true),
 		scene.WithScreenSize(eng.Window().Width(), eng.Window().Height()),
 		scene.WithLighting(lightingHandler),
 		scene.WithTAAHandler(taa.NewHandler(
@@ -298,7 +297,7 @@ func main() {
 	fmt.Println("║  Camera: WASD=Pan  Q/E=Up/Down  Scroll=Zoom        ║")
 	fmt.Println("║          Middle-mouse drag=Orbit                    ║")
 	fmt.Println("║  Space: Toggle spawning on/off                      ║")
-	fmt.Println("║  P: Toggle physics pause/resume                     ║")
+	fmt.Println("║  P: Toggle scene pause/resume                       ║")
 	fmt.Println("║                                                     ║")
 	fmt.Println("║  Streaming fluid: 30 droplets/sec from a source.    ║")
 	fmt.Println("║  Oldest droplets removed when pool reaches 250000.  ║")
@@ -697,6 +696,10 @@ func setupFluidInput(
 	sphereModel model.Model,
 	sphereParticles []physics.Particle,
 ) {
+	sceneRunning := func() bool {
+		return sc.Lifecycle().State() == lifecycle.LifecycleStateRunning
+	}
+
 	keyState := make(map[uint32]bool)
 	spawning := true
 
@@ -712,19 +715,19 @@ func setupFluidInput(
 		}
 
 		if keyCode == common.KeyP {
-			lc := ph.Lifecycle()
+			lc := sc.Lifecycle()
 			switch lc.State() {
 			case lifecycle.LifecycleStateRunning:
 				if err := lc.SetState(lifecycle.LifecycleStatePaused); err != nil {
-					fmt.Printf("[Physics] Pause failed: %v\n", err)
+					fmt.Printf("[Scene] Pause failed: %v\n", err)
 				} else {
-					fmt.Println("[Physics] Paused")
+					fmt.Println("[Scene] Paused")
 				}
 			case lifecycle.LifecycleStatePaused:
 				if err := lc.SetState(lifecycle.LifecycleStateRunning); err != nil {
-					fmt.Printf("[Physics] Resume failed: %v\n", err)
+					fmt.Printf("[Scene] Resume failed: %v\n", err)
 				} else {
-					fmt.Println("[Physics] Running")
+					fmt.Println("[Scene] Running")
 				}
 			}
 		}
@@ -750,6 +753,10 @@ func setupFluidInput(
 		if !dragging {
 			return
 		}
+		if !sceneRunning() {
+			lastX, lastY = x, y
+			return
+		}
 		dx := float32(x - lastX)
 		dy := float32(y - lastY)
 		cam.Controller().SetAzimuth(cam.Controller().Azimuth() + dx*cam.Controller().MouseSensitivity())
@@ -758,6 +765,9 @@ func setupFluidInput(
 	})
 
 	eng.Window().SetScrollCallback(func(delta float32) {
+		if !sceneRunning() {
+			return
+		}
 		cam.Controller().Zoom(delta)
 	})
 
@@ -766,7 +776,9 @@ func setupFluidInput(
 	var tickCounter int
 
 	eng.SetTickCallback(func(_ float32) {
-		if spawning && tickCounter%spawnInterval == 0 {
+		running := sceneRunning()
+
+		if running && spawning && tickCounter%spawnInterval == 0 {
 			// Remove oldest droplets if we're at capacity
 			removeCount := len(liveDroplets) + spawnPerTick - maxDroplets
 			if removeCount > 0 {
@@ -829,7 +841,7 @@ func setupFluidInput(
 		// Every second (60 ticks), request a GPU→CPU readback of body positions
 		// so we can detect escaped droplets on the next cycle.
 		tickCounter++
-		if tickCounter%60 == 0 {
+		if running && tickCounter%60 == 0 {
 			ph.RequestReadback()
 		}
 
@@ -837,7 +849,7 @@ func setupFluidInput(
 		// RigidBodies), sweep the live list and remove any droplet whose
 		// Y position has fallen below -5. This prevents escaped particles
 		// from poisoning the spatial grid's AABB.
-		if tickCounter%60 == 30 {
+		if running && tickCounter%60 == 30 {
 			n := 0
 			for _, d := range liveDroplets {
 				pos := d.body.Position()
@@ -852,23 +864,25 @@ func setupFluidInput(
 		}
 
 		// Camera controls
-		if keyState[common.KeyW] {
-			cam.Controller().PanForward(1)
-		}
-		if keyState[common.KeyS] {
-			cam.Controller().PanForward(-1)
-		}
-		if keyState[common.KeyA] {
-			cam.Controller().PanRight(-1)
-		}
-		if keyState[common.KeyD] {
-			cam.Controller().PanRight(1)
-		}
-		if keyState[common.KeyQ] {
-			cam.Controller().PanUp(1)
-		}
-		if keyState[common.KeyE] {
-			cam.Controller().PanUp(-1)
+		if running {
+			if keyState[common.KeyW] {
+				cam.Controller().PanForward(1)
+			}
+			if keyState[common.KeyS] {
+				cam.Controller().PanForward(-1)
+			}
+			if keyState[common.KeyA] {
+				cam.Controller().PanRight(-1)
+			}
+			if keyState[common.KeyD] {
+				cam.Controller().PanRight(1)
+			}
+			if keyState[common.KeyQ] {
+				cam.Controller().PanUp(1)
+			}
+			if keyState[common.KeyE] {
+				cam.Controller().PanUp(-1)
+			}
 		}
 	})
 }

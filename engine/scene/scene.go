@@ -36,7 +36,7 @@ import (
 // optional registry of non-ephemeral GameObjects, with a Camera and Renderer for
 // rendering. Rendering is driven entirely by the registered Animator list — each
 // Animator owns its instance data and material.
-// Scenes can be hot-swapped via the Active flag to switch between different views or levels.
+// Scene execution and render eligibility are driven by lifecycle state.
 // Thread-safe for concurrent access.
 type Scene interface {
 	common.Delegate[Scene]
@@ -47,11 +47,12 @@ type Scene interface {
 	// SetName sets the scene's identifier.
 	SetName(name string)
 
-	// Active returns whether this scene is currently active for rendering.
-	Active() bool
-
-	// SetActive sets whether this scene is active for rendering.
-	SetActive(active bool)
+	// Lifecycle returns the Lifecycle object for managing this scene's lifecycle state.
+	// The Engine drives scene startup and shutdown through this lifecycle.
+	//
+	// Returns:
+	//   - lifecycle.Lifecycle: the lifecycle manager for this scene
+	Lifecycle() lifecycle.Lifecycle
 
 	// Camera returns the scene's camera.
 	Camera() camera.Camera
@@ -298,7 +299,7 @@ type Scene interface {
 
 	// AcquireCompositionFrame acquires the swapchain image for the composition
 	// pass. Must be called immediately before PrepareComposition each frame.
-	// No-ops if the renderer is nil or the scene is inactive, returning nil.
+	// No-ops if the renderer is nil or the scene is not running, returning nil.
 	//
 	// Returns:
 	//   - error: an error if the swapchain image could not be acquired
@@ -323,8 +324,7 @@ var _ Scene = &scene{}
 
 func (s *scene) Name() string                         { return s.name }
 func (s *scene) SetName(name string)                  { s.name = name }
-func (s *scene) Active() bool                         { return s.active }
-func (s *scene) SetActive(active bool)                { s.active = active }
+func (s *scene) Lifecycle() lifecycle.Lifecycle       { return s.lc }
 func (s *scene) Camera() camera.Camera                { return s.cam }
 func (s *scene) SetCamera(cam camera.Camera)          { s.cam = cam }
 func (s *scene) Renderer() renderer.Renderer          { return s.r }
@@ -941,7 +941,7 @@ func (s *scene) PrepareComposition() {
 func (s *scene) AcquireCompositionFrame() error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.r == nil || !s.active {
+	if s.r == nil || s.lc == nil || s.lc.State() != lifecycle.LifecycleStateRunning {
 		return nil
 	}
 	return s.r.BeginCompositionFrame()
@@ -1979,10 +1979,10 @@ func (s *scene) AddGameObject(obj game_object.GameObject, pipelineOpts ...pipeli
 
 func (s *scene) RemoveGameObject(id uint64) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	obj, exists := s.registry[id]
 	if !exists {
+		s.mu.Unlock()
 		return
 	}
 
@@ -2035,24 +2035,7 @@ func (s *scene) RemoveGameObject(id uint64) {
 		}
 	}
 
-	// Prune empty animator from pool.
-	if anim != nil && anim.InstanceCount() == 0 {
-		switch anim.Lifecycle().State() {
-		case lifecycle.LifecycleStateRunning:
-			anim.Lifecycle().SetState(lifecycle.LifecycleStateDraining)
-		case lifecycle.LifecycleStatePaused:
-			anim.Lifecycle().SetState(lifecycle.LifecycleStateStopped)
-		case lifecycle.LifecycleStateDraining:
-			anim.Lifecycle().SetState(lifecycle.LifecycleStateStopped)
-		}
-
-		if anim.Lifecycle().State() == lifecycle.LifecycleStateDraining {
-			anim.Lifecycle().SetState(lifecycle.LifecycleStateStopped)
-		}
-		if anim.Lifecycle().State() == lifecycle.LifecycleStateStopped {
-			anim.Lifecycle().SetState(lifecycle.LifecycleStateRemoved)
-		}
-	}
+	pruneEmptyAnimator := anim != nil && anim.InstanceCount() == 0
 
 	// Sentinel the removed body's sync_map entry and deactivate its GPU slot.
 	ph := s.Delegate.PhysicsHandler()
@@ -2062,6 +2045,27 @@ func (s *scene) RemoveGameObject(id uint64) {
 	}
 
 	s.drawCacheDirty = true
+	s.mu.Unlock()
+
+	// Prune empty animator from pool after releasing the scene lock so lifecycle
+	// hooks can safely acquire s.mu during Removed cleanup.
+	if pruneEmptyAnimator {
+		switch anim.Lifecycle().State() {
+		case lifecycle.LifecycleStateRunning:
+			_ = anim.Lifecycle().SetState(lifecycle.LifecycleStateDraining)
+		case lifecycle.LifecycleStatePaused:
+			_ = anim.Lifecycle().SetState(lifecycle.LifecycleStateStopped)
+		case lifecycle.LifecycleStateDraining:
+			_ = anim.Lifecycle().SetState(lifecycle.LifecycleStateStopped)
+		}
+
+		if anim.Lifecycle().State() == lifecycle.LifecycleStateDraining {
+			_ = anim.Lifecycle().SetState(lifecycle.LifecycleStateStopped)
+		}
+		if anim.Lifecycle().State() == lifecycle.LifecycleStateStopped {
+			_ = anim.Lifecycle().SetState(lifecycle.LifecycleStateRemoved)
+		}
+	}
 }
 
 func (s *scene) SyncFrameSlot(slot int) {

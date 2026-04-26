@@ -64,7 +64,6 @@ func main() {
 
 	// ── Scene ───────────────────────────────────────────────────────────
 	sc := scene.NewScene("Sponza Scene", cam, r,
-		scene.WithActive(true),
 		scene.WithScreenSize(eng.Window().Width(), eng.Window().Height()),
 		scene.WithLODEnabled(true),
 		scene.WithLODDistances(50.0, 150.0),

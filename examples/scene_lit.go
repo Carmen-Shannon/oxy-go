@@ -68,7 +68,6 @@ func main() {
 
 	// ── Scene ───────────────────────────────────────────────────────────
 	sc := scene.NewScene("Lit Scene", cam, r,
-		scene.WithActive(true),
 		scene.WithScreenSize(eng.Window().Width(), eng.Window().Height()),
 		scene.WithGBufferHandler(gbuffer.NewHandler()),
 		scene.WithLighting(light.NewLightingHandler(

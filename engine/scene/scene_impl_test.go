@@ -86,6 +86,7 @@ func (suite *sceneImplTest) SetupSubTest() {
 	suite.scene = &scene{
 		mu:                     &sync.RWMutex{},
 		DelegateImpl:           common.DelegateImpl[Scene]{},
+		lc:                     lifecycle.NewLifecycle(),
 		r:                      suite.rendererMock,
 		lightHandler:           light.NewLightingHandler(),
 		gBufferHandler:         gbuffer.NewGBufferHandler(),
@@ -11861,23 +11862,29 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 
 func (suite *sceneImplTest) TestAcquireCompositionFrame() {
 	suite.Run("nil renderer returns nil", func() {
+		suite.scene.lc = lifecycle.NewLifecycle()
 		suite.scene.r = nil
 		suite.NoError(suite.scene.AcquireCompositionFrame())
 	})
 
-	suite.Run("inactive scene returns nil", func() {
-		suite.scene.active = false
+	suite.Run("non-running scene returns nil", func() {
+		suite.scene.lc = lifecycle.NewLifecycle()
 		suite.NoError(suite.scene.AcquireCompositionFrame())
+		suite.rendererMock.AssertNotCalled(suite.T(), "BeginCompositionFrame")
 	})
 
 	suite.Run("BeginCompositionFrame error propagated", func() {
-		suite.scene.active = true
+		suite.scene.lc = lifecycle.NewLifecycle()
+		suite.NoError(suite.scene.lc.SetState(lifecycle.LifecycleStateStarting))
+		suite.NoError(suite.scene.lc.SetState(lifecycle.LifecycleStateRunning))
 		suite.rendererMock.EXPECT().BeginCompositionFrame().Return(errors.New("fail")).Once()
 		suite.Error(suite.scene.AcquireCompositionFrame())
 	})
 
 	suite.Run("BeginCompositionFrame success", func() {
-		suite.scene.active = true
+		suite.scene.lc = lifecycle.NewLifecycle()
+		suite.NoError(suite.scene.lc.SetState(lifecycle.LifecycleStateStarting))
+		suite.NoError(suite.scene.lc.SetState(lifecycle.LifecycleStateRunning))
 		suite.rendererMock.EXPECT().BeginCompositionFrame().Return(nil).Once()
 		suite.NoError(suite.scene.AcquireCompositionFrame())
 	})
@@ -12567,6 +12574,8 @@ func (suite *sceneImplTest) TestReleaseResolutionDependentResourcesMissingBranch
 		chMock.EXPECT().SetBloomUpReadViews(mock.Anything).Maybe()
 		chMock.EXPECT().SetBloomUpStorageViews(mock.Anything).Maybe()
 		chMock.EXPECT().SetBloomUpMip0View(mock.Anything).Maybe()
+		chMock.EXPECT().LinearSampler().Return(nil).Maybe()
+		chMock.EXPECT().SetLinearSampler(mock.Anything).Maybe()
 		chMock.EXPECT().Bgp(mock.Anything).Return(nil).Maybe()
 
 		ssrMock.EXPECT().Enabled().Return(true)
@@ -12818,8 +12827,10 @@ func (suite *sceneImplTest) TestReleaseResolutionDependentResourcesWithBloomAndS
 		shMock.EXPECT().CSMAtlasTexture().Return(nil)
 
 		bloomDown0 := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		bloomDown0.EXPECT().SetSamplers(mock.Anything).Once()
 		bloomDown0.EXPECT().Release().Once()
 		bloomUp0 := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		bloomUp0.EXPECT().SetSamplers(mock.Anything).Once()
 		bloomUp0.EXPECT().Release().Once()
 
 		hizInitBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
@@ -12864,6 +12875,8 @@ func (suite *sceneImplTest) TestReleaseResolutionDependentResourcesWithBloomAndS
 		chMock.EXPECT().Bgp("luminance_compute").Return(nil).Maybe()
 		chMock.EXPECT().Bgp("bloom_down_0").Return(bloomDown0).Once()
 		chMock.EXPECT().Bgp("bloom_up_0").Return(bloomUp0).Once()
+		chMock.EXPECT().LinearSampler().Return(nil).Maybe()
+		chMock.EXPECT().SetLinearSampler(mock.Anything).Maybe()
 
 		ssrMock.EXPECT().Enabled().Return(true)
 		ssrMock.EXPECT().HiZMipCount().Return(2)
@@ -15316,19 +15329,11 @@ func (suite *sceneImplTest) TestPrepareComputeLODRemainingBranches() {
 	})
 }
 
-func (suite *sceneImplTest) TestWithActive() {
-	suite.Run("sets active true", func() {
-		s := &scene{mu: &sync.RWMutex{}}
-		opt := WithActive(true)
-		opt(s)
-		suite.Equal(true, s.active)
-	})
-
-	suite.Run("sets active false", func() {
-		s := &scene{mu: &sync.RWMutex{}}
-		opt := WithActive(false)
-		opt(s)
-		suite.Equal(false, s.active)
+func (suite *sceneImplTest) TestLifecycle() {
+	suite.Run("returns scene lifecycle", func() {
+		lc := lifecycle.NewLifecycle()
+		s := &scene{mu: &sync.RWMutex{}, lc: lc}
+		suite.Equal(lc, s.Lifecycle())
 	})
 }
 
@@ -15561,6 +15566,8 @@ func (suite *sceneImplTest) TestReleaseResolutionDependentResourcesBGPPaths() {
 		chMock.EXPECT().SetBloomUpStorageViews(mock.Anything).Maybe()
 		chMock.EXPECT().SetBloomUpMip0View(mock.Anything).Maybe()
 		compBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		compBGP.EXPECT().SetSampler(1, mock.Anything).Once()
+		compBGP.EXPECT().SetSampler(3, mock.Anything).Once()
 		compBGP.EXPECT().BindGroup().Return(nil).Once()
 		compBGP.EXPECT().SetBindGroup(mock.Anything).Once()
 		chMock.EXPECT().Bgp("composition").Return(compBGP).Once()
@@ -15568,6 +15575,8 @@ func (suite *sceneImplTest) TestReleaseResolutionDependentResourcesBGPPaths() {
 		lumBGP.EXPECT().BindGroup().Return(nil).Once()
 		lumBGP.EXPECT().SetBindGroup(mock.Anything).Once()
 		chMock.EXPECT().Bgp("luminance_compute").Return(lumBGP).Once()
+		chMock.EXPECT().LinearSampler().Return(nil).Maybe()
+		chMock.EXPECT().SetLinearSampler(mock.Anything).Maybe()
 
 		ssrMock.EXPECT().Enabled().Return(true).Maybe()
 		ssrMock.EXPECT().HiZMipCount().Return(0).Maybe()
