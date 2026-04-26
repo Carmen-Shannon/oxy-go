@@ -141,6 +141,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Read instance transform data (rotation is advanced on CPU and uploaded each frame).
     var anim = instance_data[idx];
 
+    if (globals.culling_enabled == 0u) {
+        build_transform(anim.pos, anim.rot, anim.scale, anim.instance_flags, idx * 20u);
+        return;
+    }
+
     // Frustum cull — scale bounding radius by the instance's largest axis
     // so that non-uniformly scaled instances are not incorrectly culled.
     let max_scale = max(anim.scale.x, max(anim.scale.y, anim.scale.z));

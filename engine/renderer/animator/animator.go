@@ -7,6 +7,7 @@ package animator
 
 import (
 	"github.com/Carmen-Shannon/oxy-go/common"
+	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/cogentcore/webgpu/wgpu"
@@ -388,13 +389,40 @@ type Animator interface {
 	//   - rotSpeed: the rotation speed as [3]float32
 	//   - rot: the current rotation as [3]float32
 	InstanceRotation(index uint32) (rotSpeed, rot [3]float32)
+
+	// Lifecycle returns the Lifecycle object for this Animator, allowing external code to manage its lifecycle.
+	//
+	// Returns:
+	//   - lifecycle.Lifecycle: the Lifecycle object for this Animator
+	Lifecycle() lifecycle.Lifecycle
 }
 
 var _ Animator = &animator{}
 
-func (a *animator) MaxInstances() uint32             { return a.backend.MaxInstances() }
-func (a *animator) Release()                         { a.backend.Release() }
-func (a *animator) BackendType() AnimatorBackendType { return a.backendType }
+func (a *animator) MaxInstances() uint32                       { return a.backend.MaxInstances() }
+func (a *animator) Release()                                   { a.backend.Release() }
+func (a *animator) BackendType() AnimatorBackendType           { return a.backendType }
+func (a *animator) Model() model.Model                         { return a.model }
+func (a *animator) SetFrustumPlanes(planes [6]GPUFrustumPlane) { a.backend.SetFrustumPlanes(planes) }
+func (a *animator) SetBoundingRadius(radius float32)           { a.backend.SetBoundingRadius(radius) }
+func (a *animator) SetBoundingBox(min, max [3]float32)         { a.backend.SetBoundingBox(min, max) }
+func (a *animator) BoundingRadius() float32                    { return a.backend.BoundingRadius() }
+func (a *animator) IndirectBuffer(binding int) *wgpu.Buffer    { return a.backend.IndirectBuffer(binding) }
+func (a *animator) CullingEnabled() bool                       { return a.backend.CullingEnabled() }
+func (a *animator) NeedsRebuild() bool                         { return a.backend.NeedsRebuild() }
+func (a *animator) ClearNeedsRebuild()                         { a.backend.ClearNeedsRebuild() }
+func (a *animator) InstanceCount() uint32                      { return a.backend.InstanceCount() }
+func (a *animator) AddInstance() (uint32, error)               { return a.backend.AddInstance() }
+func (a *animator) Grow(newMax uint32)                         { a.backend.Grow(newMax) }
+func (a *animator) Lifecycle() lifecycle.Lifecycle             { return a.lc }
+
+func (a *animator) IsBlending(instanceIndex uint32) bool {
+	if sk, ok := a.backend.(skeletalAnimatorBackend); ok {
+		return sk.IsBlending(instanceIndex)
+	}
+	return false
+}
+
 func (a *animator) SetBoneCount(count uint32) {
 	if sk, ok := a.backend.(skeletalAnimatorBackend); ok {
 		sk.SetBoneCount(count)
@@ -405,24 +433,6 @@ func (a *animator) CancelBlend(instanceIndex uint32) {
 		sk.CancelBlend(instanceIndex)
 	}
 }
-func (a *animator) Model() model.Model                         { return a.model }
-func (a *animator) SetFrustumPlanes(planes [6]GPUFrustumPlane) { a.backend.SetFrustumPlanes(planes) }
-func (a *animator) SetBoundingRadius(radius float32)           { a.backend.SetBoundingRadius(radius) }
-func (a *animator) SetBoundingBox(min, max [3]float32)         { a.backend.SetBoundingBox(min, max) }
-func (a *animator) BoundingRadius() float32                    { return a.backend.BoundingRadius() }
-func (a *animator) IndirectBuffer(binding int) *wgpu.Buffer    { return a.backend.IndirectBuffer(binding) }
-func (a *animator) CullingEnabled() bool                       { return a.backend.CullingEnabled() }
-func (a *animator) IsBlending(instanceIndex uint32) bool {
-	if sk, ok := a.backend.(skeletalAnimatorBackend); ok {
-		return sk.IsBlending(instanceIndex)
-	}
-	return false
-}
-func (a *animator) NeedsRebuild() bool           { return a.backend.NeedsRebuild() }
-func (a *animator) ClearNeedsRebuild()           { a.backend.ClearNeedsRebuild() }
-func (a *animator) InstanceCount() uint32        { return a.backend.InstanceCount() }
-func (a *animator) AddInstance() (uint32, error) { return a.backend.AddInstance() }
-func (a *animator) Grow(newMax uint32)           { a.backend.Grow(newMax) }
 
 func (a *animator) ComputeBindGroupProvider() bind_group_provider.BindGroupProvider {
 	return a.backend.ComputeBindGroupProvider()

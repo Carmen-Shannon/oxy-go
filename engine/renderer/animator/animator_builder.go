@@ -1,6 +1,7 @@
 package animator
 
 import (
+	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
 )
 
@@ -50,6 +51,7 @@ func WithModel(m model.Model, boneBinding, packedBinding int) AnimatorBuilderOpt
 func NewAnimator(backendType AnimatorBackendType, options ...AnimatorBuilderOption) Animator {
 	a := &animator{
 		backendType: backendType,
+		lc:          lifecycle.NewLifecycle(),
 	}
 	switch backendType {
 	case BackendTypeSkeletal:

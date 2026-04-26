@@ -2,6 +2,7 @@ package animator
 
 import (
 	"github.com/Carmen-Shannon/oxy-go/common"
+	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
 )
 
@@ -12,4 +13,6 @@ type animator struct {
 	backendType AnimatorBackendType
 	backend     AnimatorBackend
 	model       model.Model
+
+	lc lifecycle.Lifecycle
 }

@@ -152,7 +152,7 @@ type GPUGlobalData struct {
 	ScreenHeight   uint32             // offset 16
 	HiZMipCount    uint32             // offset 20
 	ProjX          float32            // offset 24 (projection matrix [0][0])
-	_pad0          float32            // offset 28 (align to 16 before planes)
+	CullingEnabled uint32             // offset 28 (0 = disabled, 1 = enabled)
 	Planes         [6]GPUFrustumPlane // offset 32: 6 × 16 bytes = 96 bytes
 	ViewProj       [16]float32        // offset 128: view-projection matrix (64 bytes)
 	BoundingMin    [3]float32         // offset 192
@@ -182,7 +182,7 @@ func (g *GPUGlobalData) Marshal() []byte {
 	binary.LittleEndian.PutUint32(buf[16:20], g.ScreenHeight)
 	binary.LittleEndian.PutUint32(buf[20:24], g.HiZMipCount)
 	binary.LittleEndian.PutUint32(buf[24:28], math.Float32bits(g.ProjX))
-	binary.LittleEndian.PutUint32(buf[28:32], 0) // _pad0
+	binary.LittleEndian.PutUint32(buf[28:32], g.CullingEnabled)
 	off := 32
 	for i := range 6 {
 		p := g.Planes[i]
@@ -227,7 +227,8 @@ type GPUAnimationGlobals struct {
 	HiZMipCount        uint32             // offset 28
 	Planes             [6]GPUFrustumPlane // offset 32: 6 × 16 bytes = 96 bytes
 	ProjX              float32            // offset 128 (projection matrix [0][0])
-	_pad4              [3]float32         // offset 132 (align to 16)
+	CullingEnabled     uint32             // offset 132 (0 = disabled, 1 = enabled)
+	_pad4              [2]float32         // offset 136 (align to 16)
 	ViewProj           [16]float32        // offset 144: view-projection matrix (64 bytes)
 	BoundingMin        [3]float32         // offset 208
 	_pad5              float32            // offset 220
@@ -268,9 +269,9 @@ func (g *GPUAnimationGlobals) Marshal() []byte {
 	}
 	// off = 128
 	binary.LittleEndian.PutUint32(buf[off:off+4], math.Float32bits(g.ProjX))
-	binary.LittleEndian.PutUint32(buf[off+4:off+8], 0)   // _pad4[0]
-	binary.LittleEndian.PutUint32(buf[off+8:off+12], 0)  // _pad4[1]
-	binary.LittleEndian.PutUint32(buf[off+12:off+16], 0) // _pad4[2]
+	binary.LittleEndian.PutUint32(buf[off+4:off+8], g.CullingEnabled)
+	binary.LittleEndian.PutUint32(buf[off+8:off+12], 0)  // _pad4[0]
+	binary.LittleEndian.PutUint32(buf[off+12:off+16], 0) // _pad4[1]
 	off += 16                                            // off = 144
 	for i := range 16 {
 		binary.LittleEndian.PutUint32(buf[off:off+4], math.Float32bits(g.ViewProj[i]))

@@ -59,9 +59,7 @@ func main() {
 	)
 
 	// ── Scene ───────────────────────────────────────────────────────────
-	sc := scene.NewScene("Scene Test", cam, r,
-		scene.WithActive(true),
-	)
+	sc := scene.NewScene("Scene Test", cam, r)
 
 	// ── Rainbow Cube ────────────────────────────────────────────────────
 	cubeVerts, cubeIdx := buildCube()

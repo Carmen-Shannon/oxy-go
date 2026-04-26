@@ -94,11 +94,27 @@ func (e *engine) Quit()                                            { e.signalQui
 func (e *engine) EnableProfiler()                                  { e.profilingEnabled = true }
 func (e *engine) DisableProfiler()                                 { e.profilingEnabled = false }
 func (e *engine) SetTickCallback(callback func(deltaTime float32)) { e.tickCallback = callback }
-func (e *engine) AddScene(key int, s scene.Scene)                  { e.scenes[key] = s }
-func (e *engine) RemoveScene(key int)                              { delete(e.scenes, key) }
 func (e *engine) Scene(key int) scene.Scene                        { return e.scenes[key] }
 func (e *engine) Scenes() map[int]scene.Scene                      { return e.scenes }
 func (e *engine) Window() window.Window                            { return e.window }
+
+func (e *engine) AddScene(key int, s scene.Scene) {
+	e.scenes[key] = s
+	e.startSceneLifecycle(s)
+}
+
+func (e *engine) RemoveScene(key int) {
+	s, exists := e.scenes[key]
+	if !exists || s == nil {
+		return
+	}
+
+	if !e.shutdownSceneLifecycle(s) {
+		return
+	}
+
+	delete(e.scenes, key)
+}
 
 func (e *engine) Run() {
 	e.handle()

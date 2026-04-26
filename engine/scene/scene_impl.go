@@ -2,6 +2,7 @@ package scene
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand"
@@ -13,6 +14,7 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/camera"
 	"github.com/Carmen-Shannon/oxy-go/engine/game_object"
+	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
 	"github.com/Carmen-Shannon/oxy-go/engine/light"
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
 	"github.com/Carmen-Shannon/oxy-go/engine/physics"
@@ -53,15 +55,16 @@ type drawCacheKey struct {
 type scene struct {
 	mu *sync.RWMutex
 
-	name   string
-	active bool
+	common.DelegateImpl[Scene]
+
+	name string
+	lc   lifecycle.Lifecycle
 
 	animatorPool map[model.Model][]animator.Animator
 	registry     map[uint64]game_object.GameObject // non-ephemeral objects by ID
 	nextID       uint64
 
-	physicsHandler  physics.Physics
-	physicsGPUReady bool // true once initPhysicsGPU has run
+	physicsHandler physics.Physics
 
 	// Per-animator sync dispatch state. Each unique Animator that has physics
 	// bodies gets its own group with a dedicated sync_map buffer and AnimationData
@@ -87,8 +90,6 @@ type scene struct {
 	screenHeight int
 
 	cullingDisabled bool // when true, skips frustum plane distribution to animators
-
-	debugDisableAnimatorHiZOcclusion bool
 
 	// Lighting subsystem — manages lights, shadow mapping, and Forward+ culling state.
 	lightHandler   light.LightingHandler
@@ -131,6 +132,8 @@ type scene struct {
 	// depth pass for that animator without going through the compute culling path.
 	shadowIndirectBuffers map[animator.Animator]*wgpu.Buffer
 	animIndirectBinding   map[animator.Animator]int
+	// shadowAnimationProviders binds raw simple AnimationData for non-skinned shadow depth shaders.
+	shadowAnimationProviders map[animator.Animator]bind_group_provider.BindGroupProvider
 
 	injections map[string]string
 
@@ -154,6 +157,504 @@ type scene struct {
 	drawCacheDirty     bool
 }
 
+// sceneLifecycleChildren snapshots the current scene lifecycle children.
+//
+// Returns:
+//   - []animator.Animator: snapshot of all registered animators
+//   - physics.Physics: current physics handler, if present
+func (s *scene) sceneLifecycleChildren() ([]animator.Animator, physics.Physics) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	anims := make([]animator.Animator, 0)
+	for _, group := range s.animatorPool {
+		for _, a := range group {
+			if a != nil {
+				anims = append(anims, a)
+			}
+		}
+	}
+
+	return anims, s.physicsHandler
+}
+
+// transitionChildLifecycle advances a child lifecycle toward the requested target state
+// using only legal lifecycle transitions.
+//
+// Parameters:
+//   - lc: child lifecycle to transition
+//   - target: target lifecycle state
+//
+// Returns:
+//   - error: error if any attempted transition fails
+func transitionChildLifecycle(lc lifecycle.Lifecycle, target lifecycle.LifecycleState) error {
+	if lc == nil {
+		return nil
+	}
+
+	switch target {
+	case lifecycle.LifecycleStateRunning:
+		switch lc.State() {
+		case lifecycle.LifecycleStateRunning:
+			return nil
+		case lifecycle.LifecycleStatePaused, lifecycle.LifecycleStateDraining:
+			return lc.SetState(lifecycle.LifecycleStateRunning)
+		default:
+			return nil
+		}
+
+	case lifecycle.LifecycleStatePaused:
+		if lc.State() == lifecycle.LifecycleStateRunning {
+			return lc.SetState(lifecycle.LifecycleStatePaused)
+		}
+		return nil
+
+	case lifecycle.LifecycleStateDraining:
+		switch lc.State() {
+		case lifecycle.LifecycleStateDraining:
+			return nil
+		case lifecycle.LifecycleStateRunning, lifecycle.LifecycleStateErrored:
+			return lc.SetState(lifecycle.LifecycleStateDraining)
+		default:
+			return nil
+		}
+
+	case lifecycle.LifecycleStateStopped:
+		switch lc.State() {
+		case lifecycle.LifecycleStateStopped:
+			return nil
+		case lifecycle.LifecycleStateRegistered, lifecycle.LifecycleStatePaused, lifecycle.LifecycleStateDraining:
+			return lc.SetState(lifecycle.LifecycleStateStopped)
+		case lifecycle.LifecycleStateRunning:
+			if err := lc.SetState(lifecycle.LifecycleStateDraining); err != nil {
+				return err
+			}
+			if lc.State() == lifecycle.LifecycleStateDraining {
+				return lc.SetState(lifecycle.LifecycleStateStopped)
+			}
+			return nil
+		case lifecycle.LifecycleStateErrored:
+			if err := lc.SetState(lifecycle.LifecycleStateDraining); err != nil {
+				return err
+			}
+			if lc.State() == lifecycle.LifecycleStateDraining {
+				return lc.SetState(lifecycle.LifecycleStateStopped)
+			}
+			return nil
+		default:
+			return nil
+		}
+
+	case lifecycle.LifecycleStateRemoved:
+		if lc.State() == lifecycle.LifecycleStateRemoved {
+			return nil
+		}
+		if err := transitionChildLifecycle(lc, lifecycle.LifecycleStateStopped); err != nil {
+			return err
+		}
+		if lc.State() == lifecycle.LifecycleStateStopped {
+			return lc.SetState(lifecycle.LifecycleStateRemoved)
+		}
+		return nil
+
+	default:
+		return nil
+	}
+}
+
+// transitionSceneChildren transitions all scene child lifecycles to the target state.
+//
+// Parameters:
+//   - target: target lifecycle state
+//
+// Returns:
+//   - error: joined errors from failed child transitions
+func (s *scene) transitionSceneChildren(target lifecycle.LifecycleState) error {
+	anims, ph := s.sceneLifecycleChildren()
+
+	var errs []error
+	for _, a := range anims {
+		if a == nil {
+			continue
+		}
+		if err := transitionChildLifecycle(a.Lifecycle(), target); err != nil {
+			modelName := "<nil>"
+			if mdl := a.Model(); mdl != nil {
+				modelName = mdl.Name()
+			}
+			errs = append(errs, fmt.Errorf("animator %q lifecycle transition to %v failed: %w", modelName, target, err))
+		}
+	}
+
+	if ph != nil {
+		if err := transitionChildLifecycle(ph.Lifecycle(), target); err != nil {
+			errs = append(errs, fmt.Errorf("physics lifecycle transition to %v failed: %w", target, err))
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+// registerLifecycleHooks wires scene lifecycle transitions to child lifecycle fan-out
+// and scene resource cleanup.
+func (s *scene) registerLifecycleHooks() {
+	if s.lc == nil {
+		return
+	}
+
+	s.lc.OnTransitionTo(lifecycle.LifecycleStateRunning, lifecycle.Hook(func() error {
+		return s.transitionSceneChildren(lifecycle.LifecycleStateRunning)
+	}))
+
+	s.lc.OnTransitionTo(lifecycle.LifecycleStatePaused, lifecycle.Hook(func() error {
+		return s.transitionSceneChildren(lifecycle.LifecycleStatePaused)
+	}))
+
+	s.lc.OnTransitionTo(lifecycle.LifecycleStateDraining, lifecycle.Hook(func() error {
+		return s.transitionSceneChildren(lifecycle.LifecycleStateDraining)
+	}))
+
+	s.lc.OnTransitionTo(lifecycle.LifecycleStateStopped, lifecycle.Hook(func() error {
+		return s.transitionSceneChildren(lifecycle.LifecycleStateStopped)
+	}))
+
+	s.lc.OnTransitionTo(lifecycle.LifecycleStateRemoved, lifecycle.Hook(func() error {
+		childErr := s.transitionSceneChildren(lifecycle.LifecycleStateRemoved)
+		cleanupErr := s.releaseSceneResources()
+		return errors.Join(childErr, cleanupErr)
+	}))
+}
+
+// releaseSceneResources releases scene-owned GPU resources for lifecycle Removed.
+//
+// Returns:
+//   - error: joined errors if cleanup fails
+func (s *scene) releaseSceneResources() error {
+	if s.r != nil {
+		s.r.WaitIdle()
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.releaseResolutionDependentResources()
+	s.releaseLightingResources()
+	s.releasePostProcessingResources()
+	s.releasePhysicsResources()
+
+	if s.hizFallbackView != nil {
+		s.hizFallbackView.Release()
+		s.hizFallbackView = nil
+	}
+	if s.hizFallbackTexture != nil {
+		s.hizFallbackTexture.Release()
+		s.hizFallbackTexture = nil
+	}
+
+	s.lightObjects = nil
+	s.lightShadowEntries = nil
+	s.lightShadowMap = nil
+	s.lightPrevSlotMap = nil
+	s.writePool = nil
+	s.drawBindGroupsPool = nil
+	s.drawDeclsPool = nil
+	s.drawGroupProvidersPool = nil
+	s.drawBindGroupCache = nil
+	s.shadowIndirectBuffers = nil
+	s.animIndirectBinding = nil
+	s.shadowAnimationProviders = nil
+	s.instanceLookup = nil
+	s.lodLevelCache = nil
+	s.injections = nil
+	s.drawCacheDirty = true
+	s.postProcessingInitialized = false
+	s.tileBufferCapacity = 0
+
+	s.animatorPool = make(map[model.Model][]animator.Animator)
+	s.registry = make(map[uint64]game_object.GameObject)
+	s.physicsSyncGroup = make(map[int]bind_group_provider.BindGroupProvider)
+	s.physicsSyncAnimMap = make(map[animator.Animator]int)
+
+	return nil
+}
+
+// releasePhysicsResources releases physics GPU resources owned by the scene and
+// clears any shared buffer references before releasing dependent providers.
+func (s *scene) releasePhysicsResources() {
+	for _, bgp := range s.physicsSyncGroup {
+		if bgp == nil {
+			continue
+		}
+		for slot := 0; slot < 2; slot++ {
+			bgp.SetSlot(slot)
+			bgp.SetBuffer(0, nil)
+			bgp.SetBuffer(2, nil)
+			bgp.SetBuffer(3, nil)
+		}
+		bgp.Release()
+	}
+	s.physicsSyncGroup = make(map[int]bind_group_provider.BindGroupProvider)
+	s.physicsSyncAnimMap = make(map[animator.Animator]int)
+	s.physicsSyncWrites = nil
+
+	for _, group := range s.boneParticleUpdateGroups {
+		if group == nil || group.bgp == nil {
+			continue
+		}
+		for slot := 0; slot < 2; slot++ {
+			group.bgp.SetSlot(slot)
+			group.bgp.SetBuffer(0, nil)
+			group.bgp.SetBuffer(1, nil)
+			group.bgp.SetBuffer(2, nil)
+			group.bgp.SetBuffer(4, nil)
+		}
+		group.bgp.Release()
+	}
+	s.boneParticleUpdateGroups = nil
+
+	ph := s.physicsHandler
+	if ph == nil {
+		return
+	}
+
+	for key, bgp := range ph.Bgps() {
+		if bgp == nil {
+			continue
+		}
+		for slot := 0; slot < 2; slot++ {
+			bgp.SetSlot(slot)
+			bgp.SetBuffers(nil)
+		}
+		bgp.Release()
+		ph.Bgps()[key] = nil
+	}
+
+	if buffers := ph.Buffers(); buffers != nil {
+		buffers.Release()
+	}
+
+	if staging := ph.StagingBuffer(); staging != nil {
+		staging.Release()
+		ph.SetStagingBuffer(nil)
+	}
+
+	s.physicsHandler = nil
+}
+
+// releaseLightingResources releases lighting and shadow GPU resources that are not
+// handled by resolution-dependent cleanup.
+func (s *scene) releaseLightingResources() {
+	lh := s.lightHandler
+	if lh == nil {
+		return
+	}
+
+	csHandler := lh.ContactShadowHandler()
+	contactEnabled := csHandler != nil && csHandler.Enabled()
+
+	if csHandler != nil {
+		for key, bgp := range csHandler.Bgps() {
+			if bgp == nil {
+				continue
+			}
+			bgp.SetTextureViews(nil)
+			bgp.Release()
+			csHandler.SetBgp(key, nil)
+		}
+	}
+
+	sh := lh.ShadowHandler()
+	var csmShadowLit bind_group_provider.BindGroupProvider
+	if sh != nil {
+		csmShadowLit = sh.Bgp("csm_shadow_lit")
+		if csmShadowLit != nil {
+			if contactEnabled {
+				csmShadowLit.SetTextureView(5, nil)
+				csmShadowLit.SetSampler(6, nil)
+				if csSampler := csHandler.LinearSampler(); csSampler != nil {
+					csSampler.Release()
+					csHandler.SetLinearSampler(nil)
+				}
+			}
+			csmShadowLit.Release()
+			sh.SetBgp("csm_shadow_lit", nil)
+		} else if contactEnabled {
+			if csSampler := csHandler.LinearSampler(); csSampler != nil {
+				csSampler.Release()
+				csHandler.SetLinearSampler(nil)
+			}
+		}
+
+		for key, bgp := range sh.Bgps() {
+			if bgp == nil || key == "csm_shadow_lit" {
+				continue
+			}
+			bgp.Release()
+			sh.SetBgp(key, nil)
+		}
+
+		if csmShadowLit == nil {
+			if view := sh.CSMAtlasTextureView(); view != nil {
+				view.Release()
+			}
+			if view := sh.LightShadowAtlasView(); view != nil {
+				view.Release()
+			}
+			if cmpSampler := sh.ComparisonSampler(); cmpSampler != nil {
+				cmpSampler.Release()
+			}
+		}
+
+		if tex := sh.CSMAtlasTexture(); tex != nil {
+			tex.Release()
+		}
+		if tex := sh.LightShadowAtlas(); tex != nil {
+			tex.Release()
+		}
+
+		sh.SetCSMAtlasTexture(nil)
+		sh.SetCSMAtlasTextureView(nil)
+		sh.SetLightShadowAtlas(nil)
+		sh.SetLightShadowAtlasView(nil)
+		sh.SetComparisonSampler(nil)
+	}
+
+	if tileBGP := lh.Bgp("tile_lit"); tileBGP != nil {
+		for slot := 0; slot < 2; slot++ {
+			tileBGP.SetSlot(slot)
+			tileBGP.SetBuffer(1, nil)
+			tileBGP.SetBuffer(2, nil)
+		}
+		tileBGP.Release()
+		lh.Bgps()["tile_lit"] = nil
+	}
+
+	if cullBGP := lh.Bgp("light_cull"); cullBGP != nil {
+		for slot := 0; slot < 2; slot++ {
+			cullBGP.SetSlot(slot)
+			cullBGP.SetBuffer(1, nil)
+		}
+		cullBGP.Release()
+		lh.Bgps()["light_cull"] = nil
+	}
+
+	if lightsBGP := lh.Bgp("lights"); lightsBGP != nil {
+		lightsBGP.Release()
+		lh.Bgps()["lights"] = nil
+	}
+
+	if ssaoLitBGP := lh.Bgp("ssao_lit"); ssaoLitBGP != nil {
+		if s.ssaoHandler != nil && s.ssaoHandler.Enabled() {
+			ssaoLitBGP.SetTextureViews(nil)
+		}
+		ssaoLitBGP.Release()
+		lh.Bgps()["ssao_lit"] = nil
+		if s.ssaoHandler != nil {
+			s.ssaoHandler.SetLinearSampler(nil)
+		}
+	}
+
+	if csHandler != nil {
+		csHandler.SetEnabled(false)
+		csHandler.SetLinearSampler(nil)
+	}
+
+	lh.SetEnabled(false)
+}
+
+// releasePostProcessingResources releases post-processing providers and any persistent
+// non-resolution resources that remain after resolution-dependent cleanup.
+func (s *scene) releasePostProcessingResources() {
+	if ch := s.compositionHandler; ch != nil {
+		lumBGP := ch.Bgp("luminance_compute")
+		if lumBGP != nil {
+			lumBGP.SetTextureViews(nil)
+			for slot := 0; slot < 2; slot++ {
+				lumBGP.SetSlot(slot)
+				lumBGP.SetBuffer(2, nil)
+			}
+			lumBGP.Release()
+			ch.SetBgp("luminance_compute", nil)
+		}
+
+		compBGP := ch.Bgp("composition")
+		if compBGP != nil {
+			compBGP.SetTextureView(0, nil)
+			if s.ssrHandler != nil && s.ssrHandler.Enabled() {
+				compBGP.SetTextureView(2, nil)
+			}
+			if ch.BloomEnabled() {
+				compBGP.SetTextureView(6, nil)
+			}
+			compBGP.SetSampler(1, nil)
+			compBGP.SetSampler(3, nil)
+			compBGP.Release()
+			ch.SetBgp("composition", nil)
+		} else {
+			if expBuf := ch.ExposureBuffer(); expBuf != nil {
+				expBuf.Release()
+			}
+		}
+
+		if samp := ch.LinearSampler(); samp != nil {
+			samp.Release()
+		}
+
+		ch.SetExposureBuffer(nil)
+		ch.SetLinearSampler(nil)
+		ch.SetEnabled(false)
+	}
+
+	if ssaoH := s.ssaoHandler; ssaoH != nil {
+		for _, key := range []string{"ssao_compute", "ssao_blur_h", "ssao_blur_v"} {
+			bgp := ssaoH.Bgp(key)
+			if bgp == nil {
+				continue
+			}
+			bgp.SetTextureViews(nil)
+			bgp.Release()
+			ssaoH.SetBgp(key, nil)
+		}
+		ssaoH.SetEnabled(false)
+	}
+
+	if ssrH := s.ssrHandler; ssrH != nil {
+		for key, bgp := range ssrH.Bgps() {
+			if bgp == nil {
+				continue
+			}
+			bgp.SetTextureViews(nil)
+			bgp.SetSamplers(nil)
+			bgp.Release()
+			ssrH.SetBgp(key, nil)
+		}
+		if samp := ssrH.LinearSampler(); samp != nil {
+			samp.Release()
+		}
+		ssrH.SetLinearSampler(nil)
+		ssrH.SetEnabled(false)
+	}
+
+	if taaH := s.taaHandler; taaH != nil {
+		if samp := taaH.LinearSampler(); samp != nil {
+			samp.Release()
+		}
+		taaH.SetLinearSampler(nil)
+
+		for key, bgp := range taaH.Bgps() {
+			if bgp == nil {
+				continue
+			}
+			bgp.SetTextureViews(nil)
+			bgp.SetSamplers(nil)
+			bgp.Release()
+			taaH.SetBgp(key, nil)
+		}
+
+		taaH.SetEnabled(false)
+	}
+}
+
 // shadowPipelineKey resolves the shadow depth pipeline key for the given model
 // type and cull mode from the lighting handler's pipeline key map.
 func (s *scene) shadowPipelineKey(skinned bool, mode model.ShadowCullMode) string {
@@ -169,6 +670,53 @@ func (s *scene) shadowPipelineKey(skinned bool, mode model.ShadowCullMode) strin
 		tag = "none"
 	}
 	return s.lightHandler.ShadowHandler().PipelineKey(prefix + tag)
+}
+
+// shadowAnimatorBindGroup returns the animator bind group provider expected by
+// the shadow depth pipelines.
+//
+// Parameters:
+//   - a: the animator issuing the shadow draw
+//
+// Returns:
+//   - bind_group_provider.BindGroupProvider: the provider bound at shadow group 1
+func (s *scene) shadowAnimatorBindGroup(a animator.Animator) bind_group_provider.BindGroupProvider {
+	if a == nil {
+		return nil
+	}
+	if a.BackendType() == animator.BackendTypeSimple {
+		return s.shadowAnimationProviders[a]
+	}
+	return a.OutputBindGroupProvider()
+}
+
+// animLODLevel returns the LOD level for the given animator from the per-frame cache.
+// Returns 0 (base mesh) when LOD is disabled or the animator has no cached level.
+func (s *scene) animLODLevel(a animator.Animator) int {
+	if !s.lodEnabled {
+		return 0
+	}
+	if level, ok := s.lodLevelCache[a]; ok {
+		return level
+	}
+	return 0
+}
+
+// animShadowLODLevel returns the LOD level for shadow rendering of the given
+// animator. Adds lodShadowBias to the base LOD level, clamped to the model's
+// maximum available LOD.
+func (s *scene) animShadowLODLevel(a animator.Animator) int {
+	base := s.animLODLevel(a)
+	mdl := a.Model()
+	if mdl == nil {
+		return base
+	}
+	level := base + s.lodShadowBias
+	maxLevel := mdl.LODCount() - 1
+	if level > maxLevel {
+		level = maxLevel
+	}
+	return level
 }
 
 // buildInjectionMap builds the injection map for WGSL shader pre-processing,
@@ -2580,9 +3128,8 @@ func (s *scene) initMaterialGPU(mat material.Material, fragmentShader shader.Sha
 	return nil
 }
 
-// createAnimator creates a new Animator for the given Model, registers its compute
-// and render pipelines on the renderer, initializes GPU resources for the animator's
-// bind group providers, and returns the configured Animator. Caller must hold s.mu write lock.
+// createAnimator creates a new Animator for the given Model and registers lifecycle
+// hooks that initialize and prune animator GPU resources. Caller must hold s.mu write lock.
 //
 // Parameters:
 //   - mdl: the Model to create an Animator for
@@ -2592,7 +3139,7 @@ func (s *scene) initMaterialGPU(mat material.Material, fragmentShader shader.Sha
 //   - pipelineOpts: optional pipeline builder options for the render pipeline
 //
 // Returns:
-//   - animator.Animator: the fully initialized Animator
+//   - animator.Animator: the configured Animator
 func (s *scene) createAnimator(mdl model.Model, computeShader, vertexShader, fragmentShader shader.Shader, pipelineOpts ...pipeline.PipelineBuilderOption) animator.Animator {
 	// Pick backend type based on whether the model uses skeletal animation
 	backendType := animator.BackendTypeSimple
@@ -2631,6 +3178,33 @@ func (s *scene) createAnimator(mdl model.Model, computeShader, vertexShader, fra
 	anim := animator.NewAnimator(backendType, animator.WithModel(mdl, boneBinding, packedBinding))
 	anim.SetBoundingRadius(mdl.BoundingRadius())
 	anim.SetBoundingBox(mdl.BoundingMin(), mdl.BoundingMax())
+	anim.Lifecycle().OnTransitionTo(lifecycle.LifecycleStateStarting, lifecycle.Hook(func() error {
+		s.initAnimatorGPU(anim, computeShader, vertexShader, fragmentShader, pipelineOpts...)
+		return nil
+	}))
+	anim.Lifecycle().OnTransitionTo(lifecycle.LifecycleStateRemoved, lifecycle.Hook(func() error {
+		s.pruneAnimator(anim)
+		return nil
+	}))
+
+	return anim
+}
+
+// initAnimatorGPU initializes all renderer resources for an Animator and its model.
+//
+// Parameters:
+//   - anim: the Animator to initialize
+//   - computeShader: the compute shader for the animator's compute pipeline
+//   - vertexShader: the vertex shader for the render pipeline
+//   - fragmentShader: the fragment shader for the render pipeline
+//   - pipelineOpts: optional pipeline builder options for the render pipeline
+func (s *scene) initAnimatorGPU(anim animator.Animator, computeShader, vertexShader, fragmentShader shader.Shader, pipelineOpts ...pipeline.PipelineBuilderOption) {
+	mdl := anim.Model()
+	if mdl == nil {
+		panic("scene: cannot init animator GPU resources without a Model")
+	}
+
+	backendType := anim.BackendType()
 
 	// Init mesh provider GPU resources if not already done (e.g. hand-built models
 	// skip this, while loader-produced models will already have VertexBuffer set).
@@ -2759,6 +3333,7 @@ func (s *scene) createAnimator(mdl model.Model, computeShader, vertexShader, fra
 
 	// Build a binding→type map from the compute shader's declarations for typed bindings.
 	computeBindingTypes := make(map[int]shader.AnnotationArg)
+	animationDataBinding := -1
 	for _, decl := range computeShader.Declarations() {
 		if decl.Type != shader.AnnotationTypeBindingGroup || decl.Binding == nil {
 			continue
@@ -2767,7 +3342,11 @@ func (s *scene) createAnimator(mdl model.Model, computeShader, vertexShader, fra
 		if stripped, ok := strings.CutPrefix(typeArg, "array<"); ok {
 			typeArg = strings.TrimSuffix(stripped, ">")
 		}
-		computeBindingTypes[*decl.Binding] = shader.AnnotationArg(typeArg)
+		typedArg := shader.AnnotationArg(typeArg)
+		computeBindingTypes[*decl.Binding] = typedArg
+		if typedArg == shader.AnnotationArgAnimationData {
+			animationDataBinding = *decl.Binding
+		}
 	}
 
 	// Resolve raw bindings from provider declarations for output, packed, and scratch buffers.
@@ -2903,6 +3482,10 @@ func (s *scene) createAnimator(mdl model.Model, computeShader, vertexShader, fra
 		outputProvider.SetSlot(0)
 	}
 
+	if backendType == animator.BackendTypeSimple && animationDataBinding >= 0 {
+		s.initSimpleShadowAnimationProvider(anim, animationDataBinding)
+	}
+
 	// Init Hi-Z bind group for the animator (both slots).
 	// If the real SSR Hi-Z pyramid isn't ready yet, use the 1×1 fallback texture.
 	// The shader guards access via hiz_mip_count == 0.
@@ -3026,7 +3609,90 @@ func (s *scene) createAnimator(mdl model.Model, computeShader, vertexShader, fra
 		}
 	}
 
-	return anim
+}
+
+// initSimpleShadowAnimationProvider initializes the raw AnimationData bind group
+// used by the non-skinned shadow depth shader.
+//
+// Parameters:
+//   - anim: the simple animator whose AnimationData buffers back shadow draws
+//   - animationDataBinding: compute bind-group binding index for array<animation_data>
+func (s *scene) initSimpleShadowAnimationProvider(anim animator.Animator, animationDataBinding int) {
+	if anim == nil || animationDataBinding < 0 {
+		return
+	}
+
+	computeProvider := anim.ComputeBindGroupProvider()
+	if computeProvider == nil {
+		return
+	}
+
+	shadowVertShader := shader.NewShader("_shadow_simple_anim_init", shader.ShaderTypeVertex,
+		"engine/light/assets/shadow-depth-vert.wgsl", shader.WithInjections(s.injections))
+	shadowDesc := shadowVertShader.BindGroupLayoutDescriptor(1)
+	bgp := bind_group_provider.NewBindGroupProvider(fmt.Sprintf("shadow_simple_anim_%p", anim))
+
+	modelName := "<nil>"
+	if mdl := anim.Model(); mdl != nil {
+		modelName = mdl.Name()
+	}
+
+	currentSlot := s.r.CurrentFrameSlot()
+
+	computeProvider.SetSlot(0)
+	slot0AnimBuf := computeProvider.Buffer(animationDataBinding)
+	if slot0AnimBuf == nil {
+		computeProvider.SetSlot(currentSlot)
+		panic(fmt.Sprintf("scene: missing AnimationData buffer at binding %d (slot 0) for model %q", animationDataBinding, modelName))
+	}
+	bgp.SetSlot(0)
+	bgp.SetBuffer(0, slot0AnimBuf)
+	if err := s.r.InitBindGroup(bgp, shadowDesc, nil, nil); err != nil {
+		computeProvider.SetSlot(currentSlot)
+		panic(fmt.Sprintf("scene: failed to init simple shadow animation BGP for model %q: %v", modelName, err))
+	}
+
+	computeProvider.SetSlot(1)
+	slot1AnimBuf := computeProvider.Buffer(animationDataBinding)
+	if slot1AnimBuf == nil {
+		computeProvider.SetSlot(currentSlot)
+		panic(fmt.Sprintf("scene: missing AnimationData buffer at binding %d (slot 1) for model %q", animationDataBinding, modelName))
+	}
+	bgp.SetSlot(1)
+	bgp.SetBuffer(0, slot1AnimBuf)
+	if err := s.r.InitBindGroup(bgp, shadowDesc, nil, nil); err != nil {
+		computeProvider.SetSlot(currentSlot)
+		panic(fmt.Sprintf("scene: failed to init simple shadow animation BGP slot 1 for model %q: %v", modelName, err))
+	}
+
+	computeProvider.SetSlot(currentSlot)
+	bgp.SetSlot(currentSlot)
+
+	if s.shadowAnimationProviders == nil {
+		s.shadowAnimationProviders = make(map[animator.Animator]bind_group_provider.BindGroupProvider)
+	}
+	if old := s.shadowAnimationProviders[anim]; old != nil {
+		releaseSharedBufferBindGroupProvider(old)
+	}
+	s.shadowAnimationProviders[anim] = bgp
+}
+
+// releaseSharedBufferBindGroupProvider clears shared buffer references before
+// releasing provider-owned bind groups and layout.
+//
+// Parameters:
+//   - provider: bind group provider that may reference externally-owned buffers
+func releaseSharedBufferBindGroupProvider(provider bind_group_provider.BindGroupProvider) {
+	if provider == nil {
+		return
+	}
+
+	for slot := 0; slot < 2; slot++ {
+		provider.SetSlot(slot)
+		provider.SetBuffers(nil)
+	}
+
+	provider.Release()
 }
 
 // computeWorkgroupSize2D returns the workgroup size for a 2D compute dispatch.
@@ -3239,6 +3905,8 @@ func (s *scene) releaseResolutionDependentResources() {
 		}
 		ch.SetSlot(0)
 		if bgp := ch.Bgp("composition"); bgp != nil {
+			bgp.SetSampler(1, nil)
+			bgp.SetSampler(3, nil)
 			if bg := bgp.BindGroup(); bg != nil {
 				bg.Release()
 			}
@@ -3252,12 +3920,18 @@ func (s *scene) releaseResolutionDependentResources() {
 		}
 		for i := 0; i < mipCount; i++ {
 			if bgp := ch.Bgp(fmt.Sprintf("bloom_down_%d", i)); bgp != nil {
+				bgp.SetSamplers(nil)
 				bgp.Release()
 			}
 			if bgp := ch.Bgp(fmt.Sprintf("bloom_up_%d", i)); bgp != nil {
+				bgp.SetSamplers(nil)
 				bgp.Release()
 			}
 		}
+		if samp := ch.LinearSampler(); samp != nil {
+			samp.Release()
+		}
+		ch.SetLinearSampler(nil)
 	}
 
 	ssrH := s.ssrHandler
@@ -3424,100 +4098,14 @@ func (s *scene) resizePostProcessing(w, h int) {
 	}
 }
 
-func (s *scene) SyncFrameSlot(slot int) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	// Phase 4: switch post-processing handler texture slots.
-	if s.lightHandler != nil {
-		if gbh := s.gBufferHandler; gbh != nil {
-			gbh.SetSlot(slot)
-		}
-		if ssao := s.ssaoHandler; ssao != nil {
-			ssao.SetSlot(slot)
-		}
-		if cs := s.lightHandler.ContactShadowHandler(); cs != nil {
-			cs.SetSlot(slot)
-			if bgp := cs.Bgp("contact_shadow_compute"); bgp != nil {
-				bgp.SetSlot(slot)
-			}
-		}
-		if ch := s.compositionHandler; ch != nil {
-			ch.SetSlot(slot)
-			if lumBGP := ch.Bgp("luminance_compute"); lumBGP != nil {
-				lumBGP.SetSlot(slot)
-			}
-		}
-		if ssr := s.ssrHandler; ssr != nil {
-			ssr.SetSlot(slot)
-		}
-		if taaH := s.taaHandler; taaH != nil {
-			taaH.SetSlot(slot)
-		}
-
-		// Phase 3: switch confirmed dual-slot BGPs on the lighting handler.
-		if bgp := s.lightHandler.Bgp("lights"); bgp != nil {
-			bgp.SetSlot(slot)
-		}
-		if bgp := s.lightHandler.Bgp("light_cull"); bgp != nil {
-			bgp.SetSlot(slot)
-		}
-		if bgp := s.lightHandler.Bgp("tile_lit"); bgp != nil {
-			bgp.SetSlot(slot)
-		}
-
-		// Phase 3: switch confirmed dual-slot shadow handler BGPs.
-		if sh := s.lightHandler.ShadowHandler(); sh != nil {
-			if bgp := sh.Bgp("csm_shadow_lit"); bgp != nil {
-				bgp.SetSlot(slot)
-			}
-			for i := 0; i < sh.CascadeCount(); i++ {
-				if bgp := sh.Bgp(fmt.Sprintf("csm_data_%d", i)); bgp != nil {
-					bgp.SetSlot(slot)
-				}
-			}
-			for i := 0; i < sh.LightShadowAtlasSlots(); i++ {
-				if bgp := sh.Bgp(fmt.Sprintf("spot_shadow_%d", i)); bgp != nil {
-					bgp.SetSlot(slot)
-				}
-			}
-		}
-	}
-
-	// Phase 3: switch camera BGP.
-	if s.cam != nil {
-		if bgp := s.cam.BindGroupProvider(); bgp != nil {
-			bgp.SetSlot(slot)
-		}
-	}
-
-	// Phase 3: switch animator BGPs.
-	for _, animGroup := range s.animatorPool {
-		for _, a := range animGroup {
-			if compute := a.ComputeBindGroupProvider(); compute != nil {
-				compute.SetSlot(slot)
-			}
-			if output := a.OutputBindGroupProvider(); output != nil {
-				output.SetSlot(slot)
-			}
-			if hiZ := a.HiZBindGroupProvider(); hiZ != nil {
-				hiZ.SetSlot(slot)
-			}
-		}
-	}
-
-	for _, bgp := range s.physicsSyncGroup {
-		if bgp != nil {
-			bgp.SetSlot(slot)
-		}
-	}
-}
-
 // pruneAnimator removes an empty animator from the pool and releases all GPU
-// resources it owns. Must be called with s.mu held (write lock).
+// resources it owns.
 // Mesh provider GPU resources are not released — they are model-owned and may
 // be shared across animators.
 func (s *scene) pruneAnimator(a animator.Animator) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	// Remove from animatorPool.
 	mdl := a.Model()
 	if mdl != nil {
@@ -3541,6 +4129,10 @@ func (s *scene) pruneAnimator(a animator.Animator) {
 	}
 	delete(s.shadowIndirectBuffers, a)
 	delete(s.animIndirectBinding, a)
+	if bgp, ok := s.shadowAnimationProviders[a]; ok && bgp != nil {
+		releaseSharedBufferBindGroupProvider(bgp)
+	}
+	delete(s.shadowAnimationProviders, a)
 
 	// Release animator GPU resources (compute + output BGPs, both slots).
 	a.Release()
@@ -3622,4 +4214,115 @@ func (s *scene) refreshAnimatorHiZBindGroups() {
 			hiZBGP.SetSlot(0)
 		}
 	}
+}
+
+func (s *scene) prepareTAA() {
+	if s.lightHandler == nil || s.cam == nil {
+		return
+	}
+	taaH := s.taaHandler
+	if taaH == nil || !taaH.Enabled() {
+		return
+	}
+
+	// Halton sequence for sub-pixel jitter (base 2 for X, base 3 for Y).
+	// Returns value in [-0.5, 0.5] pixel space, then converted to NDC.
+	halton := func(index uint64, base uint64) float32 {
+		var result float64
+		f := 1.0 / float64(base)
+		i := index
+		for i > 0 {
+			result += f * float64(i%base)
+			i /= base
+			f /= float64(base)
+		}
+		return float32(result - 0.5) // center around 0
+	}
+
+	// Wrap the Halton sequence at N=8 per Yang et al. [YNS*09] §3.1 recommendation.
+	// UE4 uses an 8-sample Halton(2,3) sequence by default. Bounded wrapping ensures
+	// all 8 sub-pixel positions are evenly covered each cycle regardless of frame count,
+	// and avoids floating-point precision issues in the Halton computation at high indices.
+	nextIdx := (taaH.FrameIndex() + 1) % 8
+	jitterScale := taaH.JitterScale()
+	jx := halton(nextIdx, 2) * jitterScale
+	jy := halton(nextIdx, 3) * jitterScale
+	taaH.AdvanceFrame(jx, jy)
+
+	// Convert pixel jitter to projection-matrix NDC element units.
+	sw := float32(taaH.ScreenWidth())
+	sh := float32(taaH.ScreenHeight())
+	var ndcX, ndcY float32
+	if sw > 0 {
+		ndcX = jx * 2.0 / sw
+	}
+	if sh > 0 {
+		ndcY = jy * 2.0 / sh
+	}
+
+	// Schedule the jitter for the NEXT frame's cam.Update().
+	s.cam.SetJitter(ndcX, ndcY)
+
+	// Build GPUTAAParams from the camera's CURRENT (jittered) matrices.
+	// currVP reflects the jittered VP for the current frame (applied last frame's prepareTAA jitter).
+	// prevVP reflects the jittered VP that was active in the previous frame.
+	currVP := s.cam.ViewProjectionMatrix()
+	var invCurrVP [16]float32
+	common.Invert4(invCurrVP[:], currVP[:])
+	rawHistoryOnly := float32(0.0)
+	if taaH.RawHistoryOnly() {
+		rawHistoryOnly = 1.0
+	}
+
+	params := taa.GPUTAAParams{
+		InvCurrViewProj:           invCurrVP,
+		PrevViewProj:              s.cam.PrevViewProjectionMatrix(),
+		JitterCurr:                [2]float32{taaH.JitterX(), taaH.JitterY()},
+		JitterPrev:                [2]float32{taaH.PrevJitterX(), taaH.PrevJitterY()},
+		ScreenWidth:               float32(taaH.ScreenWidth()),
+		ScreenHeight:              float32(taaH.ScreenHeight()),
+		BlendFactor:               taaH.BlendFactor(),
+		HistoryRectificationScale: taaH.HistoryRectificationScale(),
+		RawHistoryOnly:            rawHistoryOnly,
+	}
+
+	// Select the active slot's BGP using the renderer's current frame slot.
+	slot := s.r.CurrentFrameSlot()
+
+	bgpKey := "taa_resolve_0"
+	if slot == 1 {
+		bgpKey = "taa_resolve_1"
+	}
+	bgp := taaH.Bgp(bgpKey)
+
+	s.r.WriteBuffers([]bind_group_provider.BufferWrite{
+		{Provider: bgp, Binding: 0, Offset: 0, Data: params.Marshal()},
+	})
+
+	w := uint32(taaH.ScreenWidth())
+	h := uint32(taaH.ScreenHeight())
+	wgX := (w + 7) / 8
+	wgY := (h + 7) / 8
+
+	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+		{
+			PipelineKey:    taaH.PipelineKey("taa_resolve"),
+			Providers:      []renderer.ComputeGroupProvider{{Group: 0, Provider: bgp}},
+			WorkGroupCount: [3]uint32{wgX, wgY, 1},
+		},
+	})
+
+	casBGPKey := "taa_sharpen_0"
+	if slot == 1 {
+		casBGPKey = "taa_sharpen_1"
+	}
+	casBGP := taaH.Bgp(casBGPKey)
+
+	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+		{
+			PipelineKey:    taaH.PipelineKey("taa_sharpen"),
+			Providers:      []renderer.ComputeGroupProvider{{Group: 0, Provider: casBGP}},
+			WorkGroupCount: [3]uint32{wgX, wgY, 1},
+		},
+	})
 }

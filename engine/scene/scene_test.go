@@ -8,6 +8,7 @@ import (
 
 	camera_mocks "github.com/Carmen-Shannon/oxy-go/engine/camera/mocks"
 	game_object_mocks "github.com/Carmen-Shannon/oxy-go/engine/game_object/mocks"
+	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
 	"github.com/Carmen-Shannon/oxy-go/engine/physics"
 	renderer_mocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/mocks"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/taa"
@@ -95,32 +96,11 @@ func (suite *sceneTest) TestSetName() {
 	})
 }
 
-func (suite *sceneTest) TestActive() {
-	suite.Run("default is false", func() {
-		suite.False(suite.scene.Active())
-	})
-
-	suite.Run("WithActive true sets initial state to true", func() {
-		cam := camera_mocks.NewMockCamera(suite.T())
-		cam.EXPECT().BindGroupProvider().Return(nil).Maybe()
-		r := renderer_mocks.NewMockRenderer(suite.T())
-		r.EXPECT().SetInjections(mock.Anything).Return().Maybe()
-		r.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0, nil).Maybe()
-		s := scene.NewScene("active-test", cam, r, scene.WithActive(true))
-		suite.True(s.Active())
-	})
-}
-
-func (suite *sceneTest) TestSetActive() {
-	suite.Run("can toggle active to true", func() {
-		suite.scene.SetActive(true)
-		suite.True(suite.scene.Active())
-	})
-
-	suite.Run("can toggle active back to false", func() {
-		suite.scene.SetActive(true)
-		suite.scene.SetActive(false)
-		suite.False(suite.scene.Active())
+func (suite *sceneTest) TestLifecycle() {
+	suite.Run("default lifecycle is non-nil and registered", func() {
+		lc := suite.scene.Lifecycle()
+		suite.NotNil(lc)
+		suite.Equal(lifecycle.LifecycleStateRegistered, lc.State())
 	})
 }
 

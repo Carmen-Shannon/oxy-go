@@ -64,7 +64,7 @@ func WithWindow(w window.Window) EngineBuilderOption {
 // Returns:
 //   - EngineBuilderOption: option function to apply
 func WithScene(key int, s scene.Scene) EngineBuilderOption {
-	return func(e *engine) { e.scenes[key] = s }
+	return func(e *engine) { e.AddScene(key, s) }
 }
 
 // WithRenderFrameLimit sets an optional render frame rate cap in frames per second.

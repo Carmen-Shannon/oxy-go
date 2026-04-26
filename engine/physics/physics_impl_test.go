@@ -92,7 +92,6 @@ func (suite *physicsImplTest) TestPrepareStepNonRigidBody() {
 	suite.Run("stub body skipped and substeps still computed correctly", func() {
 		p := NewPhysics(WithFixedDt(0.01), WithMaxSubsteps(4))
 		pImpl := p.(*physicsImpl)
-		pImpl.enabled = true
 		pImpl.bodiesCount = 1
 		pImpl.bodies = append(pImpl.bodies, &stubRigidBody{})
 
@@ -107,6 +106,12 @@ func (suite *physicsImplTest) TestPipelineKeys() {
 		p := NewPhysics()
 		pImpl := p.(*physicsImpl)
 		suite.NotNil(pImpl.PipelineKeys())
+	})
+
+	suite.Run("Lifecycle returns initialized lifecycle", func() {
+		p := NewPhysics()
+		pImpl := p.(*physicsImpl)
+		suite.NotNil(pImpl.Lifecycle())
 	})
 
 	suite.Run("SetPipelineKey is visible in PipelineKeys", func() {

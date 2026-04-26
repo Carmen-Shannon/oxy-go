@@ -9,6 +9,7 @@ import (
 	"github.com/Carmen-Shannon/automation/tools/worker"
 	"github.com/Carmen-Shannon/oxy-go/engine/camera"
 	"github.com/Carmen-Shannon/oxy-go/engine/game_object"
+	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
 	"github.com/Carmen-Shannon/oxy-go/engine/light"
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
 	"github.com/Carmen-Shannon/oxy-go/engine/physics"
@@ -27,19 +28,6 @@ import (
 // SceneBuilderOption is a functional option for configuring a Scene.
 // Use the With* functions to create options.
 type SceneBuilderOption func(s *scene)
-
-// WithActive sets whether the scene is active for rendering.
-//
-// Parameters:
-//   - active: whether the scene is active
-//
-// Returns:
-//   - SceneBuilderOption: option function to apply
-func WithActive(active bool) SceneBuilderOption {
-	return func(s *scene) {
-		s.active = active
-	}
-}
 
 // WithObjects adds initial objects to the scene.
 // Objects without IDs will be assigned new IDs.
@@ -99,22 +87,6 @@ func WithCullingDisabled(disabled bool) SceneBuilderOption {
 	}
 }
 
-// WithDebugDisableAnimatorHiZOcclusion forces the Hi-Z mip count sent to
-// animators to zero during PrepareCompute, isolating animator-side Hi-Z
-// occlusion without disabling frustum culling or other animator flow.
-// By default this diagnostic is disabled.
-//
-// Parameters:
-//   - disabled: true to force animators to see zero Hi-Z mips
-//
-// Returns:
-//   - SceneBuilderOption: option function to apply
-func WithDebugDisableAnimatorHiZOcclusion(disabled bool) SceneBuilderOption {
-	return func(s *scene) {
-		s.debugDisableAnimatorHiZOcclusion = disabled
-	}
-}
-
 // WithLighting attaches a pre-configured LightingHandler to the scene, replacing
 // the default handler created by NewScene. Use light.NewLightingHandler with
 // light.WithShadow* options to configure shadow mapping and ambient color before
@@ -133,6 +105,12 @@ func WithLighting(handler light.LightingHandler) SceneBuilderOption {
 }
 
 // WithGBufferHandler attaches a pre-configured GBufferHandler to the scene.
+//
+// Parameters:
+//   - handler: the pre-configured GBufferHandler
+//
+// Returns:
+//   - SceneBuilderOption: option function to apply
 func WithGBufferHandler(handler gbuffer.Handler) SceneBuilderOption {
 	return func(s *scene) {
 		s.gBufferHandler = handler
@@ -195,7 +173,7 @@ func WithTAAHandler(handler taa.Handler) SceneBuilderOption {
 	}
 }
 
-// WithPhysics creates a Physics instance with the given options and attaches it
+// WithPhysicsHandler creates a Physics instance with the given options and attaches it
 // to the scene. GPU resources are initialized lazily when the first rigid body
 // object is added via Add. If not called, objects with RigidBodies will be
 // rendered without physics simulation — no forces, collisions, or integration
@@ -206,9 +184,9 @@ func WithTAAHandler(handler taa.Handler) SceneBuilderOption {
 //
 // Returns:
 //   - SceneBuilderOption: option function to apply
-func WithPhysics(opts ...physics.PhysicsBuilderOption) SceneBuilderOption {
+func WithPhysicsHandler(handler physics.Physics) SceneBuilderOption {
 	return func(s *scene) {
-		s.physicsHandler = physics.NewPhysics(opts...)
+		s.SetPhysicsHandler(handler)
 	}
 }
 
@@ -314,34 +292,35 @@ func NewScene(name string, cam camera.Camera, r renderer.Renderer, options ...Sc
 	}
 
 	s := &scene{
-		mu:                     &sync.RWMutex{},
-		name:                   name,
-		active:                 false,
-		cam:                    cam,
-		r:                      r,
-		animatorPool:           make(map[model.Model][]animator.Animator),
-		registry:               make(map[uint64]game_object.GameObject),
-		instanceLookup:         make(map[animator.Animator]map[uint32]uint64),
-		shadowIndirectBuffers:  make(map[animator.Animator]*wgpu.Buffer),
-		animIndirectBinding:    make(map[animator.Animator]int),
-		nextID:                 1,
-		computeWorkers:         max(runtime.NumCPU()-1, 1),
-		maxBonesGPU:            64,
-		drawBindGroupsPool:     make([]bind_group_provider.BindGroupProvider, 0, 3),
-		drawDeclsPool:          make([]shader.Annotation, 0, 32),
-		drawGroupProvidersPool: make(map[int]bind_group_provider.BindGroupProvider, 8),
-		lightHandler:           light.NewLightingHandler(),
-		gBufferHandler:         gbuffer.NewHandler(),
-		ssaoHandler:            ssao.NewHandler(),
-		compositionHandler:     composition.NewHandler(composition.WithToneMappingEnabled(true), composition.WithExposure(1.0)),
-		ssrHandler:             ssr.NewHandler(),
-		taaHandler:             taa.NewHandler(),
-		physicsSyncGroup:       make(map[int]bind_group_provider.BindGroupProvider),
-		physicsAnimBinding:     -1,
-		lodLevelCache:          make(map[animator.Animator]int),
-		lodShadowBias:          1,
-		drawBindGroupCache:     make(map[drawCacheKey][]bind_group_provider.BindGroupProvider),
-		drawCacheDirty:         true,
+		mu:                       &sync.RWMutex{},
+		name:                     name,
+		lc:                       lifecycle.NewLifecycle(),
+		cam:                      cam,
+		r:                        r,
+		animatorPool:             make(map[model.Model][]animator.Animator),
+		registry:                 make(map[uint64]game_object.GameObject),
+		instanceLookup:           make(map[animator.Animator]map[uint32]uint64),
+		shadowIndirectBuffers:    make(map[animator.Animator]*wgpu.Buffer),
+		animIndirectBinding:      make(map[animator.Animator]int),
+		shadowAnimationProviders: make(map[animator.Animator]bind_group_provider.BindGroupProvider),
+		nextID:                   1,
+		computeWorkers:           max(runtime.NumCPU()-1, 1),
+		maxBonesGPU:              64,
+		drawBindGroupsPool:       make([]bind_group_provider.BindGroupProvider, 0, 3),
+		drawDeclsPool:            make([]shader.Annotation, 0, 32),
+		drawGroupProvidersPool:   make(map[int]bind_group_provider.BindGroupProvider, 8),
+		lightHandler:             light.NewLightingHandler(),
+		gBufferHandler:           gbuffer.NewHandler(),
+		ssaoHandler:              ssao.NewHandler(),
+		compositionHandler:       composition.NewHandler(composition.WithToneMappingEnabled(true), composition.WithExposure(1.0)),
+		ssrHandler:               ssr.NewHandler(),
+		taaHandler:               taa.NewHandler(),
+		physicsSyncGroup:         make(map[int]bind_group_provider.BindGroupProvider),
+		physicsAnimBinding:       -1,
+		lodLevelCache:            make(map[animator.Animator]int),
+		lodShadowBias:            1,
+		drawBindGroupCache:       make(map[drawCacheKey][]bind_group_provider.BindGroupProvider),
+		drawCacheDirty:           true,
 	}
 
 	for _, option := range options {
@@ -386,5 +365,7 @@ func NewScene(name string, cam camera.Camera, r renderer.Renderer, options ...Sc
 		s.hizFallbackView = hizView
 	}
 
+	s.Delegate = s
+	s.registerLifecycleHooks()
 	return s
 }

@@ -14,6 +14,7 @@ import (
 	"math"
 
 	"github.com/Carmen-Shannon/oxy-go/common"
+	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/cogentcore/webgpu/wgpu"
 )
@@ -41,13 +42,6 @@ const (
 // staging, and asynchronous readback of simulation results. All physics compute
 // pipeline dispatches and buffer bindings are driven through this interface.
 type Physics interface {
-	// Enabled returns whether the physics system is active. It becomes true when
-	// at least one body is registered and false when all bodies are removed.
-	//
-	// Returns:
-	//   - bool: true if physics simulation is active
-	Enabled() bool
-
 	// BodiesCount returns the number of body slots currently allocated (including
 	// slots on the free list that have been deactivated but not yet reclaimed).
 	//
@@ -235,9 +229,14 @@ type Physics interface {
 	// Parameters:
 	//   - data: the raw byte slice containing bodiesCount × 160 bytes of GPUBody data
 	ProcessReadback(data []byte)
+
+	// Lifecycle returns the Lifecycle object for managing the physics system's lifecycle events.
+	//
+	// Returns:
+	//   - lifecycle.Lifecycle: the lifecycle manager for the physics system
+	Lifecycle() lifecycle.Lifecycle
 }
 
-func (p *physicsImpl) Enabled() bool                                  { return p.enabled }
 func (p *physicsImpl) BodiesCount() int                               { return p.bodiesCount }
 func (p *physicsImpl) ParticleCount() int                             { return p.particleCount }
 func (p *physicsImpl) Buffers() bind_group_provider.BindGroupProvider { return p.buffers }
@@ -254,6 +253,7 @@ func (p *physicsImpl) ReadbackPending() bool                          { return p
 func (p *physicsImpl) ClearReadbackPending()                          { p.readbackPending = false }
 func (p *physicsImpl) StagingBuffer() *wgpu.Buffer                    { return p.stagingBuffer }
 func (p *physicsImpl) SetStagingBuffer(buf *wgpu.Buffer)              { p.stagingBuffer = buf }
+func (p *physicsImpl) Lifecycle() lifecycle.Lifecycle                 { return p.lc }
 
 func (p *physicsImpl) Bgp(key string) bind_group_provider.BindGroupProvider {
 	return p.bgps[key]
@@ -452,7 +452,6 @@ func (p *physicsImpl) RegisterBody(objID uint64, position, rotation [3]float32, 
 		p.particleDiameter = rb.ParticleRadius() * 2
 	}
 
-	p.enabled = true
 	return bodyIndex
 }
 
@@ -483,10 +482,6 @@ func (p *physicsImpl) RemoveBody(objID uint64) {
 		Offset:   uint64(idx)*160 + 112,
 		Data:     invMassData,
 	})
-
-	if len(p.bodiesMap) == 0 {
-		p.enabled = false
-	}
 }
 
 func (p *physicsImpl) BodyIndex(objID uint64) (int, bool) {
@@ -509,10 +504,6 @@ func (p *physicsImpl) StagedWriteData() []bind_group_provider.BufferWrite {
 }
 
 func (p *physicsImpl) PrepareStep(dt float32) (substeps int, globalsData []byte) {
-	if !p.enabled || p.bodiesCount == 0 {
-		return 0, nil
-	}
-
 	// drain pending forces/torques from all registered RigidBodies and stage
 	// buffer writes targeting GPUBody.ExternalForce (offset 128) and GPUBody.ExternalTorque (offset 144)
 	for i, rb := range p.bodies {
