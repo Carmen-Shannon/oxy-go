@@ -28,6 +28,39 @@ type engineTest struct {
 	engine         Engine
 }
 
+type lifecycleStub struct {
+	state      lifecycle.LifecycleState
+	setStateFn func(target lifecycle.LifecycleState) error
+	onToFn     func(to lifecycle.LifecycleState, hook lifecycle.Hook)
+	onFromFn   func(from lifecycle.LifecycleState, hook lifecycle.Hook)
+}
+
+func (stub *lifecycleStub) State() lifecycle.LifecycleState {
+	return stub.state
+}
+
+func (stub *lifecycleStub) SetState(state lifecycle.LifecycleState) error {
+	if stub.setStateFn != nil {
+		return stub.setStateFn(state)
+	}
+	stub.state = state
+	return nil
+}
+
+func (stub *lifecycleStub) OnTransitionTo(to lifecycle.LifecycleState, hook lifecycle.Hook) func() {
+	if stub.onToFn != nil {
+		stub.onToFn(to, hook)
+	}
+	return func() {}
+}
+
+func (stub *lifecycleStub) OnTransitionFrom(from lifecycle.LifecycleState, hook lifecycle.Hook) func() {
+	if stub.onFromFn != nil {
+		stub.onFromFn(from, hook)
+	}
+	return func() {}
+}
+
 func newSceneMockWithLifecycle(t *testing.T, name string, state lifecycle.LifecycleState) (*scene_mocks.MockScene, lifecycle.Lifecycle) {
 	sceneMock := scene_mocks.NewMockScene(t)
 	lc := lifecycle.NewLifecycle(lifecycle.WithState(state))
@@ -937,5 +970,344 @@ func (suite *engineTest) TestResizeCallback() {
 		suite.Len(eImpl.resizeEvents, 1)
 		dims := <-eImpl.resizeEvents
 		suite.Equal([2]int{1920, 1080}, dims)
+	})
+}
+
+func (suite *engineTest) TestStartSceneLifecycle() {
+	suite.Run("nil scene is ignored", func() {
+		eImpl := suite.engine.(*engine)
+		suite.NotPanics(func() { eImpl.startSceneLifecycle(nil) })
+	})
+
+	suite.Run("scene with nil lifecycle is ignored", func() {
+		eImpl := suite.engine.(*engine)
+		sceneMock := scene_mocks.NewMockScene(suite.T())
+		sceneMock.EXPECT().Lifecycle().Return(nil).Maybe()
+
+		eImpl.startSceneLifecycle(sceneMock)
+
+		sceneMock.AssertNotCalled(suite.T(), "Name")
+	})
+
+	suite.Run("non-startable state remains unchanged", func() {
+		eImpl := suite.engine.(*engine)
+		sceneMock, lc := newSceneMockWithLifecycle(suite.T(), "paused-scene", lifecycle.LifecycleStatePaused)
+
+		eImpl.startSceneLifecycle(sceneMock)
+
+		suite.Equal(lifecycle.LifecycleStatePaused, lc.State())
+	})
+
+	suite.Run("registered startup failure stops before running", func() {
+		eImpl := suite.engine.(*engine)
+		sceneMock, lc := newSceneMockWithLifecycle(suite.T(), "registered-fail-scene", lifecycle.LifecycleStateRegistered)
+		lc.OnTransitionTo(lifecycle.LifecycleStateStarting, lifecycle.Hook(func() error {
+			return fmt.Errorf("start failed")
+		}))
+
+		eImpl.startSceneLifecycle(sceneMock)
+
+		suite.Equal(lifecycle.LifecycleStateStarting, lc.State())
+	})
+
+	suite.Run("starting to running hook failure still reaches running state", func() {
+		eImpl := suite.engine.(*engine)
+		sceneMock, lc := newSceneMockWithLifecycle(suite.T(), "starting-fail-scene", lifecycle.LifecycleStateStarting)
+		lc.OnTransitionTo(lifecycle.LifecycleStateRunning, lifecycle.Hook(func() error {
+			return fmt.Errorf("running failed")
+		}))
+
+		eImpl.startSceneLifecycle(sceneMock)
+
+		suite.Equal(lifecycle.LifecycleStateRunning, lc.State())
+	})
+
+	suite.Run("registered scene running transition failure after starting branch", func() {
+		eImpl := suite.engine.(*engine)
+		sceneMock, lc := newSceneMockWithLifecycle(suite.T(), "registered-running-fail-scene", lifecycle.LifecycleStateRegistered)
+		lc.OnTransitionTo(lifecycle.LifecycleStateRunning, lifecycle.Hook(func() error {
+			return fmt.Errorf("running failed")
+		}))
+
+		eImpl.startSceneLifecycle(sceneMock)
+
+		suite.Equal(lifecycle.LifecycleStateRunning, lc.State())
+	})
+}
+
+func (suite *engineTest) TestShutdownSceneLifecycle() {
+	suite.Run("nil scene returns false", func() {
+		eImpl := suite.engine.(*engine)
+		suite.False(eImpl.shutdownSceneLifecycle(nil))
+	})
+
+	suite.Run("scene with nil lifecycle returns false", func() {
+		eImpl := suite.engine.(*engine)
+		sceneMock := scene_mocks.NewMockScene(suite.T())
+		sceneMock.EXPECT().Lifecycle().Return(nil).Maybe()
+		sceneMock.EXPECT().Name().Return("nil-lifecycle-scene").Maybe()
+
+		suite.False(eImpl.shutdownSceneLifecycle(sceneMock))
+	})
+
+	suite.Run("already removed scene returns true", func() {
+		eImpl := suite.engine.(*engine)
+		sceneMock, _ := newSceneMockWithLifecycle(suite.T(), "removed-scene", lifecycle.LifecycleStateRemoved)
+
+		suite.True(eImpl.shutdownSceneLifecycle(sceneMock))
+	})
+
+	suite.Run("unsupported shutdown state returns false", func() {
+		eImpl := suite.engine.(*engine)
+		sceneMock, lc := newSceneMockWithLifecycle(suite.T(), "starting-scene", lifecycle.LifecycleStateStarting)
+
+		suite.False(eImpl.shutdownSceneLifecycle(sceneMock))
+		suite.Equal(lifecycle.LifecycleStateStarting, lc.State())
+	})
+
+	suite.Run("transition failure returns false", func() {
+		eImpl := suite.engine.(*engine)
+		sceneMock, lc := newSceneMockWithLifecycle(suite.T(), "running-fail-scene", lifecycle.LifecycleStateRunning)
+		lc.OnTransitionTo(lifecycle.LifecycleStateDraining, lifecycle.Hook(func() error {
+			return fmt.Errorf("draining failed")
+		}))
+
+		suite.False(eImpl.shutdownSceneLifecycle(sceneMock))
+		suite.Equal(lifecycle.LifecycleStateDraining, lc.State())
+	})
+
+	suite.Run("running scene transitions to removed on success", func() {
+		eImpl := suite.engine.(*engine)
+		sceneMock, lc := newSceneMockWithLifecycle(suite.T(), "running-scene", lifecycle.LifecycleStateRunning)
+
+		suite.True(eImpl.shutdownSceneLifecycle(sceneMock))
+		suite.Equal(lifecycle.LifecycleStateRemoved, lc.State())
+	})
+
+	suite.Run("continues when current state already equals target", func() {
+		eImpl := suite.engine.(*engine)
+		calls := 0
+		lcStub := &lifecycleStub{state: lifecycle.LifecycleStateRunning}
+		lcStub.setStateFn = func(target lifecycle.LifecycleState) error {
+			calls++
+			if calls == 1 {
+				lcStub.state = lifecycle.LifecycleStateStopped
+				return nil
+			}
+			lcStub.state = target
+			return nil
+		}
+
+		sceneMock := scene_mocks.NewMockScene(suite.T())
+		sceneMock.EXPECT().Lifecycle().Return(lcStub).Maybe()
+		sceneMock.EXPECT().Name().Return("continue-branch-scene").Maybe()
+
+		suite.True(eImpl.shutdownSceneLifecycle(sceneMock))
+		suite.Equal(lifecycle.LifecycleStateRemoved, lcStub.State())
+	})
+
+	suite.Run("returns false when lifecycle does not reach removed", func() {
+		eImpl := suite.engine.(*engine)
+		lcStub := &lifecycleStub{state: lifecycle.LifecycleStateStopped}
+		lcStub.setStateFn = func(target lifecycle.LifecycleState) error {
+			return nil
+		}
+
+		sceneMock := scene_mocks.NewMockScene(suite.T())
+		sceneMock.EXPECT().Lifecycle().Return(lcStub).Maybe()
+		sceneMock.EXPECT().Name().Return("not-removed-scene").Maybe()
+
+		suite.False(eImpl.shutdownSceneLifecycle(sceneMock))
+		suite.Equal(lifecycle.LifecycleStateStopped, lcStub.State())
+	})
+}
+
+func (suite *engineTest) TestRemoveSceneNoOpBranches() {
+	suite.Run("missing scene key is ignored", func() {
+		eImpl := suite.engine.(*engine)
+		initialCount := len(eImpl.scenes)
+
+		suite.engine.RemoveScene(999)
+
+		suite.Equal(initialCount, len(eImpl.scenes))
+	})
+
+	suite.Run("nil scene map entry is ignored without deletion", func() {
+		eImpl := suite.engine.(*engine)
+		eImpl.scenes[77] = nil
+
+		suite.engine.RemoveScene(77)
+
+		_, exists := eImpl.scenes[77]
+		suite.True(exists)
+		suite.Nil(eImpl.scenes[77])
+	})
+
+	suite.Run("scene that cannot complete shutdown is not deleted", func() {
+		eImpl := suite.engine.(*engine)
+		sceneMock := scene_mocks.NewMockScene(suite.T())
+		sceneMock.EXPECT().Lifecycle().Return(nil).Maybe()
+		sceneMock.EXPECT().Name().Return("shutdown-false-scene").Maybe()
+		eImpl.scenes[88] = sceneMock
+
+		suite.engine.RemoveScene(88)
+
+		_, exists := eImpl.scenes[88]
+		suite.True(exists)
+		suite.Equal(sceneMock, eImpl.scenes[88])
+	})
+}
+
+func (suite *engineTest) TestHandleRenderLifecycleFilteringBranches() {
+	suite.Run("skips nil scene entries and nil lifecycle scenes", func() {
+		eImpl := suite.engine.(*engine)
+		for key := range eImpl.scenes {
+			delete(eImpl.scenes, key)
+		}
+
+		nilLifecycleScene := scene_mocks.NewMockScene(suite.T())
+		nilLifecycleScene.EXPECT().Lifecycle().Return(nil).Maybe()
+		eImpl.scenes[0] = nil
+		eImpl.scenes[1] = nilLifecycleScene
+
+		called := make(chan struct{}, 1)
+		var once sync.Once
+		eImpl.renderCallback = func(dt float32) {
+			once.Do(func() { called <- struct{}{} })
+		}
+
+		eImpl.wg.Add(1)
+		go eImpl.handleRender()
+
+		select {
+		case <-called:
+		case <-time.After(2 * time.Second):
+			suite.Fail("render callback was not called within timeout")
+		}
+
+		eImpl.signalQuit()
+
+		done := make(chan struct{})
+		go func() { eImpl.wg.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			suite.Fail("handleRender did not exit within timeout")
+		}
+	})
+
+	suite.Run("paused driver scene with nil renderer skips render pipeline", func() {
+		eImpl := suite.engine.(*engine)
+		sceneMock, _ := suite.configurePrimaryScene("paused-no-renderer-scene", lifecycle.LifecycleStatePaused)
+		sceneMock.EXPECT().Renderer().Return(nil).Maybe()
+
+		called := make(chan struct{}, 1)
+		var once sync.Once
+		eImpl.renderCallback = func(dt float32) {
+			once.Do(func() { called <- struct{}{} })
+		}
+
+		eImpl.wg.Add(1)
+		go eImpl.handleRender()
+
+		select {
+		case <-called:
+		case <-time.After(2 * time.Second):
+			suite.Fail("render callback was not called within timeout")
+		}
+
+		eImpl.signalQuit()
+
+		done := make(chan struct{})
+		go func() { eImpl.wg.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			suite.Fail("handleRender did not exit within timeout")
+		}
+
+		sceneMock.AssertNotCalled(suite.T(), "PrepareCompute")
+	})
+
+	suite.Run("paused compute path handles BeginComputeFrame error", func() {
+		eImpl := suite.engine.(*engine)
+		rendererMock := renderer_mocks.NewMockRenderer(suite.T())
+		sceneMock, _ := suite.configurePrimaryScene("paused-compute-error-scene", lifecycle.LifecycleStatePaused)
+
+		sceneMock.EXPECT().Renderer().Return(rendererMock).Maybe()
+		rendererMock.EXPECT().SyncGPUTimestamps().Return().Maybe()
+		rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
+		sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
+		rendererMock.EXPECT().BeginComputeFrame().Return(fmt.Errorf("compute failed")).Maybe()
+
+		called := make(chan struct{}, 1)
+		var once sync.Once
+		eImpl.renderCallback = func(dt float32) {
+			once.Do(func() { called <- struct{}{} })
+		}
+
+		eImpl.wg.Add(1)
+		go eImpl.handleRender()
+
+		select {
+		case <-called:
+		case <-time.After(2 * time.Second):
+			suite.Fail("render callback was not called within timeout")
+		}
+
+		eImpl.signalQuit()
+
+		done := make(chan struct{})
+		go func() { eImpl.wg.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			suite.Fail("handleRender did not exit within timeout")
+		}
+
+		rendererMock.AssertNotCalled(suite.T(), "FlushFrame")
+		sceneMock.AssertNotCalled(suite.T(), "PrepareCompute")
+	})
+
+	suite.Run("running compute path handles BeginComputeFrame error", func() {
+		eImpl := suite.engine.(*engine)
+		rendererMock := renderer_mocks.NewMockRenderer(suite.T())
+		sceneMock, _ := suite.configurePrimaryScene("running-compute-error-scene", lifecycle.LifecycleStateRunning)
+
+		sceneMock.EXPECT().Renderer().Return(rendererMock).Maybe()
+		rendererMock.EXPECT().SyncGPUTimestamps().Return().Maybe()
+		rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
+		sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
+		rendererMock.EXPECT().BeginComputeFrame().Return(fmt.Errorf("compute failed")).Maybe()
+		rendererMock.EXPECT().BeginGeometryFrame().Return(fmt.Errorf("geometry failed")).Maybe()
+		sceneMock.EXPECT().BeginHDRFrame().Return(fmt.Errorf("hdr failed")).Maybe()
+		rendererMock.EXPECT().BeginFrame().Return(fmt.Errorf("frame failed")).Maybe()
+
+		called := make(chan struct{}, 1)
+		var once sync.Once
+		eImpl.renderCallback = func(dt float32) {
+			once.Do(func() { called <- struct{}{} })
+		}
+
+		eImpl.wg.Add(1)
+		go eImpl.handleRender()
+
+		select {
+		case <-called:
+		case <-time.After(2 * time.Second):
+			suite.Fail("render callback was not called within timeout")
+		}
+
+		eImpl.signalQuit()
+
+		done := make(chan struct{})
+		go func() { eImpl.wg.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			suite.Fail("handleRender did not exit within timeout")
+		}
+
+		sceneMock.AssertNotCalled(suite.T(), "PrepareCompute")
 	})
 }

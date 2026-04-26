@@ -70,6 +70,30 @@ func startAnimator(anim animator.Animator) animator.Animator {
 	return anim
 }
 
+func newSceneLifecycleHelper(r renderer.Renderer) *scene {
+	s := &scene{
+		mu:                     &sync.RWMutex{},
+		DelegateImpl:           common.DelegateImpl[Scene]{},
+		lc:                     lifecycle.NewLifecycle(),
+		r:                      r,
+		animatorPool:           make(map[model.Model][]animator.Animator),
+		registry:               make(map[uint64]game_object.GameObject),
+		physicsSyncGroup:       make(map[int]bind_group_provider.BindGroupProvider),
+		physicsSyncAnimMap:     make(map[animator.Animator]int),
+		lightHandler:           light.NewLightingHandler(),
+		gBufferHandler:         gbuffer.NewGBufferHandler(),
+		ssaoHandler:            ssao.NewHandler(),
+		compositionHandler:     composition.NewHandler(),
+		ssrHandler:             ssr.NewHandler(),
+		taaHandler:             taa.NewHandler(),
+		drawGroupProvidersPool: make(map[int]bind_group_provider.BindGroupProvider),
+		shadowIndirectBuffers:  make(map[animator.Animator]*wgpu.Buffer),
+		animIndirectBinding:    make(map[animator.Animator]int),
+	}
+	s.SetDelegate(s)
+	return s
+}
+
 func (suite *sceneImplTest) SetupSuite() {
 	for {
 		if _, err := os.Stat("go.mod"); err == nil {
@@ -11861,6 +11885,12 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 }
 
 func (suite *sceneImplTest) TestAcquireCompositionFrame() {
+	suite.Run("nil lifecycle returns nil and does not begin composition frame", func() {
+		suite.scene.lc = nil
+		suite.NoError(suite.scene.AcquireCompositionFrame())
+		suite.rendererMock.AssertNotCalled(suite.T(), "BeginCompositionFrame")
+	})
+
 	suite.Run("nil renderer returns nil", func() {
 		suite.scene.lc = lifecycle.NewLifecycle()
 		suite.scene.r = nil
@@ -11887,6 +11917,497 @@ func (suite *sceneImplTest) TestAcquireCompositionFrame() {
 		suite.NoError(suite.scene.lc.SetState(lifecycle.LifecycleStateRunning))
 		suite.rendererMock.EXPECT().BeginCompositionFrame().Return(nil).Once()
 		suite.NoError(suite.scene.AcquireCompositionFrame())
+	})
+}
+
+func (suite *sceneImplTest) TestTransitionChildLifecycle() {
+	suite.Run("nil lifecycle returns nil", func() {
+		suite.NoError(transitionChildLifecycle(nil, lifecycle.LifecycleStateRunning))
+	})
+
+	suite.Run("running target transitions paused to running", func() {
+		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStatePaused))
+		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleStateRunning))
+		suite.Equal(lifecycle.LifecycleStateRunning, lc.State())
+	})
+
+	suite.Run("running target leaves already running lifecycle unchanged", func() {
+		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))
+		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleStateRunning))
+		suite.Equal(lifecycle.LifecycleStateRunning, lc.State())
+	})
+
+	suite.Run("running target transitions draining to running", func() {
+		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateDraining))
+		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleStateRunning))
+		suite.Equal(lifecycle.LifecycleStateRunning, lc.State())
+	})
+
+	suite.Run("running target leaves default branch state unchanged", func() {
+		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRegistered))
+		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleStateRunning))
+		suite.Equal(lifecycle.LifecycleStateRegistered, lc.State())
+	})
+
+	suite.Run("paused target transitions running to paused", func() {
+		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))
+		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleStatePaused))
+		suite.Equal(lifecycle.LifecycleStatePaused, lc.State())
+	})
+
+	suite.Run("paused target leaves default branch state unchanged", func() {
+		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRegistered))
+		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleStatePaused))
+		suite.Equal(lifecycle.LifecycleStateRegistered, lc.State())
+	})
+
+	suite.Run("draining target transitions running to draining", func() {
+		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))
+		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleStateDraining))
+		suite.Equal(lifecycle.LifecycleStateDraining, lc.State())
+	})
+
+	suite.Run("draining target transitions errored to draining", func() {
+		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateErrored))
+		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleStateDraining))
+		suite.Equal(lifecycle.LifecycleStateDraining, lc.State())
+	})
+
+	suite.Run("draining target leaves already draining lifecycle unchanged", func() {
+		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateDraining))
+		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleStateDraining))
+		suite.Equal(lifecycle.LifecycleStateDraining, lc.State())
+	})
+
+	suite.Run("draining target leaves default branch state unchanged", func() {
+		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStatePaused))
+		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleStateDraining))
+		suite.Equal(lifecycle.LifecycleStatePaused, lc.State())
+	})
+
+	suite.Run("stopped target transitions registered to stopped", func() {
+		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRegistered))
+		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleStateStopped))
+		suite.Equal(lifecycle.LifecycleStateStopped, lc.State())
+	})
+
+	suite.Run("stopped target transitions paused to stopped", func() {
+		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStatePaused))
+		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleStateStopped))
+		suite.Equal(lifecycle.LifecycleStateStopped, lc.State())
+	})
+
+	suite.Run("stopped target transitions draining to stopped", func() {
+		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateDraining))
+		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleStateStopped))
+		suite.Equal(lifecycle.LifecycleStateStopped, lc.State())
+	})
+
+	suite.Run("stopped target leaves already stopped lifecycle unchanged", func() {
+		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateStopped))
+		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleStateStopped))
+		suite.Equal(lifecycle.LifecycleStateStopped, lc.State())
+	})
+
+	suite.Run("stopped target transitions running through draining to stopped", func() {
+		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))
+		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleStateStopped))
+		suite.Equal(lifecycle.LifecycleStateStopped, lc.State())
+	})
+
+	suite.Run("stopped target transitions errored through draining to stopped", func() {
+		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateErrored))
+		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleStateStopped))
+		suite.Equal(lifecycle.LifecycleStateStopped, lc.State())
+	})
+
+	suite.Run("stopped target returns error when intermediate draining transition fails", func() {
+		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))
+		lc.OnTransitionTo(lifecycle.LifecycleStateDraining, lifecycle.Hook(func() error {
+			return errors.New("drain failed")
+		}))
+		err := transitionChildLifecycle(lc, lifecycle.LifecycleStateStopped)
+		suite.Error(err)
+		suite.Equal(lifecycle.LifecycleStateDraining, lc.State())
+	})
+
+	suite.Run("stopped target leaves default branch state unchanged", func() {
+		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateStarting))
+		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleStateStopped))
+		suite.Equal(lifecycle.LifecycleStateStarting, lc.State())
+	})
+
+	suite.Run("removed target transitions stopped to removed", func() {
+		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateStopped))
+		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleStateRemoved))
+		suite.Equal(lifecycle.LifecycleStateRemoved, lc.State())
+	})
+
+	suite.Run("removed target transitions running through stop to removed", func() {
+		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))
+		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleStateRemoved))
+		suite.Equal(lifecycle.LifecycleStateRemoved, lc.State())
+	})
+
+	suite.Run("removed target no-ops when already removed", func() {
+		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRemoved))
+		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleStateRemoved))
+		suite.Equal(lifecycle.LifecycleStateRemoved, lc.State())
+	})
+
+	suite.Run("removed target leaves default branch state unchanged", func() {
+		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateStarting))
+		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleStateRemoved))
+		suite.Equal(lifecycle.LifecycleStateStarting, lc.State())
+	})
+
+	suite.Run("removed target returns error when stop transition fails", func() {
+		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))
+		lc.OnTransitionTo(lifecycle.LifecycleStateDraining, lifecycle.Hook(func() error {
+			return errors.New("drain failed")
+		}))
+		err := transitionChildLifecycle(lc, lifecycle.LifecycleStateRemoved)
+		suite.Error(err)
+		suite.Equal(lifecycle.LifecycleStateDraining, lc.State())
+	})
+
+	suite.Run("unknown target returns nil and leaves state unchanged", func() {
+		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))
+		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleState(999)))
+		suite.Equal(lifecycle.LifecycleStateRunning, lc.State())
+	})
+}
+
+func (suite *sceneImplTest) TestSceneLifecycleChildren() {
+	suite.Run("returns animators without nil entries and current physics handler", func() {
+		animOne := animator_mocks.NewMockAnimator(suite.T())
+		animTwo := animator_mocks.NewMockAnimator(suite.T())
+		mdlOne := model_mocks.NewMockModel(suite.T())
+		mdlTwo := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{
+			mdlOne: {animOne, nil},
+			mdlTwo: {nil, animTwo},
+		}
+		ph := physics.NewPhysics()
+		suite.scene.physicsHandler = ph
+
+		anims, physicsHandler := suite.scene.sceneLifecycleChildren()
+
+		suite.Len(anims, 2)
+		suite.ElementsMatch([]animator.Animator{animOne, animTwo}, anims)
+		suite.Equal(ph, physicsHandler)
+	})
+}
+
+func (suite *sceneImplTest) TestTransitionSceneChildren() {
+	suite.Run("transitions animator and physics children to target state", func() {
+		animLCOne := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStatePaused))
+		animLCTwo := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateDraining))
+		animOne := animator_mocks.NewMockAnimator(suite.T())
+		animTwo := animator_mocks.NewMockAnimator(suite.T())
+		animOne.EXPECT().Lifecycle().Return(animLCOne).Maybe()
+		animTwo.EXPECT().Lifecycle().Return(animLCTwo).Maybe()
+
+		phLC := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStatePaused))
+		phMock := physics_mocks.NewMockPhysics(suite.T())
+		phMock.EXPECT().Lifecycle().Return(phLC).Maybe()
+
+		mdlOne := model_mocks.NewMockModel(suite.T())
+		mdlTwo := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{
+			mdlOne: {animOne},
+			mdlTwo: {animTwo},
+		}
+		suite.scene.physicsHandler = phMock
+
+		err := suite.scene.transitionSceneChildren(lifecycle.LifecycleStateRunning)
+
+		suite.NoError(err)
+		suite.Equal(lifecycle.LifecycleStateRunning, animLCOne.State())
+		suite.Equal(lifecycle.LifecycleStateRunning, animLCTwo.State())
+		suite.Equal(lifecycle.LifecycleStateRunning, phLC.State())
+	})
+
+	suite.Run("joins transition errors with animator model names and physics context", func() {
+		animNamedLC := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))
+		animNamedLC.OnTransitionTo(lifecycle.LifecycleStateDraining, lifecycle.Hook(func() error {
+			return errors.New("anim named failed")
+		}))
+		namedAnim := animator_mocks.NewMockAnimator(suite.T())
+		namedAnim.EXPECT().Lifecycle().Return(animNamedLC).Maybe()
+		namedModel := model_mocks.NewMockModel(suite.T())
+		namedModel.EXPECT().Name().Return("hero").Maybe()
+		namedAnim.EXPECT().Model().Return(namedModel).Maybe()
+
+		animNilLC := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))
+		animNilLC.OnTransitionTo(lifecycle.LifecycleStateDraining, lifecycle.Hook(func() error {
+			return errors.New("anim nil failed")
+		}))
+		nilModelAnim := animator_mocks.NewMockAnimator(suite.T())
+		nilModelAnim.EXPECT().Lifecycle().Return(animNilLC).Maybe()
+		nilModelAnim.EXPECT().Model().Return(nil).Maybe()
+
+		phLC := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))
+		phLC.OnTransitionTo(lifecycle.LifecycleStateDraining, lifecycle.Hook(func() error {
+			return errors.New("physics failed")
+		}))
+		phMock := physics_mocks.NewMockPhysics(suite.T())
+		phMock.EXPECT().Lifecycle().Return(phLC).Maybe()
+
+		mdlOne := model_mocks.NewMockModel(suite.T())
+		mdlTwo := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{
+			mdlOne: {namedAnim},
+			mdlTwo: {nilModelAnim},
+		}
+		suite.scene.physicsHandler = phMock
+
+		err := suite.scene.transitionSceneChildren(lifecycle.LifecycleStateDraining)
+
+		suite.Error(err)
+		suite.Contains(err.Error(), `animator "hero" lifecycle transition to 4 failed`)
+		suite.Contains(err.Error(), `animator "<nil>" lifecycle transition to 4 failed`)
+		suite.Contains(err.Error(), "physics lifecycle transition to 4 failed")
+	})
+
+	suite.Run("transitions animators when physics handler is nil", func() {
+		animLC := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStatePaused))
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(animLC).Maybe()
+
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{
+			model_mocks.NewMockModel(suite.T()): {animMock},
+		}
+		suite.scene.physicsHandler = nil
+
+		err := suite.scene.transitionSceneChildren(lifecycle.LifecycleStateRunning)
+
+		suite.NoError(err)
+		suite.Equal(lifecycle.LifecycleStateRunning, animLC.State())
+	})
+}
+
+func (suite *sceneImplTest) TestRegisterLifecycleHooks() {
+	suite.Run("nil scene lifecycle is a no-op", func() {
+		s := newSceneLifecycleHelper(suite.rendererMock)
+		s.lc = nil
+		suite.NotPanics(func() { s.registerLifecycleHooks() })
+	})
+
+	suite.Run("pause resume drain and stop transitions fan out to children", func() {
+		animLC := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(animLC).Maybe()
+
+		phLC := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))
+		phMock := physics_mocks.NewMockPhysics(suite.T())
+		phMock.EXPECT().Lifecycle().Return(phLC).Maybe()
+
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{
+			model_mocks.NewMockModel(suite.T()): {animMock},
+		}
+		suite.scene.physicsHandler = phMock
+		suite.scene.registerLifecycleHooks()
+
+		suite.NoError(suite.scene.lc.SetState(lifecycle.LifecycleStateStarting))
+		suite.NoError(suite.scene.lc.SetState(lifecycle.LifecycleStateRunning))
+		suite.NoError(suite.scene.lc.SetState(lifecycle.LifecycleStatePaused))
+		suite.NoError(suite.scene.lc.SetState(lifecycle.LifecycleStateRunning))
+		suite.NoError(suite.scene.lc.SetState(lifecycle.LifecycleStateDraining))
+		suite.NoError(suite.scene.lc.SetState(lifecycle.LifecycleStateStopped))
+
+		suite.Equal(lifecycle.LifecycleStateStopped, animLC.State())
+		suite.Equal(lifecycle.LifecycleStateStopped, phLC.State())
+	})
+
+	suite.Run("removed transition fans out children and runs cleanup", func() {
+		rendererMock := renderer_mocks.NewMockRenderer(suite.T())
+		rendererMock.EXPECT().WaitIdle().Return().Once()
+		s := newSceneLifecycleHelper(rendererMock)
+
+		animLC := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateStopped))
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(animLC).Maybe()
+
+		phLC := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateStopped))
+		phMock := physics_mocks.NewMockPhysics(suite.T())
+		phMock.EXPECT().Lifecycle().Return(phLC).Maybe()
+		phMock.EXPECT().Bgps().Return(map[string]bind_group_provider.BindGroupProvider{}).Maybe()
+		phMock.EXPECT().Buffers().Return(nil).Once()
+		phMock.EXPECT().StagingBuffer().Return(nil).Once()
+
+		s.animatorPool = map[model.Model][]animator.Animator{
+			model_mocks.NewMockModel(suite.T()): {animMock},
+		}
+		s.physicsHandler = phMock
+		s.registerLifecycleHooks()
+
+		suite.NoError(s.lc.SetState(lifecycle.LifecycleStateStopped))
+		suite.NoError(s.lc.SetState(lifecycle.LifecycleStateRemoved))
+		suite.Equal(lifecycle.LifecycleStateRemoved, animLC.State())
+		suite.Equal(lifecycle.LifecycleStateRemoved, phLC.State())
+		suite.Nil(s.physicsHandler)
+		suite.Len(s.animatorPool, 0)
+	})
+}
+
+func (suite *sceneImplTest) TestReleaseSceneResources() {
+	suite.Run("resets scene-owned state maps and flags", func() {
+		suite.rendererMock.EXPECT().WaitIdle().Return().Once()
+
+		suite.scene.lightObjects = []game_object.GameObject{nil}
+		suite.scene.lightShadowEntries = []light.GPULightShadowEntry{{}}
+		suite.scene.lightShadowMap = map[light.Light]uint32{light.NewLight(light.LightTypeDirectional): 1}
+		suite.scene.lightPrevSlotMap = map[light.Light]uint32{light.NewLight(light.LightTypePoint): 2}
+		suite.scene.writePool = []bind_group_provider.BufferWrite{{Binding: 1}}
+		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{bind_group_provider.NewBindGroupProvider("draw_bg")}
+		suite.scene.drawDeclsPool = []shader.Annotation{{Line: 1}}
+		suite.scene.drawGroupProvidersPool = map[int]bind_group_provider.BindGroupProvider{1: bind_group_provider.NewBindGroupProvider("draw_provider")}
+		suite.scene.drawBindGroupCache = map[drawCacheKey][]bind_group_provider.BindGroupProvider{
+			{pipelineKey: "key"}: {bind_group_provider.NewBindGroupProvider("cache_provider")},
+		}
+		suite.scene.shadowIndirectBuffers = map[animator.Animator]*wgpu.Buffer{nil: nil}
+		suite.scene.animIndirectBinding = map[animator.Animator]int{nil: 5}
+		suite.scene.shadowAnimationProviders = map[animator.Animator]bind_group_provider.BindGroupProvider{nil: bind_group_provider.NewBindGroupProvider("shadow_anim")}
+		suite.scene.instanceLookup = map[animator.Animator]map[uint32]uint64{nil: map[uint32]uint64{0: 1}}
+		suite.scene.lodLevelCache = map[animator.Animator]int{nil: 1}
+		suite.scene.injections = map[string]string{"x": "y"}
+		suite.scene.drawCacheDirty = false
+		suite.scene.postProcessingInitialized = true
+		suite.scene.tileBufferCapacity = 17
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{model_mocks.NewMockModel(suite.T()): {nil}}
+		suite.scene.registry = map[uint64]game_object.GameObject{1: nil}
+		suite.scene.physicsSyncGroup = map[int]bind_group_provider.BindGroupProvider{7: nil}
+		suite.scene.physicsSyncAnimMap = map[animator.Animator]int{nil: 3}
+		suite.scene.physicsHandler = physics.NewPhysics()
+
+		err := suite.scene.releaseSceneResources()
+
+		suite.NoError(err)
+		suite.Nil(suite.scene.lightObjects)
+		suite.Nil(suite.scene.lightShadowEntries)
+		suite.Nil(suite.scene.lightShadowMap)
+		suite.Nil(suite.scene.lightPrevSlotMap)
+		suite.Nil(suite.scene.writePool)
+		suite.Nil(suite.scene.drawBindGroupsPool)
+		suite.Nil(suite.scene.drawDeclsPool)
+		suite.Nil(suite.scene.drawGroupProvidersPool)
+		suite.Nil(suite.scene.drawBindGroupCache)
+		suite.Nil(suite.scene.shadowIndirectBuffers)
+		suite.Nil(suite.scene.animIndirectBinding)
+		suite.Nil(suite.scene.shadowAnimationProviders)
+		suite.Nil(suite.scene.instanceLookup)
+		suite.Nil(suite.scene.lodLevelCache)
+		suite.Nil(suite.scene.injections)
+		suite.True(suite.scene.drawCacheDirty)
+		suite.False(suite.scene.postProcessingInitialized)
+		suite.Equal(0, suite.scene.tileBufferCapacity)
+		suite.Nil(suite.scene.physicsHandler)
+		suite.NotNil(suite.scene.animatorPool)
+		suite.NotNil(suite.scene.registry)
+		suite.NotNil(suite.scene.physicsSyncGroup)
+		suite.NotNil(suite.scene.physicsSyncAnimMap)
+		suite.Len(suite.scene.animatorPool, 0)
+		suite.Len(suite.scene.registry, 0)
+		suite.Len(suite.scene.physicsSyncGroup, 0)
+		suite.Len(suite.scene.physicsSyncAnimMap, 0)
+	})
+}
+
+func (suite *sceneImplTest) TestReleasePhysicsResources() {
+	suite.Run("nil physics handler and nil groups are safely skipped", func() {
+		suite.scene.physicsHandler = nil
+		suite.scene.physicsSyncGroup = map[int]bind_group_provider.BindGroupProvider{0: nil}
+		suite.scene.boneParticleUpdateGroups = []*boneParticleUpdateGroup{nil, &boneParticleUpdateGroup{bgp: nil}}
+		suite.scene.physicsSyncWrites = []bind_group_provider.BufferWrite{{Binding: 0}}
+
+		suite.scene.releasePhysicsResources()
+
+		suite.NotNil(suite.scene.physicsSyncGroup)
+		suite.NotNil(suite.scene.physicsSyncAnimMap)
+		suite.Len(suite.scene.physicsSyncGroup, 0)
+		suite.Len(suite.scene.physicsSyncAnimMap, 0)
+		suite.Nil(suite.scene.physicsSyncWrites)
+		suite.Nil(suite.scene.boneParticleUpdateGroups)
+	})
+
+	suite.Run("releases physics sync and bone update providers", func() {
+		syncGroupBGP := bind_group_provider.NewBindGroupProvider("physics_sync_group")
+		boneBGP := bind_group_provider.NewBindGroupProvider("bone_update_group")
+		ph := physics.NewPhysics()
+
+		suite.scene.physicsSyncGroup = map[int]bind_group_provider.BindGroupProvider{42: syncGroupBGP}
+		suite.scene.boneParticleUpdateGroups = []*boneParticleUpdateGroup{&boneParticleUpdateGroup{bgp: boneBGP}}
+		suite.scene.physicsHandler = ph
+
+		suite.scene.releasePhysicsResources()
+
+		suite.Nil(suite.scene.physicsHandler)
+		suite.NotNil(suite.scene.physicsSyncGroup)
+		suite.NotNil(suite.scene.physicsSyncAnimMap)
+		suite.Len(suite.scene.physicsSyncGroup, 0)
+		suite.Len(suite.scene.physicsSyncAnimMap, 0)
+		for _, bgp := range ph.Bgps() {
+			suite.Nil(bgp)
+		}
+	})
+}
+
+func (suite *sceneImplTest) TestReleaseLightingResources() {
+	suite.Run("nil lighting handler returns without panic", func() {
+		s := newSceneLifecycleHelper(nil)
+		s.lightHandler = nil
+		suite.NotPanics(func() { s.releaseLightingResources() })
+	})
+
+	suite.Run("releases lighting providers and disables handlers", func() {
+		suite.scene.lightHandler = light.NewLightingHandler()
+		suite.scene.ssaoHandler.SetEnabled(true)
+		shadowHandler := suite.scene.lightHandler.ShadowHandler()
+		shadowHandler.SetBgp("csm_shadow_lit", bind_group_provider.NewBindGroupProvider("csm_shadow_lit"))
+		shadowHandler.SetBgp("spot_shadow", bind_group_provider.NewBindGroupProvider("spot_shadow"))
+
+		suite.scene.releaseLightingResources()
+
+		suite.False(suite.scene.lightHandler.Enabled())
+		suite.False(suite.scene.lightHandler.ContactShadowHandler().Enabled())
+		suite.Nil(suite.scene.lightHandler.Bgp("lights"))
+		suite.Nil(suite.scene.lightHandler.Bgp("light_cull"))
+		suite.Nil(suite.scene.lightHandler.Bgp("tile_lit"))
+		suite.Nil(suite.scene.lightHandler.Bgp("ssao_lit"))
+		suite.Nil(shadowHandler.Bgp("csm_shadow_lit"))
+		suite.Nil(shadowHandler.Bgp("spot_shadow"))
+	})
+}
+
+func (suite *sceneImplTest) TestReleasePostProcessingResources() {
+	suite.Run("nil handlers are safely skipped", func() {
+		s := &scene{}
+		suite.NotPanics(func() { s.releasePostProcessingResources() })
+	})
+
+	suite.Run("enabled handlers are disabled and provider references cleared", func() {
+		s := newSceneLifecycleHelper(nil)
+		s.compositionHandler.SetEnabled(true)
+		s.compositionHandler.SetBloomEnabled(true)
+		s.ssaoHandler.SetEnabled(true)
+		s.ssrHandler.SetEnabled(true)
+		s.taaHandler.SetEnabled(true)
+
+		s.releasePostProcessingResources()
+
+		suite.False(s.compositionHandler.Enabled())
+		suite.False(s.ssaoHandler.Enabled())
+		suite.False(s.ssrHandler.Enabled())
+		suite.False(s.taaHandler.Enabled())
+		suite.Nil(s.compositionHandler.Bgp("composition"))
+		suite.Nil(s.compositionHandler.Bgp("luminance_compute"))
+		suite.Nil(s.ssaoHandler.Bgp("ssao_compute"))
+		suite.Nil(s.ssrHandler.Bgp("ssr_compute"))
+		suite.Nil(s.taaHandler.Bgp("taa_resolve_0"))
+		suite.Nil(s.taaHandler.Bgp("taa_resolve_1"))
+		suite.Nil(s.taaHandler.Bgp("taa_sharpen_0"))
+		suite.Nil(s.taaHandler.Bgp("taa_sharpen_1"))
 	})
 }
 
