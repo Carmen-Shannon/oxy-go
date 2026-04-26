@@ -1,6 +1,7 @@
 package animator
 
 import (
+	"encoding/binary"
 	"testing"
 
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
@@ -382,6 +383,56 @@ func (suite *animatorImplTest) TestPrepareFrame() {
 		suite.skeletal.PrepareFrame(0.016, 0)
 		writes := suite.skeletal.StagedWriteData()
 		suite.NotEmpty(writes)
+	})
+	suite.Run("should serialize simple culling enabled flag at offset 28", func() {
+		readFlag := func(writes []bind_group_provider.BufferWrite, offset int) (uint32, bool) {
+			for _, write := range writes {
+				if len(write.Data) < offset+4 {
+					continue
+				}
+				return binary.LittleEndian.Uint32(write.Data[offset : offset+4]), true
+			}
+			return 0, false
+		}
+
+		suite.simple.PrepareFrame(0.016, 0)
+		disabledWrites := suite.simple.StagedWriteData()
+		disabledFlag, foundDisabled := readFlag(disabledWrites, 28)
+		suite.True(foundDisabled)
+		suite.Equal(uint32(0), disabledFlag)
+
+		var planes [6]GPUFrustumPlane
+		suite.simple.SetFrustumPlanes(planes)
+		suite.simple.PrepareFrame(0.016, 0)
+		enabledWrites := suite.simple.StagedWriteData()
+		enabledFlag, foundEnabled := readFlag(enabledWrites, 28)
+		suite.True(foundEnabled)
+		suite.Equal(uint32(1), enabledFlag)
+	})
+	suite.Run("should serialize skeletal culling enabled flag at offset 132", func() {
+		readFlag := func(writes []bind_group_provider.BufferWrite, offset int) (uint32, bool) {
+			for _, write := range writes {
+				if len(write.Data) < offset+4 {
+					continue
+				}
+				return binary.LittleEndian.Uint32(write.Data[offset : offset+4]), true
+			}
+			return 0, false
+		}
+
+		suite.skeletal.PrepareFrame(0.016, 0)
+		disabledWrites := suite.skeletal.StagedWriteData()
+		disabledFlag, foundDisabled := readFlag(disabledWrites, 132)
+		suite.True(foundDisabled)
+		suite.Equal(uint32(0), disabledFlag)
+
+		var planes [6]GPUFrustumPlane
+		suite.skeletal.SetFrustumPlanes(planes)
+		suite.skeletal.PrepareFrame(0.016, 0)
+		enabledWrites := suite.skeletal.StagedWriteData()
+		enabledFlag, foundEnabled := readFlag(enabledWrites, 132)
+		suite.True(foundEnabled)
+		suite.Equal(uint32(1), enabledFlag)
 	})
 	suite.Run("should not produce staged writes when needsRebuild is set on simple animator", func() {
 		suite.simple.Grow(30000) // 30000 > 25000 default — actually triggers rebuild flag

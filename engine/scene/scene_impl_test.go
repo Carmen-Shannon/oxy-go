@@ -4375,6 +4375,54 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.Len(suite.scene.physicsSyncWrites, 0)
 	})
 
+	suite.Run("physics paused with zero bodies writes body count and skips sync dispatch", func() {
+		camMock := camera_mocks.NewMockCamera(suite.T())
+		camMock.EXPECT().Update().Return().Once()
+		camMock.EXPECT().ViewProjectionMatrix().Return([16]float32{}).Once()
+		camMock.EXPECT().ProjectionMatrix().Return([16]float32{}).Once()
+		camMock.EXPECT().BindGroupProvider().Return(nil).Once()
+		suite.scene.cam = camMock
+		suite.scene.writePool = []bind_group_provider.BufferWrite{}
+
+		bufBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		syncBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		suite.scene.physicsSyncGroup = map[int]bind_group_provider.BindGroupProvider{0: syncBGP}
+		suite.scene.physicsSyncWrites = []bind_group_provider.BufferWrite{{Binding: 1}}
+
+		phMock := physics_mocks.NewMockPhysics(suite.T())
+		phMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStatePaused))).Once()
+		phMock.EXPECT().StagedWriteData().Return([]bind_group_provider.BufferWrite{{Binding: 7}}).Once()
+		phMock.EXPECT().BodiesCount().Return(0).Once()
+		phMock.EXPECT().Buffers().Return(bufBGP).Once()
+
+		suite.rendererMock.EXPECT().WriteBuffers(mock.MatchedBy(func(writes []bind_group_provider.BufferWrite) bool {
+			if len(writes) != 3 {
+				return false
+			}
+
+			foundStaged := false
+			foundSyncMap := false
+			foundBodyCount := false
+
+			for _, write := range writes {
+				switch {
+				case write.Binding == 7:
+					foundStaged = true
+				case write.Binding == 1:
+					foundSyncMap = true
+				case write.Provider == bufBGP && write.Binding == 3 && write.Offset == 20 && len(write.Data) == 4:
+					foundBodyCount = binary.LittleEndian.Uint32(write.Data) == 0
+				}
+			}
+
+			return foundStaged && foundSyncMap && foundBodyCount
+		})).Return().Once()
+
+		suite.scene.physicsHandler = phMock
+		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
+		suite.Len(suite.scene.physicsSyncWrites, 0)
+	})
+
 	suite.Run("physics ConsumeReadbackRequest true StagingBuffer nil no CopyBufferToBuffer", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -9705,6 +9753,85 @@ func (suite *sceneImplTest) TestReinitCameraBGPForLitPipeline() {
 	})
 }
 
+func (suite *sceneImplTest) TestInitSimpleShadowAnimationProvider() {
+	suite.Run("nil animator returns early", func() {
+		suite.NotPanics(func() { suite.scene.initSimpleShadowAnimationProvider(nil, 0) })
+	})
+
+	suite.Run("negative animationDataBinding returns early", func() {
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		suite.NotPanics(func() { suite.scene.initSimpleShadowAnimationProvider(animMock, -1) })
+	})
+
+	suite.Run("nil compute provider returns early", func() {
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().ComputeBindGroupProvider().Return(nil).Once()
+		suite.NotPanics(func() { suite.scene.initSimpleShadowAnimationProvider(animMock, 0) })
+	})
+
+	suite.Run("missing slot 0 animation buffer panics", func() {
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		computeBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+
+		animMock.EXPECT().ComputeBindGroupProvider().Return(computeBGP).Once()
+		animMock.EXPECT().Model().Return(nil).Once()
+		suite.rendererMock.EXPECT().CurrentFrameSlot().Return(1).Once()
+		computeBGP.EXPECT().SetSlot(0).Return().Once()
+		computeBGP.EXPECT().Buffer(0).Return(nil).Once()
+		computeBGP.EXPECT().SetSlot(1).Return().Once()
+
+		suite.Panics(func() { suite.scene.initSimpleShadowAnimationProvider(animMock, 0) })
+	})
+
+	suite.Run("missing slot 1 animation buffer panics", func() {
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		computeBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		slot0Buffer := &wgpu.Buffer{}
+
+		animMock.EXPECT().ComputeBindGroupProvider().Return(computeBGP).Once()
+		animMock.EXPECT().Model().Return(nil).Once()
+		suite.rendererMock.EXPECT().CurrentFrameSlot().Return(0).Once()
+		computeBGP.EXPECT().SetSlot(0).Return().Twice()
+		computeBGP.EXPECT().Buffer(0).Return(slot0Buffer).Once()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+		computeBGP.EXPECT().SetSlot(1).Return().Once()
+		computeBGP.EXPECT().Buffer(0).Return(nil).Once()
+
+		suite.Panics(func() { suite.scene.initSimpleShadowAnimationProvider(animMock, 0) })
+	})
+
+	suite.Run("success path replaces existing provider and releases old provider", func() {
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		computeBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		slot0Buffer := &wgpu.Buffer{}
+		slot1Buffer := &wgpu.Buffer{}
+
+		oldProvider := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		oldProvider.EXPECT().SetSlot(0).Return().Once()
+		oldProvider.EXPECT().SetBuffers(mock.Anything).Return().Once()
+		oldProvider.EXPECT().SetSlot(1).Return().Once()
+		oldProvider.EXPECT().SetBuffers(mock.Anything).Return().Once()
+		oldProvider.EXPECT().Release().Once()
+
+		suite.scene.shadowAnimationProviders = map[animator.Animator]bind_group_provider.BindGroupProvider{animMock: oldProvider}
+
+		animMock.EXPECT().ComputeBindGroupProvider().Return(computeBGP).Once()
+		animMock.EXPECT().Model().Return(nil).Once()
+		suite.rendererMock.EXPECT().CurrentFrameSlot().Return(1).Once()
+		computeBGP.EXPECT().SetSlot(0).Return().Once()
+		computeBGP.EXPECT().Buffer(0).Return(slot0Buffer).Once()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Twice()
+		computeBGP.EXPECT().SetSlot(1).Return().Twice()
+		computeBGP.EXPECT().Buffer(0).Return(slot1Buffer).Once()
+
+		suite.NotPanics(func() { suite.scene.initSimpleShadowAnimationProvider(animMock, 0) })
+
+		newProvider := suite.scene.shadowAnimationProviders[animMock]
+		suite.NotNil(newProvider)
+		suite.NotEqual(oldProvider, newProvider)
+	})
+}
+
 func (suite *sceneImplTest) TestPatchSyncMapEntry() {
 	makeBase := func() (*physics_mocks.MockPhysics, *animator_mocks.MockAnimator, *bgp_mocks.MockBindGroupProvider) {
 		phMock := physics_mocks.NewMockPhysics(suite.T())
@@ -12032,6 +12159,25 @@ func (suite *sceneImplTest) TestSyncFrameSlot() {
 			0: physicsBGP,
 			1: nil,
 		}
+		suite.NotPanics(func() { suite.scene.SyncFrameSlot(1) })
+	})
+
+	suite.Run("nil camera provider and nil animator shadow providers are skipped", func() {
+		camMock := camera_mocks.NewMockCamera(suite.T())
+		camMock.EXPECT().BindGroupProvider().Return(nil).Once()
+		suite.scene.cam = camMock
+
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().ComputeBindGroupProvider().Return(nil).Once()
+		animMock.EXPECT().OutputBindGroupProvider().Return(nil).Once()
+		animMock.EXPECT().HiZBindGroupProvider().Return(nil).Once()
+
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
+		suite.scene.shadowAnimationProviders = map[animator.Animator]bind_group_provider.BindGroupProvider{animMock: nil}
+		suite.scene.physicsSyncGroup = map[int]bind_group_provider.BindGroupProvider{0: nil}
+		suite.scene.lightHandler = nil
+
 		suite.NotPanics(func() { suite.scene.SyncFrameSlot(1) })
 	})
 }
