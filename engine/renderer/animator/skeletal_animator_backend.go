@@ -566,6 +566,11 @@ func (s *skeletalAnimatorBackendImpl) PrepareFrame(deltaTime float32, binding in
 		}
 	}
 
+	var cullingEnabled uint32
+	if s.cullingEnabled {
+		cullingEnabled = 1
+	}
+
 	s.perFrameSlice[0] = GPUAnimationGlobals{
 		InstanceCount:      s.instanceCount,
 		BoneCount:          s.boneCount,
@@ -576,6 +581,7 @@ func (s *skeletalAnimatorBackendImpl) PrepareFrame(deltaTime float32, binding in
 		ScreenHeight:       uint32(s.screenHeight),
 		HiZMipCount:        uint32(s.hiZMipCount),
 		ProjX:              s.projX,
+		CullingEnabled:     cullingEnabled,
 		ViewProj:           s.viewProj,
 		Planes:             s.frustumPlanes,
 		BoundingMin:        s.boundingMin,

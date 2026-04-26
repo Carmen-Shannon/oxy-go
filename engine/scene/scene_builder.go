@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/Carmen-Shannon/automation/tools/worker"
-	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/camera"
 	"github.com/Carmen-Shannon/oxy-go/engine/game_object"
 	"github.com/Carmen-Shannon/oxy-go/engine/light"
@@ -97,22 +96,6 @@ func WithComputeWorkers(n int) SceneBuilderOption {
 func WithCullingDisabled(disabled bool) SceneBuilderOption {
 	return func(s *scene) {
 		s.cullingDisabled = disabled
-	}
-}
-
-// WithDebugDisableAnimatorHiZOcclusion forces the Hi-Z mip count sent to
-// animators to zero during PrepareCompute, isolating animator-side Hi-Z
-// occlusion without disabling frustum culling or other animator flow.
-// By default this diagnostic is disabled.
-//
-// Parameters:
-//   - disabled: true to force animators to see zero Hi-Z mips
-//
-// Returns:
-//   - SceneBuilderOption: option function to apply
-func WithDebugDisableAnimatorHiZOcclusion(disabled bool) SceneBuilderOption {
-	return func(s *scene) {
-		s.debugDisableAnimatorHiZOcclusion = disabled
 	}
 }
 
@@ -321,35 +304,35 @@ func NewScene(name string, cam camera.Camera, r renderer.Renderer, options ...Sc
 	}
 
 	s := &scene{
-		mu:                     &sync.RWMutex{},
-		DelegateImpl:           &common.DelegateImpl[Scene]{},
-		name:                   name,
-		active:                 false,
-		cam:                    cam,
-		r:                      r,
-		animatorPool:           make(map[model.Model][]animator.Animator),
-		registry:               make(map[uint64]game_object.GameObject),
-		instanceLookup:         make(map[animator.Animator]map[uint32]uint64),
-		shadowIndirectBuffers:  make(map[animator.Animator]*wgpu.Buffer),
-		animIndirectBinding:    make(map[animator.Animator]int),
-		nextID:                 1,
-		computeWorkers:         max(runtime.NumCPU()-1, 1),
-		maxBonesGPU:            64,
-		drawBindGroupsPool:     make([]bind_group_provider.BindGroupProvider, 0, 3),
-		drawDeclsPool:          make([]shader.Annotation, 0, 32),
-		drawGroupProvidersPool: make(map[int]bind_group_provider.BindGroupProvider, 8),
-		lightHandler:           light.NewLightingHandler(),
-		gBufferHandler:         gbuffer.NewHandler(),
-		ssaoHandler:            ssao.NewHandler(),
-		compositionHandler:     composition.NewHandler(composition.WithToneMappingEnabled(true), composition.WithExposure(1.0)),
-		ssrHandler:             ssr.NewHandler(),
-		taaHandler:             taa.NewHandler(),
-		physicsSyncGroup:       make(map[int]bind_group_provider.BindGroupProvider),
-		physicsAnimBinding:     -1,
-		lodLevelCache:          make(map[animator.Animator]int),
-		lodShadowBias:          1,
-		drawBindGroupCache:     make(map[drawCacheKey][]bind_group_provider.BindGroupProvider),
-		drawCacheDirty:         true,
+		mu:                       &sync.RWMutex{},
+		name:                     name,
+		active:                   false,
+		cam:                      cam,
+		r:                        r,
+		animatorPool:             make(map[model.Model][]animator.Animator),
+		registry:                 make(map[uint64]game_object.GameObject),
+		instanceLookup:           make(map[animator.Animator]map[uint32]uint64),
+		shadowIndirectBuffers:    make(map[animator.Animator]*wgpu.Buffer),
+		animIndirectBinding:      make(map[animator.Animator]int),
+		shadowAnimationProviders: make(map[animator.Animator]bind_group_provider.BindGroupProvider),
+		nextID:                   1,
+		computeWorkers:           max(runtime.NumCPU()-1, 1),
+		maxBonesGPU:              64,
+		drawBindGroupsPool:       make([]bind_group_provider.BindGroupProvider, 0, 3),
+		drawDeclsPool:            make([]shader.Annotation, 0, 32),
+		drawGroupProvidersPool:   make(map[int]bind_group_provider.BindGroupProvider, 8),
+		lightHandler:             light.NewLightingHandler(),
+		gBufferHandler:           gbuffer.NewHandler(),
+		ssaoHandler:              ssao.NewHandler(),
+		compositionHandler:       composition.NewHandler(composition.WithToneMappingEnabled(true), composition.WithExposure(1.0)),
+		ssrHandler:               ssr.NewHandler(),
+		taaHandler:               taa.NewHandler(),
+		physicsSyncGroup:         make(map[int]bind_group_provider.BindGroupProvider),
+		physicsAnimBinding:       -1,
+		lodLevelCache:            make(map[animator.Animator]int),
+		lodShadowBias:            1,
+		drawBindGroupCache:       make(map[drawCacheKey][]bind_group_provider.BindGroupProvider),
+		drawCacheDirty:           true,
 	}
 
 	for _, option := range options {

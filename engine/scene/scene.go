@@ -29,7 +29,6 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/composition"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssao"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssr"
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/taa"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 )
 
@@ -451,6 +450,10 @@ func (s *scene) PrepareGBuffer() {
 
 	for _, anim := range s.animatorPool {
 		for _, a := range anim {
+			if a.Lifecycle().State() != lifecycle.LifecycleStateRunning {
+				continue
+			}
+			// TODO investigate if we can remove this
 			if a.InstanceCount() == 0 {
 				continue
 			}
@@ -901,117 +904,6 @@ func (s *scene) PrepareTAA() {
 	s.prepareTAA()
 }
 
-func (s *scene) prepareTAA() {
-	if s.lightHandler == nil || s.cam == nil {
-		return
-	}
-	taaH := s.taaHandler
-	if taaH == nil || !taaH.Enabled() {
-		return
-	}
-
-	// Halton sequence for sub-pixel jitter (base 2 for X, base 3 for Y).
-	// Returns value in [-0.5, 0.5] pixel space, then converted to NDC.
-	halton := func(index uint64, base uint64) float32 {
-		var result float64
-		f := 1.0 / float64(base)
-		i := index
-		for i > 0 {
-			result += f * float64(i%base)
-			i /= base
-			f /= float64(base)
-		}
-		return float32(result - 0.5) // center around 0
-	}
-
-	// Wrap the Halton sequence at N=8 per Yang et al. [YNS*09] §3.1 recommendation.
-	// UE4 uses an 8-sample Halton(2,3) sequence by default. Bounded wrapping ensures
-	// all 8 sub-pixel positions are evenly covered each cycle regardless of frame count,
-	// and avoids floating-point precision issues in the Halton computation at high indices.
-	nextIdx := (taaH.FrameIndex() + 1) % 8
-	jitterScale := taaH.JitterScale()
-	jx := halton(nextIdx, 2) * jitterScale
-	jy := halton(nextIdx, 3) * jitterScale
-	taaH.AdvanceFrame(jx, jy)
-
-	// Convert pixel jitter to projection-matrix NDC element units.
-	sw := float32(taaH.ScreenWidth())
-	sh := float32(taaH.ScreenHeight())
-	var ndcX, ndcY float32
-	if sw > 0 {
-		ndcX = jx * 2.0 / sw
-	}
-	if sh > 0 {
-		ndcY = jy * 2.0 / sh
-	}
-
-	// Schedule the jitter for the NEXT frame's cam.Update().
-	s.cam.SetJitter(ndcX, ndcY)
-
-	// Build GPUTAAParams from the camera's CURRENT (jittered) matrices.
-	// currVP reflects the jittered VP for the current frame (applied last frame's prepareTAA jitter).
-	// prevVP reflects the jittered VP that was active in the previous frame.
-	currVP := s.cam.ViewProjectionMatrix()
-	var invCurrVP [16]float32
-	common.Invert4(invCurrVP[:], currVP[:])
-	rawHistoryOnly := float32(0.0)
-	if taaH.RawHistoryOnly() {
-		rawHistoryOnly = 1.0
-	}
-
-	params := taa.GPUTAAParams{
-		InvCurrViewProj:           invCurrVP,
-		PrevViewProj:              s.cam.PrevViewProjectionMatrix(),
-		JitterCurr:                [2]float32{taaH.JitterX(), taaH.JitterY()},
-		JitterPrev:                [2]float32{taaH.PrevJitterX(), taaH.PrevJitterY()},
-		ScreenWidth:               float32(taaH.ScreenWidth()),
-		ScreenHeight:              float32(taaH.ScreenHeight()),
-		BlendFactor:               taaH.BlendFactor(),
-		HistoryRectificationScale: taaH.HistoryRectificationScale(),
-		RawHistoryOnly:            rawHistoryOnly,
-	}
-
-	// Select the active slot's BGP using the renderer's current frame slot.
-	slot := s.r.CurrentFrameSlot()
-
-	bgpKey := "taa_resolve_0"
-	if slot == 1 {
-		bgpKey = "taa_resolve_1"
-	}
-	bgp := taaH.Bgp(bgpKey)
-
-	s.r.WriteBuffers([]bind_group_provider.BufferWrite{
-		{Provider: bgp, Binding: 0, Offset: 0, Data: params.Marshal()},
-	})
-
-	w := uint32(taaH.ScreenWidth())
-	h := uint32(taaH.ScreenHeight())
-	wgX := (w + 7) / 8
-	wgY := (h + 7) / 8
-
-	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-		{
-			PipelineKey:    taaH.PipelineKey("taa_resolve"),
-			Providers:      []renderer.ComputeGroupProvider{{Group: 0, Provider: bgp}},
-			WorkGroupCount: [3]uint32{wgX, wgY, 1},
-		},
-	})
-
-	casBGPKey := "taa_sharpen_0"
-	if slot == 1 {
-		casBGPKey = "taa_sharpen_1"
-	}
-	casBGP := taaH.Bgp(casBGPKey)
-
-	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-		{
-			PipelineKey:    taaH.PipelineKey("taa_sharpen"),
-			Providers:      []renderer.ComputeGroupProvider{{Group: 0, Provider: casBGP}},
-			WorkGroupCount: [3]uint32{wgX, wgY, 1},
-		},
-	})
-}
-
 func (s *scene) PrepareComposition() {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1361,6 +1253,9 @@ func (s *scene) PrepareShadows() {
 
 	for _, anims := range s.animatorPool {
 		for _, a := range anims {
+			if a.Lifecycle().State() != lifecycle.LifecycleStateRunning {
+				continue
+			}
 			if a.InstanceCount() == 0 {
 				continue
 			}
@@ -1386,6 +1281,9 @@ func (s *scene) PrepareShadows() {
 	shadowTransforms := make(map[animator.Animator][]shadowTransformEntry)
 	for _, anims := range s.animatorPool {
 		for _, a := range anims {
+			if a.Lifecycle().State() != lifecycle.LifecycleStateRunning {
+				continue
+			}
 			count := a.InstanceCount()
 			if count == 0 {
 				continue
@@ -1532,11 +1430,13 @@ func (s *scene) PrepareShadows() {
 			cascadeBGP := sh.Bgp(bgpKey)
 			x := uint32(i * res)
 			s.r.SetShadowViewport(x, 0, uint32(res), uint32(res))
-
 			cascadeFrustum := common.ExtractFrustumFromMatrix(csmData.Cascades[i].LightVP[:])
 
 			for _, anim := range s.animatorPool {
 				for _, a := range anim {
+					if a.Lifecycle().State() != lifecycle.LifecycleStateRunning {
+						continue
+					}
 					if a.InstanceCount() == 0 {
 						continue
 					}
@@ -1568,9 +1468,14 @@ func (s *scene) PrepareShadows() {
 						continue
 					}
 
+					shadowAnimBGP := s.shadowAnimatorBindGroup(a)
+					if shadowAnimBGP == nil {
+						continue
+					}
+
 					shadowBindGroups := []bind_group_provider.BindGroupProvider{
 						cascadeBGP,
-						a.OutputBindGroupProvider(),
+						shadowAnimBGP,
 					}
 
 					if buf, ok := s.shadowIndirectBuffers[a]; ok && buf != nil {
@@ -1611,6 +1516,9 @@ func (s *scene) PrepareShadows() {
 			lRange := l.Range()
 			for _, anim := range s.animatorPool {
 				for _, a := range anim {
+					if a.Lifecycle().State() != lifecycle.LifecycleStateRunning {
+						continue
+					}
 					if a.InstanceCount() == 0 {
 						continue
 					}
@@ -1659,9 +1567,14 @@ func (s *scene) PrepareShadows() {
 						continue
 					}
 
+					shadowAnimBGP := s.shadowAnimatorBindGroup(a)
+					if shadowAnimBGP == nil {
+						continue
+					}
+
 					shadowBindGroups := []bind_group_provider.BindGroupProvider{
 						spotBGP,
-						a.OutputBindGroupProvider(),
+						shadowAnimBGP,
 					}
 
 					if buf, ok := s.shadowIndirectBuffers[a]; ok && buf != nil {
@@ -1694,6 +1607,9 @@ func (s *scene) PrepareShadows() {
 			outerScan:
 				for _, anim := range s.animatorPool {
 					for _, a := range anim {
+						if a.Lifecycle().State() != lifecycle.LifecycleStateRunning {
+							continue
+						}
 						if a.InstanceCount() == 0 {
 							continue
 						}
@@ -1743,6 +1659,9 @@ func (s *scene) PrepareShadows() {
 
 				for _, anim := range s.animatorPool {
 					for _, a := range anim {
+						if a.Lifecycle().State() != lifecycle.LifecycleStateRunning {
+							continue
+						}
 						if a.InstanceCount() == 0 {
 							continue
 						}
@@ -1791,9 +1710,14 @@ func (s *scene) PrepareShadows() {
 							continue
 						}
 
+						shadowAnimBGP := s.shadowAnimatorBindGroup(a)
+						if shadowAnimBGP == nil {
+							continue
+						}
+
 						shadowBindGroups := []bind_group_provider.BindGroupProvider{
 							spotBGP,
-							a.OutputBindGroupProvider(),
+							shadowAnimBGP,
 						}
 
 						if buf, ok := s.shadowIndirectBuffers[a]; ok && buf != nil {
@@ -1942,6 +1866,9 @@ func (s *scene) AddGameObject(obj game_object.GameObject, pipelineOpts ...pipeli
 		s.animatorPool[mdl] = animPool
 	} else {
 		for _, a := range animPool {
+			if a.Lifecycle().State() != lifecycle.LifecycleStateRunning {
+				continue
+			}
 			if a.InstanceCount() < a.MaxInstances() {
 				anim = a
 				break
@@ -1952,6 +1879,13 @@ func (s *scene) AddGameObject(obj game_object.GameObject, pipelineOpts ...pipeli
 			animPool = append(animPool, anim)
 			s.animatorPool[mdl] = animPool
 		}
+	}
+
+	if anim.Lifecycle().State() == lifecycle.LifecycleStateRegistered {
+		anim.Lifecycle().SetState(lifecycle.LifecycleStateStarting)
+	}
+	if anim.Lifecycle().State() == lifecycle.LifecycleStateStarting {
+		anim.Lifecycle().SetState(lifecycle.LifecycleStateRunning)
 	}
 
 	// Capture initial transform from the GameObject BEFORE wiring the animator.
@@ -2103,7 +2037,21 @@ func (s *scene) RemoveGameObject(id uint64) {
 
 	// Prune empty animator from pool.
 	if anim != nil && anim.InstanceCount() == 0 {
-		s.pruneAnimator(anim)
+		switch anim.Lifecycle().State() {
+		case lifecycle.LifecycleStateRunning:
+			anim.Lifecycle().SetState(lifecycle.LifecycleStateDraining)
+		case lifecycle.LifecycleStatePaused:
+			anim.Lifecycle().SetState(lifecycle.LifecycleStateStopped)
+		case lifecycle.LifecycleStateDraining:
+			anim.Lifecycle().SetState(lifecycle.LifecycleStateStopped)
+		}
+
+		if anim.Lifecycle().State() == lifecycle.LifecycleStateDraining {
+			anim.Lifecycle().SetState(lifecycle.LifecycleStateStopped)
+		}
+		if anim.Lifecycle().State() == lifecycle.LifecycleStateStopped {
+			anim.Lifecycle().SetState(lifecycle.LifecycleStateRemoved)
+		}
 	}
 
 	// Sentinel the removed body's sync_map entry and deactivate its GPU slot.
@@ -2114,6 +2062,98 @@ func (s *scene) RemoveGameObject(id uint64) {
 	}
 
 	s.drawCacheDirty = true
+}
+
+func (s *scene) SyncFrameSlot(slot int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Phase 4: switch post-processing handler texture slots.
+	if s.lightHandler != nil {
+		if gbh := s.gBufferHandler; gbh != nil {
+			gbh.SetSlot(slot)
+		}
+		if ssao := s.ssaoHandler; ssao != nil {
+			ssao.SetSlot(slot)
+		}
+		if cs := s.lightHandler.ContactShadowHandler(); cs != nil {
+			cs.SetSlot(slot)
+			if bgp := cs.Bgp("contact_shadow_compute"); bgp != nil {
+				bgp.SetSlot(slot)
+			}
+		}
+		if ch := s.compositionHandler; ch != nil {
+			ch.SetSlot(slot)
+			if lumBGP := ch.Bgp("luminance_compute"); lumBGP != nil {
+				lumBGP.SetSlot(slot)
+			}
+		}
+		if ssr := s.ssrHandler; ssr != nil {
+			ssr.SetSlot(slot)
+		}
+		if taaH := s.taaHandler; taaH != nil {
+			taaH.SetSlot(slot)
+		}
+
+		// Phase 3: switch confirmed dual-slot BGPs on the lighting handler.
+		if bgp := s.lightHandler.Bgp("lights"); bgp != nil {
+			bgp.SetSlot(slot)
+		}
+		if bgp := s.lightHandler.Bgp("light_cull"); bgp != nil {
+			bgp.SetSlot(slot)
+		}
+		if bgp := s.lightHandler.Bgp("tile_lit"); bgp != nil {
+			bgp.SetSlot(slot)
+		}
+
+		// Phase 3: switch confirmed dual-slot shadow handler BGPs.
+		if sh := s.lightHandler.ShadowHandler(); sh != nil {
+			if bgp := sh.Bgp("csm_shadow_lit"); bgp != nil {
+				bgp.SetSlot(slot)
+			}
+			for i := 0; i < sh.CascadeCount(); i++ {
+				if bgp := sh.Bgp(fmt.Sprintf("csm_data_%d", i)); bgp != nil {
+					bgp.SetSlot(slot)
+				}
+			}
+			for i := 0; i < sh.LightShadowAtlasSlots(); i++ {
+				if bgp := sh.Bgp(fmt.Sprintf("spot_shadow_%d", i)); bgp != nil {
+					bgp.SetSlot(slot)
+				}
+			}
+		}
+	}
+
+	// Phase 3: switch camera BGP.
+	if s.cam != nil {
+		if bgp := s.cam.BindGroupProvider(); bgp != nil {
+			bgp.SetSlot(slot)
+		}
+	}
+
+	// Phase 3: switch animator BGPs.
+	for _, animGroup := range s.animatorPool {
+		for _, a := range animGroup {
+			if compute := a.ComputeBindGroupProvider(); compute != nil {
+				compute.SetSlot(slot)
+			}
+			if output := a.OutputBindGroupProvider(); output != nil {
+				output.SetSlot(slot)
+			}
+			if hiZ := a.HiZBindGroupProvider(); hiZ != nil {
+				hiZ.SetSlot(slot)
+			}
+			if shadowAnim := s.shadowAnimationProviders[a]; shadowAnim != nil {
+				shadowAnim.SetSlot(slot)
+			}
+		}
+	}
+
+	for _, bgp := range s.physicsSyncGroup {
+		if bgp != nil {
+			bgp.SetSlot(slot)
+		}
+	}
 }
 
 func (s *scene) PrepareCompute(deltaTime float32) {
@@ -2133,9 +2173,6 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 		if ssrHandler := s.ssrHandler; ssrHandler != nil {
 			hiZMipCount = ssrHandler.HiZMipCount()
 		}
-	}
-	if s.debugDisableAnimatorHiZOcclusion {
-		hiZMipCount = 0
 	}
 	projMat := s.cam.ProjectionMatrix()
 	projX = projMat[0]
@@ -2183,6 +2220,10 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 	// Pre-pass: serial RebuildGPU for animators that grew — requires GPU access.
 	for _, anim := range s.animatorPool {
 		for _, a := range anim {
+			state := a.Lifecycle().State()
+			if state != lifecycle.LifecycleStateRunning && state != lifecycle.LifecycleStatePaused {
+				continue
+			}
 			if a.InstanceCount() == 0 {
 				continue
 			}
@@ -2211,8 +2252,16 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 	taskID := 0
 	for _, anim := range s.animatorPool {
 		for _, a := range anim {
+			state := a.Lifecycle().State()
+			if state != lifecycle.LifecycleStateRunning && state != lifecycle.LifecycleStatePaused {
+				continue
+			}
 			if a.InstanceCount() == 0 {
 				continue
+			}
+			animDeltaTime := deltaTime
+			if state == lifecycle.LifecycleStatePaused {
+				animDeltaTime = 0
 			}
 
 			mdl := a.Model()
@@ -2234,6 +2283,7 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 
 			wg.Add(1)
 			aCap := a // capture for closure
+			deltaTimeCap := animDeltaTime
 			id := taskID
 			taskID++
 			s.computePool.SubmitTask(worker.Task{
@@ -2273,7 +2323,7 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 					aCap.SetHiZMipCount(hiZMipCount)
 					aCap.SetViewProj(vpMat)
 
-					aCap.PrepareFrame(deltaTime, uniformBinding)
+					aCap.PrepareFrame(deltaTimeCap, uniformBinding)
 					aCap.Flush(instanceBinding, boneBinding, modelBinding)
 
 					if s.lodEnabled {
@@ -2318,6 +2368,10 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 	allWrites := s.writePool[:0]
 	for _, anim := range s.animatorPool {
 		for _, a := range anim {
+			state := a.Lifecycle().State()
+			if state != lifecycle.LifecycleStateRunning && state != lifecycle.LifecycleStatePaused {
+				continue
+			}
 			if a.InstanceCount() == 0 {
 				continue
 			}
@@ -2350,40 +2404,7 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 	// only the AABB atomics buffer is reset; body and particle data persist in the
 	// storage buffers across stages.
 	ph := s.Delegate.PhysicsHandler()
-	if ph != nil && ph.Lifecycle().State() == lifecycle.LifecycleStateRunning {
-		// Process any pending GPU→CPU readback from the previous frame's copy command.
-		// By this point the compute command buffer containing the CopyBufferToBuffer has
-		// been submitted (EndComputeFrame from the prior frame), so the staging buffer is
-		// safe to map synchronously. This only runs when game logic called RequestReadback.
-		if ph.ReadbackPending() {
-			bodySize := uint64((&physics.GPUBody{}).Size())
-			readSize := uint64(ph.BodiesCount()) * bodySize
-			if readSize > 0 {
-				data, err := s.r.ReadMappedBuffer(ph.StagingBuffer(), 0, readSize)
-				if err == nil {
-					ph.ProcessReadback(data)
-				}
-			}
-			ph.ClearReadbackPending()
-		}
-
-		// Collect staged writes (body registrations, removals, force drains).
-		// PrepareStep MUST be called first so that force drains from ApplyForce()
-		// are staged into the same write batch as body registrations. Without this,
-		// newly spawned bodies spend their first physics frame with zero external
-		// force (no gravity), causing them to sit at the spawn point while collision
-		// forces from overlapping neighbors fling them apart.
-		substeps, globalsData := ph.PrepareStep(deltaTime)
-		physWrites := ph.StagedWriteData()
-
-		// Append per-group sync_map writes staged during Add() calls.
-		if len(s.physicsSyncWrites) > 0 {
-			physWrites = append(physWrites, s.physicsSyncWrites...)
-			s.physicsSyncWrites = s.physicsSyncWrites[:0]
-		}
-
-		bodyCount := uint32(ph.BodiesCount())
-
+	if ph != nil {
 		// physDispatchGroups computes the number of work groups needed to cover
 		// itemCount invocations for the shader behind the given pipeline key.
 		// The workgroup size is read from the parsed WGSL source, not hardcoded.
@@ -2408,92 +2429,11 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 			return [3]uint32{groups, 1, 1}
 		}
 
-		if substeps > 0 {
-			// Write globals uniform once — it is constant across all substeps
-			// since fixedDt does not change within a frame.
-			physWrites = append(physWrites, bind_group_provider.BufferWrite{
-				Provider: ph.Buffers(),
-				Binding:  3,
-				Offset:   0,
-				Data:     globalsData,
-			})
-
-			if len(physWrites) > 0 {
-				s.r.WriteBuffers(physWrites)
+		// Dispatch the physics→animator sync shader for each registered sync group.
+		dispatchPhysicsSync := func(bodyCount uint32) {
+			if len(s.physicsSyncGroup) == 0 || bodyCount == 0 {
+				return
 			}
-
-			particleCount := uint32(ph.ParticleCount())
-
-			// Pre-build AABB atomics reset payload (6 × u32):
-			//   indices 0–2 (min): 0xFFFFFFFF (largest sortable uint → will be atomicMin'd down)
-			//   indices 3–5 (max): 0x00000000 (smallest sortable uint → will be atomicMax'd up)
-			aabbReset := make([]byte, 24)
-			binary.LittleEndian.PutUint32(aabbReset[0:4], 0xFFFFFFFF)
-			binary.LittleEndian.PutUint32(aabbReset[4:8], 0xFFFFFFFF)
-			binary.LittleEndian.PutUint32(aabbReset[8:12], 0xFFFFFFFF)
-			// indices 3–5 are already zero from make()
-
-			pvKey := ph.PipelineKey("particle_values")
-			arKey := ph.PipelineKey("aabb_reduce")
-			gbKey := ph.PipelineKey("grid_build_params")
-			gcKey := ph.PipelineKey("grid_clear")
-			giKey := ph.PipelineKey("grid_insert")
-			crKey := ph.PipelineKey("collision")
-			cmKey := ph.PipelineKey("momenta")
-			iKey := ph.PipelineKey("integrate")
-
-			for sub := 0; sub < substeps; sub++ {
-				// WriteBuffers must precede the dispatch batch (Queue.writeBuffer takes effect
-				// before the next GPU submit, providing the AABB reset before any dispatch runs).
-				s.r.WriteBuffers([]bind_group_provider.BufferWrite{
-					{Provider: ph.Buffers(), Binding: 5, Offset: 0, Data: aabbReset},
-				})
-				// Each physics pipeline stage depends on the previous stage's output.
-				// Separate compute passes provide automatic GPU barriers (READ-AFTER-WRITE).
-				s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-					{PipelineKey: pvKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ph.Bgp("particle_values")}}, WorkGroupCount: physDispatchGroups(pvKey, particleCount)},
-				})
-				s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-					{PipelineKey: arKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ph.Bgp("aabb_reduce")}}, WorkGroupCount: physDispatchGroups(arKey, particleCount)},
-				})
-				s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-					{PipelineKey: gbKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ph.Bgp("grid_build_params")}}, WorkGroupCount: physDispatchGroups(gbKey, 1)},
-				})
-				s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-					{PipelineKey: gcKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ph.Bgp("grid_clear")}}, WorkGroupCount: physDispatchGroups(gcKey, uint32(ph.MaxGridCells()))},
-				})
-				s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-					{PipelineKey: giKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ph.Bgp("grid_insert")}}, WorkGroupCount: physDispatchGroups(giKey, particleCount)},
-				})
-				s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-					{PipelineKey: crKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ph.Bgp("collision")}}, WorkGroupCount: physDispatchGroups(crKey, particleCount)},
-				})
-				s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-					{PipelineKey: cmKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ph.Bgp("momenta")}}, WorkGroupCount: physDispatchGroups(cmKey, bodyCount)},
-				})
-				s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
-					{PipelineKey: iKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ph.Bgp("integrate")}}, WorkGroupCount: physDispatchGroups(iKey, bodyCount)},
-				})
-			}
-
-			// If game logic requested a readback, encode a GPU→GPU copy of the bodies
-			// buffer into the staging buffer. The next frame will map and process it.
-			if ph.ConsumeReadbackRequest() {
-				if staging := ph.StagingBuffer(); staging != nil {
-					copySize := uint64(bodyCount) * uint64((&physics.GPUBody{}).Size())
-					s.r.CopyBufferToBuffer(ph.Buffers().Buffer(0), staging, 0, 0, copySize)
-				}
-			}
-		} else if len(physWrites) > 0 {
-			// No substeps this frame (accumulator hasn't reached fixedDt yet),
-			// but we still need to flush registration/removal writes.
-			s.r.WriteBuffers(physWrites)
-		}
-
-		// Sync physics results back to each Animator's AnimationData buffer.
-		// This must run every frame (even when substeps == 0) so both frame-slot
-		// buffers stay coherent under ping-pong scheduling.
-		if len(s.physicsSyncGroup) > 0 && bodyCount > 0 {
 			syncKey := ph.PipelineKey("sync")
 			syncWG := physDispatchGroups(syncKey, bodyCount)
 			syncDispatches := make([]renderer.ComputeDispatch, 0, len(s.physicsSyncGroup))
@@ -2510,6 +2450,155 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 				s.r.DispatchComputeBatch(syncDispatches)
 			}
 		}
+
+		switch ph.Lifecycle().State() {
+		case lifecycle.LifecycleStateRunning:
+			// Process any pending GPU→CPU readback from the previous frame's copy command.
+			// By this point the compute command buffer containing the CopyBufferToBuffer has
+			// been submitted (EndComputeFrame from the prior frame), so the staging buffer is
+			// safe to map synchronously. This only runs when game logic called RequestReadback.
+			if ph.ReadbackPending() {
+				bodySize := uint64((&physics.GPUBody{}).Size())
+				readSize := uint64(ph.BodiesCount()) * bodySize
+				if readSize > 0 {
+					data, err := s.r.ReadMappedBuffer(ph.StagingBuffer(), 0, readSize)
+					if err == nil {
+						ph.ProcessReadback(data)
+					}
+				}
+				ph.ClearReadbackPending()
+			}
+
+			// Collect staged writes (body registrations, removals, force drains).
+			// PrepareStep MUST be called first so that force drains from ApplyForce()
+			// are staged into the same write batch as body registrations. Without this,
+			// newly spawned bodies spend their first physics frame with zero external
+			// force (no gravity), causing them to sit at the spawn point while collision
+			// forces from overlapping neighbors fling them apart.
+			substeps, globalsData := ph.PrepareStep(deltaTime)
+			physWrites := ph.StagedWriteData()
+
+			// Append per-group sync_map writes staged during Add() calls.
+			if len(s.physicsSyncWrites) > 0 {
+				physWrites = append(physWrites, s.physicsSyncWrites...)
+				s.physicsSyncWrites = s.physicsSyncWrites[:0]
+			}
+
+			bodyCount := uint32(ph.BodiesCount())
+
+			if substeps > 0 {
+				// Write globals uniform once — it is constant across all substeps
+				// since fixedDt does not change within a frame.
+				physWrites = append(physWrites, bind_group_provider.BufferWrite{
+					Provider: ph.Buffers(),
+					Binding:  3,
+					Offset:   0,
+					Data:     globalsData,
+				})
+
+				if len(physWrites) > 0 {
+					s.r.WriteBuffers(physWrites)
+				}
+
+				particleCount := uint32(ph.ParticleCount())
+
+				// Pre-build AABB atomics reset payload (6 × u32):
+				//   indices 0–2 (min): 0xFFFFFFFF (largest sortable uint → will be atomicMin'd down)
+				//   indices 3–5 (max): 0x00000000 (smallest sortable uint → will be atomicMax'd up)
+				aabbReset := make([]byte, 24)
+				binary.LittleEndian.PutUint32(aabbReset[0:4], 0xFFFFFFFF)
+				binary.LittleEndian.PutUint32(aabbReset[4:8], 0xFFFFFFFF)
+				binary.LittleEndian.PutUint32(aabbReset[8:12], 0xFFFFFFFF)
+				// indices 3–5 are already zero from make()
+
+				pvKey := ph.PipelineKey("particle_values")
+				arKey := ph.PipelineKey("aabb_reduce")
+				gbKey := ph.PipelineKey("grid_build_params")
+				gcKey := ph.PipelineKey("grid_clear")
+				giKey := ph.PipelineKey("grid_insert")
+				crKey := ph.PipelineKey("collision")
+				cmKey := ph.PipelineKey("momenta")
+				iKey := ph.PipelineKey("integrate")
+
+				for sub := 0; sub < substeps; sub++ {
+					// WriteBuffers must precede the dispatch batch (Queue.writeBuffer takes effect
+					// before the next GPU submit, providing the AABB reset before any dispatch runs).
+					s.r.WriteBuffers([]bind_group_provider.BufferWrite{
+						{Provider: ph.Buffers(), Binding: 5, Offset: 0, Data: aabbReset},
+					})
+					// Each physics pipeline stage depends on the previous stage's output.
+					// Separate compute passes provide automatic GPU barriers (READ-AFTER-WRITE).
+					s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+						{PipelineKey: pvKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ph.Bgp("particle_values")}}, WorkGroupCount: physDispatchGroups(pvKey, particleCount)},
+					})
+					s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+						{PipelineKey: arKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ph.Bgp("aabb_reduce")}}, WorkGroupCount: physDispatchGroups(arKey, particleCount)},
+					})
+					s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+						{PipelineKey: gbKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ph.Bgp("grid_build_params")}}, WorkGroupCount: physDispatchGroups(gbKey, 1)},
+					})
+					s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+						{PipelineKey: gcKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ph.Bgp("grid_clear")}}, WorkGroupCount: physDispatchGroups(gcKey, uint32(ph.MaxGridCells()))},
+					})
+					s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+						{PipelineKey: giKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ph.Bgp("grid_insert")}}, WorkGroupCount: physDispatchGroups(giKey, particleCount)},
+					})
+					s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+						{PipelineKey: crKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ph.Bgp("collision")}}, WorkGroupCount: physDispatchGroups(crKey, particleCount)},
+					})
+					s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+						{PipelineKey: cmKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ph.Bgp("momenta")}}, WorkGroupCount: physDispatchGroups(cmKey, bodyCount)},
+					})
+					s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+						{PipelineKey: iKey, Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: ph.Bgp("integrate")}}, WorkGroupCount: physDispatchGroups(iKey, bodyCount)},
+					})
+				}
+
+				// If game logic requested a readback, encode a GPU→GPU copy of the bodies
+				// buffer into the staging buffer. The next frame will map and process it.
+				if ph.ConsumeReadbackRequest() {
+					if staging := ph.StagingBuffer(); staging != nil {
+						copySize := uint64(bodyCount) * uint64((&physics.GPUBody{}).Size())
+						s.r.CopyBufferToBuffer(ph.Buffers().Buffer(0), staging, 0, 0, copySize)
+					}
+				}
+			} else if len(physWrites) > 0 {
+				// No substeps this frame (accumulator hasn't reached fixedDt yet),
+				// but we still need to flush registration/removal writes.
+				s.r.WriteBuffers(physWrites)
+			}
+
+			// Keep physics-controlled AnimationData coherent each running frame,
+			// including accumulator-only frames with substeps == 0.
+			dispatchPhysicsSync(bodyCount)
+
+		case lifecycle.LifecycleStatePaused:
+			physWrites := ph.StagedWriteData()
+
+			// Append per-group sync_map writes staged during Add() calls.
+			if len(s.physicsSyncWrites) > 0 {
+				physWrites = append(physWrites, s.physicsSyncWrites...)
+				s.physicsSyncWrites = s.physicsSyncWrites[:0]
+			}
+
+			bodyCount := uint32(ph.BodiesCount())
+			bodyCountData := make([]byte, 4)
+			binary.LittleEndian.PutUint32(bodyCountData, bodyCount)
+			physWrites = append(physWrites, bind_group_provider.BufferWrite{
+				Provider: ph.Buffers(),
+				Binding:  3,
+				Offset:   20,
+				Data:     bodyCountData,
+			})
+
+			if len(physWrites) > 0 {
+				s.r.WriteBuffers(physWrites)
+			}
+
+			// While paused, skip integration but keep both frame-slot animator
+			// buffers synchronized from current physics body transforms.
+			dispatchPhysicsSync(bodyCount)
+		}
 	}
 
 	// Dispatch compute shaders for each registered animator with instances.
@@ -2520,6 +2609,10 @@ func (s *scene) PrepareCompute(deltaTime float32) {
 	var animDispatches []renderer.ComputeDispatch
 	for _, anim := range s.animatorPool {
 		for _, a := range anim {
+			state := a.Lifecycle().State()
+			if state != lifecycle.LifecycleStateRunning && state != lifecycle.LifecycleStatePaused {
+				continue
+			}
 			if a.InstanceCount() == 0 {
 				continue
 			}
@@ -2613,6 +2706,10 @@ func (s *scene) DrawCalls() error {
 		taskID := 0
 		for _, anim := range s.animatorPool {
 			for _, a := range anim {
+				state := a.Lifecycle().State()
+				if state != lifecycle.LifecycleStateRunning && state != lifecycle.LifecycleStatePaused {
+					continue
+				}
 				if a.InstanceCount() == 0 {
 					continue
 				}
@@ -2787,6 +2884,10 @@ func (s *scene) DrawCalls() error {
 	var builtCache map[drawCacheKey][]bind_group_provider.BindGroupProvider
 	for _, anim := range s.animatorPool {
 		for _, a := range anim {
+			state := a.Lifecycle().State()
+			if state != lifecycle.LifecycleStateRunning && state != lifecycle.LifecycleStatePaused {
+				continue
+			}
 			if a.InstanceCount() == 0 {
 				continue
 			}
@@ -2978,33 +3079,4 @@ func (s *scene) DrawCalls() error {
 	}
 
 	return nil
-}
-
-// animLODLevel returns the LOD level for the given animator from the per-frame cache.
-// Returns 0 (base mesh) when LOD is disabled or the animator has no cached level.
-func (s *scene) animLODLevel(a animator.Animator) int {
-	if !s.lodEnabled {
-		return 0
-	}
-	if level, ok := s.lodLevelCache[a]; ok {
-		return level
-	}
-	return 0
-}
-
-// animShadowLODLevel returns the LOD level for shadow rendering of the given
-// animator. Adds lodShadowBias to the base LOD level, clamped to the model's
-// maximum available LOD.
-func (s *scene) animShadowLODLevel(a animator.Animator) int {
-	base := s.animLODLevel(a)
-	mdl := a.Model()
-	if mdl == nil {
-		return base
-	}
-	level := base + s.lodShadowBias
-	maxLevel := mdl.LODCount() - 1
-	if level > maxLevel {
-		level = maxLevel
-	}
-	return level
 }

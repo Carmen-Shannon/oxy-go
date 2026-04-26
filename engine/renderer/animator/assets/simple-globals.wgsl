@@ -6,7 +6,7 @@ struct GlobalData {
     screen_height:   u32,
     hiz_mip_count:   u32,
     proj_x:          f32,
-    _pad0:           f32,
+    culling_enabled: u32,
     planes:          array<FrustumPlane, 6>,
     view_proj:       mat4x4<f32>,
     bounding_min:    vec3<f32>,

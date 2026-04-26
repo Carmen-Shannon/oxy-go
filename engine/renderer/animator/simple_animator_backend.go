@@ -609,6 +609,11 @@ func (s *simpleAnimatorBackendImpl) PrepareFrame(deltaTime float32, binding int)
 		s.enqueueDirty(i)
 	}
 
+	var cullingEnabled uint32
+	if s.cullingEnabled {
+		cullingEnabled = 1
+	}
+
 	s.perFrameSlice[0] = GPUGlobalData{
 		InstanceCount:  s.instanceCount,
 		DeltaTime:      deltaTime,
@@ -617,6 +622,7 @@ func (s *simpleAnimatorBackendImpl) PrepareFrame(deltaTime float32, binding int)
 		ScreenHeight:   uint32(s.screenHeight),
 		HiZMipCount:    uint32(s.hiZMipCount),
 		ProjX:          s.projX,
+		CullingEnabled: cullingEnabled,
 		Planes:         s.frustumPlanes,
 		ViewProj:       s.viewProj,
 		BoundingMin:    s.boundingMin,

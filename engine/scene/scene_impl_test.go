@@ -60,6 +60,16 @@ type sceneImplTest struct {
 	scene        *scene
 }
 
+func startAnimator(anim animator.Animator) animator.Animator {
+	if anim == nil {
+		return nil
+	}
+	if anim.Lifecycle().State() == lifecycle.LifecycleStateRegistered {
+		anim.Lifecycle().SetState(lifecycle.LifecycleStateStarting)
+	}
+	return anim
+}
+
 func (suite *sceneImplTest) SetupSuite() {
 	for {
 		if _, err := os.Stat("go.mod"); err == nil {
@@ -75,7 +85,7 @@ func (suite *sceneImplTest) SetupSubTest() {
 	suite.rendererMock = renderer_mocks.NewMockRenderer(suite.T())
 	suite.scene = &scene{
 		mu:                     &sync.RWMutex{},
-		DelegateImpl:           &common.DelegateImpl[Scene]{},
+		DelegateImpl:           common.DelegateImpl[Scene]{},
 		r:                      suite.rendererMock,
 		lightHandler:           light.NewLightingHandler(),
 		gBufferHandler:         gbuffer.NewGBufferHandler(),
@@ -346,6 +356,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		suite.rendererMock.EXPECT().EndGBufferFrame().Return().Once()
 
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(0)).Once()
 		mockMdl := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mockMdl: {mockAnim}}
@@ -361,6 +372,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		suite.rendererMock.EXPECT().EndGBufferFrame().Return().Once()
 
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		mockAnim.EXPECT().Model().Return(nil).Once()
 		mockMdl := model_mocks.NewMockModel(suite.T())
@@ -379,6 +391,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		mockModel := model_mocks.NewMockModel(suite.T())
 		mockModel.EXPECT().LODMeshProvider(0).Return(nil).Once()
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		mockAnim.EXPECT().Model().Return(mockModel).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
@@ -399,6 +412,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		mockModel.EXPECT().LODMeshProvider(0).Return(mockBGP).Once()
 		mockModel.EXPECT().Skinned().Return(false).Once()
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		mockAnim.EXPECT().Model().Return(mockModel).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
@@ -424,6 +438,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		mockModel.EXPECT().LODMeshProvider(0).Return(mockBGP).Once()
 		mockModel.EXPECT().Skinned().Return(false).Once()
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		mockAnim.EXPECT().Model().Return(mockModel).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
@@ -451,6 +466,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		mockModel.EXPECT().Skinned().Return(false).Once()
 		mockModel.EXPECT().RenderMaterials().Return(nil).Once()
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		mockAnim.EXPECT().Model().Return(mockModel).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
@@ -480,6 +496,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		mockModel.EXPECT().Skinned().Return(false).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{mockMat}).Once()
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		mockAnim.EXPECT().Model().Return(mockModel).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
@@ -512,6 +529,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		mockModel.EXPECT().Skinned().Return(false).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{mockMat}).Once()
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		mockAnim.EXPECT().Model().Return(mockModel).Once()
 		mockAnim.EXPECT().CullingEnabled().Return(false).Once()
@@ -546,6 +564,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		mockModel.EXPECT().Skinned().Return(false).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{mockMat}).Once()
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		mockAnim.EXPECT().Model().Return(mockModel).Once()
 		mockAnim.EXPECT().CullingEnabled().Return(true).Once()
@@ -581,6 +600,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		mockModel.EXPECT().Skinned().Return(false).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{mockMat}).Once()
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		mockAnim.EXPECT().Model().Return(mockModel).Once()
 		mockAnim.EXPECT().CullingEnabled().Return(true).Once()
@@ -616,6 +636,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		mockModel.EXPECT().Skinned().Return(false).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{mockMat}).Once()
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		mockAnim.EXPECT().Model().Return(mockModel).Once()
 		mockAnim.EXPECT().CullingEnabled().Return(true).Once()
@@ -651,6 +672,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		mockModel.EXPECT().Skinned().Return(false).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{mockMat}).Once()
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		mockAnim.EXPECT().Model().Return(mockModel).Once()
 		mockAnim.EXPECT().CullingEnabled().Return(true).Once()
@@ -687,6 +709,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		mockModel.EXPECT().Skinned().Return(false).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{mockMat}).Once()
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		mockAnim.EXPECT().Model().Return(mockModel).Once()
 		mockAnim.EXPECT().CullingEnabled().Return(true).Once()
@@ -724,6 +747,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		mockModel.EXPECT().Skinned().Return(false).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{mockMat}).Once()
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		mockAnim.EXPECT().Model().Return(mockModel).Once()
 		mockAnim.EXPECT().CullingEnabled().Return(true).Once()
@@ -761,6 +785,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 		mockModel.EXPECT().Skinned().Return(true).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{mockMat}).Once()
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		mockAnim.EXPECT().Model().Return(mockModel).Once()
 		mockAnim.EXPECT().CullingEnabled().Return(false).Once()
@@ -1318,6 +1343,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(0)).Times(4)
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
 
@@ -1359,6 +1385,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
 		mockAnim.EXPECT().Model().Return(nil).Times(4)
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
@@ -1403,6 +1430,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
 		mockAnim.EXPECT().Model().Return(mockModel).Times(4)
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
@@ -1449,6 +1477,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
 		mockAnim.EXPECT().Model().Return(mockModel).Times(6)
 		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{}, [3]float32{1, 1, 1}).Once()
@@ -1499,6 +1528,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
 		mockAnim.EXPECT().Model().Return(mockModel).Times(6)
 		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{}, [3]float32{1, 1, 1}).Once()
@@ -1555,12 +1585,14 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(5)
 		mockAnim.EXPECT().Model().Return(mockModel).Times(7)
 		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{}, [3]float32{1, 1, 1}).Once()
-		mockAnim.EXPECT().OutputBindGroupProvider().Return(outputBGP).Twice()
+		mockAnim.EXPECT().OutputBindGroupProvider().Return(outputBGP).Maybe()
 		suite.scene.shadowIndirectBuffers = map[animator.Animator]*wgpu.Buffer{mockAnim: mockBuf}
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
+		suite.scene.shadowAnimationProviders = map[animator.Animator]bind_group_provider.BindGroupProvider{mockAnim: outputBGP}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		suite.rendererMock.EXPECT().WriteRawBuffer(mockBuf, uint64(0), mock.Anything).Return().Once()
@@ -1595,6 +1627,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(0)).Times(3)
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
 
@@ -1629,6 +1662,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
 		mockAnim.EXPECT().Model().Return(nil).Times(3)
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
@@ -1666,6 +1700,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
 		mockAnim.EXPECT().Model().Return(mockModel).Times(3)
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
@@ -1705,6 +1740,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
 		mockAnim.EXPECT().Model().Return(mockModel).Times(4)
 		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{}, [3]float32{1, 1, 1}).Once()
@@ -1748,6 +1784,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
 		mockAnim.EXPECT().Model().Return(mockModel).Times(4)
 		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{}, [3]float32{1, 1, 1}).Once()
@@ -1795,15 +1832,17 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
 		mockAnim.EXPECT().Model().Return(mockModel).Times(5)
 		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{}, [3]float32{1, 1, 1}).Once()
 		mockModel.EXPECT().BoundingMin().Return([3]float32{-1000, -1000, -1000}).Once()
 		mockModel.EXPECT().BoundingMax().Return([3]float32{1000, 1000, 1000}).Once()
 		mockModel.EXPECT().BoundingRadius().Return(float32(1000)).Once()
-		mockAnim.EXPECT().OutputBindGroupProvider().Return(outputBGP).Once()
+		mockAnim.EXPECT().OutputBindGroupProvider().Return(outputBGP).Maybe()
 		suite.scene.shadowIndirectBuffers = map[animator.Animator]*wgpu.Buffer{mockAnim: mockBuf}
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
+		suite.scene.shadowAnimationProviders = map[animator.Animator]bind_group_provider.BindGroupProvider{mockAnim: outputBGP}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		suite.rendererMock.EXPECT().WriteRawBuffer(mockBuf, uint64(0), mock.Anything).Return().Once()
@@ -1838,6 +1877,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(0)).Times(8)
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
 
@@ -1882,15 +1922,17 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(15)
 		mockAnim.EXPECT().Model().Return(mockModel).Times(21)
 		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{}, [3]float32{1, 1, 1}).Once()
 		mockModel.EXPECT().BoundingMin().Return([3]float32{-1000, -1000, -1000}).Times(12)
 		mockModel.EXPECT().BoundingMax().Return([3]float32{1000, 1000, 1000}).Times(12)
 		mockModel.EXPECT().BoundingRadius().Return(float32(1000)).Times(12)
-		mockAnim.EXPECT().OutputBindGroupProvider().Return(outputBGP).Times(6)
+		mockAnim.EXPECT().OutputBindGroupProvider().Return(outputBGP).Maybe()
 		suite.scene.shadowIndirectBuffers = map[animator.Animator]*wgpu.Buffer{mockAnim: mockBuf}
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
+		suite.scene.shadowAnimationProviders = map[animator.Animator]bind_group_provider.BindGroupProvider{mockAnim: outputBGP}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		suite.rendererMock.EXPECT().WriteRawBuffer(mockBuf, uint64(0), mock.Anything).Return().Once()
@@ -2050,6 +2092,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(8)
 		mockAnim.EXPECT().Model().Return(nil).Times(8)
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
@@ -2091,6 +2134,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(14)
 		mockAnim.EXPECT().Model().Return(mockModel).Times(20)
 		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{}, [3]float32{1, 1, 1}).Once()
@@ -2137,6 +2181,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(14)
 		mockAnim.EXPECT().Model().Return(mockModel).Times(20)
 		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{}, [3]float32{1, 1, 1}).Once()
@@ -2193,15 +2238,17 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(2)).Times(5)
 		mockAnim.EXPECT().Model().Return(mockModel).Times(7)
 		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{}, [3]float32{1, 1, 1}).Once()
 		mockAnim.EXPECT().InstanceTransform(uint32(1)).Return([3]float32{}, [3]float32{1, 1, 1}).Once()
-		mockAnim.EXPECT().OutputBindGroupProvider().Return(outputBGP).Twice()
+		mockAnim.EXPECT().OutputBindGroupProvider().Return(outputBGP).Maybe()
 
 		mockBuf := &wgpu.Buffer{}
 		suite.scene.shadowIndirectBuffers = map[animator.Animator]*wgpu.Buffer{mockAnim: mockBuf}
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
+		suite.scene.shadowAnimationProviders = map[animator.Animator]bind_group_provider.BindGroupProvider{mockAnim: outputBGP}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		suite.rendererMock.EXPECT().WriteRawBuffer(mockBuf, uint64(0), mock.Anything).Return().Once()
@@ -2255,6 +2302,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(5)
 		mockAnim.EXPECT().Model().Return(mockModel).Times(7)
 		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{10000, 10000, 10000}, [3]float32{1, 1, 1}).Once()
@@ -2306,6 +2354,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
 		mockAnim.EXPECT().Model().Return(mockModel).Times(5)
 		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{10000, 10000, 10000}, [3]float32{1, 1, 1}).Once()
@@ -2391,6 +2440,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
 		mockAnim.EXPECT().Model().Return(mockModel).Times(5)
 		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{1000, 0, 0}, [3]float32{1, 1, 1}).Once()
@@ -2495,6 +2545,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(0)).Times(3)
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
 
@@ -2543,12 +2594,14 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
 		mockAnim.EXPECT().Model().Return(mockModel).Times(5)
 		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{}, [3]float32{1, 3, 5}).Once()
-		mockAnim.EXPECT().OutputBindGroupProvider().Return(outputBGP).Once()
+		mockAnim.EXPECT().OutputBindGroupProvider().Return(outputBGP).Maybe()
 		suite.scene.shadowIndirectBuffers = map[animator.Animator]*wgpu.Buffer{mockAnim: mockBuf}
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
+		suite.scene.shadowAnimationProviders = map[animator.Animator]bind_group_provider.BindGroupProvider{mockAnim: outputBGP}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		suite.rendererMock.EXPECT().WriteRawBuffer(mockBuf, uint64(0), mock.Anything).Return().Once()
@@ -2597,12 +2650,14 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(15)
 		mockAnim.EXPECT().Model().Return(mockModel).Times(21)
 		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{}, [3]float32{1, 3, 5}).Once()
-		mockAnim.EXPECT().OutputBindGroupProvider().Return(outputBGP).Times(6)
+		mockAnim.EXPECT().OutputBindGroupProvider().Return(outputBGP).Maybe()
 		suite.scene.shadowIndirectBuffers = map[animator.Animator]*wgpu.Buffer{mockAnim: mockBuf}
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
+		suite.scene.shadowAnimationProviders = map[animator.Animator]bind_group_provider.BindGroupProvider{mockAnim: outputBGP}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		suite.rendererMock.EXPECT().WriteRawBuffer(mockBuf, uint64(0), mock.Anything).Return().Once()
@@ -2650,6 +2705,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
 		mockAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
 		mockAnim.EXPECT().Model().Return(mockModel).Times(5)
 		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{20, 0, 0}, [3]float32{1, 1, 1}).Once()
@@ -2845,9 +2901,15 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		mdlMock.EXPECT().RenderMaterials().Return(nil).Once()
 		mdlMock.EXPECT().SetComputePipelineKey(mock.Anything).Return().Once()
 
-		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+			Run(func(provider bind_group_provider.BindGroupProvider, descriptor wgpu.BindGroupLayoutDescriptor, bufferUsageOverrides map[int]wgpu.BufferUsage, bufferSizeOverrides map[int]uint64) {
+				if provider.Buffer(1) == nil {
+					provider.SetBuffer(1, &wgpu.Buffer{})
+				}
+			}).Return(nil).Maybe()
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
+		suite.rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
 
 		objMock := game_object_mocks.NewMockGameObject(suite.T())
 		objMock.EXPECT().Model().Return(mdlMock).Once()
@@ -2877,6 +2939,7 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		poolKey.EXPECT().Name().Return("testlit").Maybe()
 
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(0)).Once()
 		animMock.EXPECT().MaxInstances().Return(uint32(1)).Once()
 		animMock.EXPECT().AddInstance().Return(uint32(0), nil).Once()
@@ -2910,6 +2973,7 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		poolKey.EXPECT().Name().Return("testskeletal").Maybe()
 
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(0)).Once()
 		animMock.EXPECT().MaxInstances().Return(uint32(1)).Once()
 		animMock.EXPECT().AddInstance().Return(uint32(0), nil).Once()
@@ -2944,6 +3008,7 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		poolKey.EXPECT().Name().Return("testskllit").Maybe()
 
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(0)).Once()
 		animMock.EXPECT().MaxInstances().Return(uint32(1)).Once()
 		animMock.EXPECT().AddInstance().Return(uint32(0), nil).Once()
@@ -2976,6 +3041,7 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		poolKey.EXPECT().Name().Return("testcontactshadow").Maybe()
 
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(0)).Once()
 		animMock.EXPECT().MaxInstances().Return(uint32(1)).Once()
 		animMock.EXPECT().AddInstance().Return(uint32(0), nil).Once()
@@ -3016,14 +3082,21 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		fullPoolKey.EXPECT().SetComputePipelineKey(mock.Anything).Return().Once()
 
 		fullAnimMock := animator_mocks.NewMockAnimator(suite.T())
+		fullAnimMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		fullAnimMock.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		fullAnimMock.EXPECT().MaxInstances().Return(uint32(1)).Once()
 
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{fullPoolKey: {fullAnimMock}}
 
-		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+			Run(func(provider bind_group_provider.BindGroupProvider, descriptor wgpu.BindGroupLayoutDescriptor, bufferUsageOverrides map[int]wgpu.BufferUsage, bufferSizeOverrides map[int]uint64) {
+				if provider.Buffer(1) == nil {
+					provider.SetBuffer(1, &wgpu.Buffer{})
+				}
+			}).Return(nil).Maybe()
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
+		suite.rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
 
 		objMock := game_object_mocks.NewMockGameObject(suite.T())
 		objMock.EXPECT().Model().Return(fullPoolKey).Once()
@@ -3051,6 +3124,7 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		poolKey.EXPECT().Name().Return("testerr").Maybe()
 
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(0)).Once()
 		animMock.EXPECT().MaxInstances().Return(uint32(1)).Once()
 		animMock.EXPECT().AddInstance().Return(uint32(0), errors.New("AddInstance failed")).Once()
@@ -3078,6 +3152,7 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		poolKey.EXPECT().Name().Return("testephemeral").Maybe()
 
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(0)).Once()
 		animMock.EXPECT().MaxInstances().Return(uint32(1)).Once()
 		animMock.EXPECT().AddInstance().Return(uint32(0), nil).Once()
@@ -3112,6 +3187,7 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		poolKey.EXPECT().Name().Return("testlight").Maybe()
 
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(0)).Once()
 		animMock.EXPECT().MaxInstances().Return(uint32(1)).Once()
 		animMock.EXPECT().AddInstance().Return(uint32(0), nil).Once()
@@ -3148,6 +3224,7 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		poolKey.EXPECT().Name().Return("testphys").Maybe()
 
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(0)).Once()
 		animMock.EXPECT().MaxInstances().Return(uint32(1)).Once()
 		animMock.EXPECT().AddInstance().Return(uint32(0), nil).Once()
@@ -3198,6 +3275,7 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		poolKey.EXPECT().Name().Return("testphysinit").Maybe()
 
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(0)).Once()
 		animMock.EXPECT().MaxInstances().Return(uint32(1)).Once()
 		animMock.EXPECT().AddInstance().Return(uint32(0), nil).Once()
@@ -3246,6 +3324,7 @@ func (suite *sceneImplTest) TestAddGameObject() {
 		poolKey.EXPECT().Skeleton().Return(&model.Skeleton{Bones: []model.Bone{{Name: "root"}}}).Once()
 
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(0)).Once()
 		animMock.EXPECT().MaxInstances().Return(uint32(1)).Once()
 		animMock.EXPECT().AddInstance().Return(uint32(0), nil).Once()
@@ -3399,8 +3478,14 @@ func (suite *sceneImplTest) TestRemoveGameObject() {
 	suite.Run("prunes empty animator after last instance removed", func() {
 		mockModel := model_mocks.NewMockModel(suite.T())
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animLC := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))
+		animLC.OnTransitionTo(lifecycle.LifecycleStateRemoved, lifecycle.Hook(func() error {
+			suite.scene.pruneAnimator(animMock)
+			return nil
+		}))
 		animMock.EXPECT().RemoveInstance(uint32(0)).Return(uint32(0), false).Once()
 		animMock.EXPECT().InstanceCount().Return(uint32(0)).Once()
+		animMock.EXPECT().Lifecycle().Return(animLC).Maybe()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().Release().Once()
 
@@ -3602,6 +3687,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.scene.cam = camMock
 		suite.scene.writePool = []bind_group_provider.BufferWrite{}
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Times(4)
 		animMock.EXPECT().InstanceCount().Return(uint32(0)).Times(4)
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
@@ -3617,6 +3703,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.scene.cam = camMock
 		suite.scene.writePool = []bind_group_provider.BufferWrite{}
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Times(4)
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
 		animMock.EXPECT().Model().Return(nil).Times(2)
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -3638,6 +3725,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		mockModel.EXPECT().ComputePipelineKey().Return("").Times(2)
 		mockModel.EXPECT().LODMeshProvider(0).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Times(4)
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
 		animMock.EXPECT().Model().Return(mockModel).Times(3)
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
@@ -3660,6 +3748,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		mockModel.EXPECT().ComputePipelineKey().Return("k14").Times(2)
 		mockModel.EXPECT().LODMeshProvider(0).Return(mockMeshBGP).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Times(4)
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
 		animMock.EXPECT().Model().Return(mockModel).Times(3)
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
@@ -3687,6 +3776,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		mockModel.EXPECT().ComputePipelineKey().Return("k15").Times(2)
 		mockModel.EXPECT().LODMeshProvider(0).Return(mockMeshBGP).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Times(4)
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
 		animMock.EXPECT().Model().Return(mockModel).Times(3)
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
@@ -3721,6 +3811,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		mockModel := model_mocks.NewMockModel(suite.T())
 		mockModel.EXPECT().ComputePipelineKey().Return("pc16-key").Times(2)
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Times(4)
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(5)
 		animMock.EXPECT().Model().Return(mockModel).Times(2)
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -3767,6 +3858,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		mockModel.EXPECT().ComputePipelineKey().Return("pc17-key").Times(2)
 		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGPMock).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Times(4)
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(5)
 		animMock.EXPECT().Model().Return(mockModel).Times(3)
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
@@ -3799,6 +3891,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.scene.cam = camMock
 		suite.scene.writePool = []bind_group_provider.BufferWrite{}
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Times(4)
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
 		animMock.EXPECT().Model().Return(nil).Times(3)
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
@@ -3820,6 +3913,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		mockModel.EXPECT().ComputePipelineKey().Return("").Times(2)
 		mockModel.EXPECT().LODMeshProvider(0).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Times(4)
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
 		animMock.EXPECT().Model().Return(mockModel).Times(3)
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
@@ -3842,6 +3936,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		mockModel.EXPECT().ComputePipelineKey().Return("").Times(2)
 		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGPMock).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Times(4)
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
 		animMock.EXPECT().Model().Return(mockModel).Times(3)
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
@@ -3866,6 +3961,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		mockModel.EXPECT().ComputePipelineKey().Return("k21").Times(2)
 		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Times(4)
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
 		animMock.EXPECT().Model().Return(mockModel).Times(3)
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
@@ -3893,6 +3989,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		mockModel.EXPECT().ComputePipelineKey().Return("k22").Times(2)
 		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Times(4)
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
 		animMock.EXPECT().Model().Return(mockModel).Times(3)
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
@@ -3930,6 +4027,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		mockModel.EXPECT().ComputePipelineKey().Return("k23").Times(2)
 		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Times(4)
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(5)
 		animMock.EXPECT().Model().Return(mockModel).Times(3)
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
@@ -3966,6 +4064,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.scene.writePool = []bind_group_provider.BufferWrite{}
 		bgpMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Times(4)
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(4)
 		animMock.EXPECT().Model().Return(nil).Times(2)
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -4218,6 +4317,64 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
 	})
 
+	suite.Run("physics paused flushes writes and dispatches sync without stepping", func() {
+		camMock := camera_mocks.NewMockCamera(suite.T())
+		camMock.EXPECT().Update().Return().Once()
+		camMock.EXPECT().ViewProjectionMatrix().Return([16]float32{}).Once()
+		camMock.EXPECT().ProjectionMatrix().Return([16]float32{}).Once()
+		camMock.EXPECT().BindGroupProvider().Return(nil).Once()
+		suite.scene.cam = camMock
+		suite.scene.writePool = []bind_group_provider.BufferWrite{}
+
+		bufBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		syncBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		suite.scene.physicsSyncGroup = map[int]bind_group_provider.BindGroupProvider{0: syncBGP}
+		suite.scene.physicsSyncWrites = []bind_group_provider.BufferWrite{{Binding: 1}}
+
+		phMock := physics_mocks.NewMockPhysics(suite.T())
+		phMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStatePaused))).Once()
+		phMock.EXPECT().StagedWriteData().Return([]bind_group_provider.BufferWrite{{Binding: 7}}).Once()
+		phMock.EXPECT().BodiesCount().Return(2).Once()
+		phMock.EXPECT().Buffers().Return(bufBGP).Once()
+		phMock.EXPECT().PipelineKey("sync").Return("sync_key").Once()
+
+		suite.rendererMock.EXPECT().WriteBuffers(mock.MatchedBy(func(writes []bind_group_provider.BufferWrite) bool {
+			if len(writes) != 3 {
+				return false
+			}
+
+			foundStaged := false
+			foundSyncMap := false
+			foundBodyCount := false
+
+			for _, write := range writes {
+				switch {
+				case write.Binding == 7:
+					foundStaged = true
+				case write.Binding == 1:
+					foundSyncMap = true
+				case write.Provider == bufBGP && write.Binding == 3 && write.Offset == 20 && len(write.Data) == 4:
+					foundBodyCount = binary.LittleEndian.Uint32(write.Data) == 2
+				}
+			}
+
+			return foundStaged && foundSyncMap && foundBodyCount
+		})).Return().Once()
+		suite.rendererMock.EXPECT().Pipeline("sync_key").Return(nil).Once()
+		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.MatchedBy(func(dispatches []renderer.ComputeDispatch) bool {
+			return len(dispatches) == 1 &&
+				dispatches[0].PipelineKey == "sync_key" &&
+				len(dispatches[0].Providers) == 1 &&
+				dispatches[0].Providers[0].Group == 0 &&
+				dispatches[0].Providers[0].Provider == syncBGP &&
+				dispatches[0].WorkGroupCount == [3]uint32{1, 1, 1}
+		})).Return().Once()
+
+		suite.scene.physicsHandler = phMock
+		suite.NotPanics(func() { suite.scene.PrepareCompute(0.016) })
+		suite.Len(suite.scene.physicsSyncWrites, 0)
+	})
+
 	suite.Run("physics ConsumeReadbackRequest true StagingBuffer nil no CopyBufferToBuffer", func() {
 		camMock := camera_mocks.NewMockCamera(suite.T())
 		camMock.EXPECT().Update().Return().Once()
@@ -4439,6 +4596,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		mockModel := model_mocks.NewMockModel(suite.T())
 		mockModel.EXPECT().ComputePipelineKey().Return("k44").Times(2)
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Times(4)
 		animMock.EXPECT().InstanceCount().Return(uint32(2)).Times(5)
 		animMock.EXPECT().Model().Return(mockModel).Times(2)
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -4519,6 +4677,7 @@ func (suite *sceneImplTest) TestPrepareCompute() {
 		mockModel := model_mocks.NewMockModel(suite.T())
 		mockModel.EXPECT().ComputePipelineKey().Return("bone-model-key").Times(2)
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Times(4)
 		animMock.EXPECT().InstanceCount().Return(uint32(2)).Times(5)
 		animMock.EXPECT().Model().Return(mockModel).Times(2)
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -4679,6 +4838,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 	suite.Run("zero instance count skipped", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(0)).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
@@ -4688,6 +4848,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 	suite.Run("nil model skipped", func() {
 		suite.scene.drawBindGroupsPool = []bind_group_provider.BindGroupProvider{}
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		animMock.EXPECT().Model().Return(nil).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
@@ -4700,6 +4861,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockModel := model_mocks.NewMockModel(suite.T())
 		mockModel.EXPECT().LODMeshProvider(0).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
@@ -4714,6 +4876,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{}).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
@@ -4730,6 +4893,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
@@ -4746,6 +4910,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		suite.rendererMock.EXPECT().Pipeline("k7").Return(nil).Once()
@@ -4763,6 +4928,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
 		mockModel.EXPECT().RenderMaterials().Return([]material.Material{matMock}).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		mockPipe := pipeline_mocks.NewMockPipeline(suite.T())
@@ -4787,6 +4953,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(renderShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -4813,6 +4980,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(renderShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(fragShdrMock).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -4837,6 +5005,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(renderShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -4861,6 +5030,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(renderShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
@@ -4886,6 +5056,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(renderShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
@@ -4911,6 +5082,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(renderShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
@@ -4936,6 +5108,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(renderShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
@@ -4961,6 +5134,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(renderShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
@@ -4996,6 +5170,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(renderShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -5031,6 +5206,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(renderShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -5062,6 +5238,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(renderShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -5095,6 +5272,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(renderShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -5126,6 +5304,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(renderShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		suite.rendererMock.EXPECT().Pipeline("k21").Return(mockPipe).Once()
@@ -5156,6 +5335,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -5189,6 +5369,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -5220,6 +5401,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -5254,6 +5436,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
@@ -5286,6 +5469,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -5323,6 +5507,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -5359,6 +5544,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -5390,6 +5576,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
@@ -5419,6 +5606,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -5455,6 +5643,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -5491,6 +5680,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -5529,6 +5719,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -5566,6 +5757,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -5600,6 +5792,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -5633,6 +5826,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -5667,6 +5861,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -5706,6 +5901,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -5747,6 +5943,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -5784,6 +5981,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -5808,6 +6006,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockRenderPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockRenderPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
@@ -5833,6 +6032,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockRenderPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockRenderPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
@@ -5859,6 +6059,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		mockRenderPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		indBuf := &wgpu.Buffer{}
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		animMock.EXPECT().CullingEnabled().Return(true).Once()
@@ -5896,6 +6097,7 @@ func (suite *sceneImplTest) TestDrawCalls() {
 		suite.scene.cam = camMock
 		camBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		camMock.EXPECT().BindGroupProvider().Return(camBGP).Once()
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		mockModel.EXPECT().LODMeshProvider(0).Return(meshBGP).Once()
@@ -10074,7 +10276,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		anim := suite.scene.createAnimator(mdl, cs, vs, fs)
+		anim := startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 		suite.NotNil(anim)
 	})
 
@@ -10104,7 +10306,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("mesh provider with non-nil vertex buffer skips InitMeshBuffers", func() {
@@ -10129,7 +10331,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("InitMeshBuffers error panics", func() {
@@ -10149,7 +10351,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		mdl.EXPECT().Name().Return("m").Maybe()
 		cs.EXPECT().Declarations().Return([]shader.Annotation{}).Maybe()
 		suite.rendererMock.EXPECT().InitMeshBuffers(bgpMock, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("mesh err")).Once()
-		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
+		suite.Panics(func() { startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs)) })
 	})
 
 	suite.Run("AnnotationArgAnimationData sets compute group", func() {
@@ -10178,7 +10380,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("AnnotationArgSkeletalAnimationData with array< prefix sets compute group", func() {
@@ -10207,7 +10409,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("compute group decl with nil Group is skipped", func() {
@@ -10217,11 +10419,11 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		mdl.EXPECT().BoundingRadius().Return(float32(1.0)).Once()
 		mdl.EXPECT().BoundingMin().Return([3]float32{}).Once()
 		mdl.EXPECT().BoundingMax().Return([3]float32{}).Once()
-		mdl.EXPECT().MeshProvider().Return(nil).Once()
-		mdl.EXPECT().LODCount().Return(1).Once()
+		mdl.EXPECT().MeshProvider().Return(nil).Maybe()
+		mdl.EXPECT().LODCount().Return(1).Maybe()
 		mdl.EXPECT().Name().Return("m").Maybe()
-		mdl.EXPECT().SetComputePipelineKey(mock.Anything).Return().Once()
-		mdl.EXPECT().RenderMaterials().Return(nil).Once()
+		mdl.EXPECT().SetComputePipelineKey(mock.Anything).Return().Maybe()
+		mdl.EXPECT().RenderMaterials().Return(nil).Maybe()
 		b := 1
 		decl := shader.Annotation{
 			Type:    shader.AnnotationTypeBindingGroup,
@@ -10230,13 +10432,14 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 			Args:    []shader.AnnotationArg{"", "", shader.AnnotationArgAnimationData},
 		}
 		cs.EXPECT().Declarations().Return([]shader.Annotation{decl}).Maybe()
-		cs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
-		cs.EXPECT().Key().Return("ck").Once()
-		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
-		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
-		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
-		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
+		cs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Maybe()
+		cs.EXPECT().Key().Return("ck").Maybe()
+		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Maybe()
+		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Maybe()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Maybe()
+		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Maybe()
+		suite.rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
@@ -10268,7 +10471,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("output group BindingGroup InstanceData array< prefix sets group and binding", func() {
@@ -10299,7 +10502,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("output group BindingGroup InstanceData with nil binding skips binding update", func() {
@@ -10329,7 +10532,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("output group set from Provider Animator", func() {
@@ -10358,7 +10561,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("output decl with nil Group is skipped", func() {
@@ -10386,7 +10589,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("output group Provider with non-Animator arg does not set outputGroup", func() {
@@ -10415,7 +10618,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("matching output descriptor entry overrides perInstanceOutputSize", func() {
@@ -10451,7 +10654,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("output descriptor entry zero MinBindingSize does not override perInstanceOutputSize", func() {
@@ -10487,7 +10690,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("typed compute entries IndirectArgs BoneInfo ModelData AnimGlobals GlobalData default storage", func() {
@@ -10530,7 +10733,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("typed BoneInfo ModelData with zero MinBindingSize no size override", func() {
@@ -10565,7 +10768,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("default ReadOnlyStorage binding with MinBindingSize adds size override", func() {
@@ -10598,7 +10801,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("default non-storage binding with MinBindingSize no size override", func() {
@@ -10631,7 +10834,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("compute binding types loop skips Provider decls", func() {
@@ -10660,7 +10863,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("compute binding types loop skips BindingGroup decls with nil Binding", func() {
@@ -10690,7 +10893,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("raw output binding sets computeOutputBinding and size override", func() {
@@ -10724,7 +10927,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("raw packed binding adds size override", func() {
@@ -10758,7 +10961,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("raw scratch binding adds size override", func() {
@@ -10792,7 +10995,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("raw provider loop skips non-Provider decls", func() {
@@ -10802,11 +11005,11 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		mdl.EXPECT().BoundingRadius().Return(float32(1.0)).Once()
 		mdl.EXPECT().BoundingMin().Return([3]float32{}).Once()
 		mdl.EXPECT().BoundingMax().Return([3]float32{}).Once()
-		mdl.EXPECT().MeshProvider().Return(nil).Once()
-		mdl.EXPECT().LODCount().Return(1).Once()
+		mdl.EXPECT().MeshProvider().Return(nil).Maybe()
+		mdl.EXPECT().LODCount().Return(1).Maybe()
 		mdl.EXPECT().Name().Return("m").Maybe()
-		mdl.EXPECT().SetComputePipelineKey(mock.Anything).Return().Once()
-		mdl.EXPECT().RenderMaterials().Return(nil).Once()
+		mdl.EXPECT().SetComputePipelineKey(mock.Anything).Return().Maybe()
+		mdl.EXPECT().RenderMaterials().Return(nil).Maybe()
 		b := 2
 		g := 0
 		decl := shader.Annotation{
@@ -10816,13 +11019,14 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 			Args:    []shader.AnnotationArg{"", "", shader.AnnotationArgAnimationData},
 		}
 		cs.EXPECT().Declarations().Return([]shader.Annotation{decl}).Maybe()
-		cs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
-		cs.EXPECT().Key().Return("ck").Once()
-		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
-		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
-		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
-		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
+		cs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Maybe()
+		cs.EXPECT().Key().Return("ck").Maybe()
+		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Maybe()
+		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Maybe()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Maybe()
+		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Maybe()
+		suite.rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
 		suite.scene.createAnimator(mdl, cs, vs, fs)
 	})
 
@@ -10851,7 +11055,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("output size override for matching outputInstanceBinding storage entry", func() {
@@ -10879,7 +11083,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("InitBindGroup compute error panics", func() {
@@ -10897,7 +11101,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("compute bg err")).Once()
-		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
+		suite.Panics(func() { startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs)) })
 	})
 
 	suite.Run("InitBindGroup output error panics", func() {
@@ -10916,7 +11120,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("output bg err")).Once()
-		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
+		suite.Panics(func() { startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs)) })
 	})
 
 	suite.Run("RegisterPipelines compute error panics", func() {
@@ -10937,7 +11141,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(errors.New("cp err")).Once()
-		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
+		suite.Panics(func() { startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs)) })
 	})
 
 	suite.Run("RegisterPipelines render error panics", func() {
@@ -10960,7 +11164,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(errors.New("rp err")).Once()
-		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
+		suite.Panics(func() { startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs)) })
 	})
 
 	suite.Run("material with non-nil BGP is skipped", func() {
@@ -10986,7 +11190,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("material with empty pipeline key uses fragmentShader for initMaterialGPU", func() {
@@ -11012,7 +11216,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("material pipeline key nil at Pipeline registers new pipeline second nil uses fragmentShader", func() {
@@ -11041,7 +11245,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(3)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("material PipelineOptions non-empty non-PipelineBuilderOption items filtered", func() {
@@ -11070,7 +11274,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(3)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("material PipelineOptions with valid PipelineBuilderOption is included", func() {
@@ -11100,7 +11304,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(3)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("material already registered Pipeline skips registration and uses Shader for frag", func() {
@@ -11130,7 +11334,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("material pipeline Shader returns nil falls back to fragmentShader", func() {
@@ -11160,7 +11364,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("material RegisterPipelines error panics", func() {
@@ -11189,7 +11393,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(errors.New("mat pipe err")).Once()
-		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
+		suite.Panics(func() { startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs)) })
 	})
 
 	suite.Run("initMaterialGPU error panics", func() {
@@ -11226,7 +11430,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("mat bg err")).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
+		suite.Panics(func() { startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs)) })
 	})
 
 	suite.Run("skeletal backend nil skeleton selects skeletal type", func() {
@@ -11250,7 +11454,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		anim := suite.scene.createAnimator(mdl, cs, vs, fs)
+		anim := startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 		suite.NotNil(anim)
 	})
 
@@ -11282,7 +11486,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("skeletal binding discovery BoneInfo and AnimatorPacked both found", func() {
@@ -11312,7 +11516,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("skeletal binding discovery array< prefix stripped for BoneInfo", func() {
@@ -11344,7 +11548,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("skeletal binding discovery Provider non-AnimatorPacked arg does not set packedBinding", func() {
@@ -11374,7 +11578,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("skeletal with skeleton and animations computes packed buffer size", func() {
@@ -11415,7 +11619,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		anim := suite.scene.createAnimator(mdl, cs, vs, fs)
+		anim := startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 		suite.NotNil(anim)
 	})
 
@@ -11444,7 +11648,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.scene.createAnimator(mdl, cs, vs, fs)
+		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
 
 	suite.Run("compute output buffer shared to output BGP when annotation present", func() {
@@ -11495,7 +11699,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 
-		anim := suite.scene.createAnimator(mdl, cs, vs, fs)
+		anim := startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 		suite.NotNil(anim)
 	})
 
@@ -11521,7 +11725,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(mockBuf, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 
-		anim := suite.scene.createAnimator(mdl, cs, vs, fs)
+		anim := startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 		suite.NotNil(anim)
 		suite.Contains(suite.scene.shadowIndirectBuffers, anim)
 		suite.NotNil(suite.scene.shadowIndirectBuffers[anim])
@@ -11804,6 +12008,20 @@ func (suite *sceneImplTest) TestSyncFrameSlot() {
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
 		suite.scene.lightHandler = nil
 		suite.NotPanics(func() { suite.scene.SyncFrameSlot(0) })
+	})
+
+	suite.Run("calls SetSlot on shadow animation provider", func() {
+		shadowBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		shadowBGP.EXPECT().SetSlot(1).Return().Once()
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().ComputeBindGroupProvider().Return(nil).Once()
+		animMock.EXPECT().OutputBindGroupProvider().Return(nil).Once()
+		animMock.EXPECT().HiZBindGroupProvider().Return(nil).Once()
+		mapKey := model_mocks.NewMockModel(suite.T())
+		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {animMock}}
+		suite.scene.shadowAnimationProviders = map[animator.Animator]bind_group_provider.BindGroupProvider{animMock: shadowBGP}
+		suite.scene.lightHandler = nil
+		suite.NotPanics(func() { suite.scene.SyncFrameSlot(1) })
 	})
 
 	suite.Run("calls SetSlot for non-nil physics sync groups only", func() {
@@ -12657,6 +12875,7 @@ func (suite *sceneImplTest) TestPrepareShadowsPointLightNoCastShadows() {
 		mockModel.EXPECT().CastsShadows().Return(false).Maybe()
 		mapKey := model_mocks.NewMockModel(suite.T())
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Maybe()
 		mockAnim.EXPECT().Model().Return(mockModel).Maybe()
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
@@ -12716,6 +12935,7 @@ func (suite *sceneImplTest) TestDrawCallsAdditionalAnnotations() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
@@ -12747,6 +12967,7 @@ func (suite *sceneImplTest) TestDrawCallsAdditionalAnnotations() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Once()
 		animMock.EXPECT().Model().Return(mockModel).Once()
 		mapKey := model_mocks.NewMockModel(suite.T())
@@ -12981,6 +13202,7 @@ func (suite *sceneImplTest) TestDrawCallsDirtyPrePassGuardContinues() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(renderShdrMock).Twice()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
 		animMock.EXPECT().Model().Return(mockModel).Twice()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -12999,10 +13221,12 @@ func (suite *sceneImplTest) TestDrawCallsDirtyPrePassGuardContinues() {
 
 		// badAnim1: InstanceCount=0 fires pre-pass guard 1 and serial guard 1.
 		badAnim1 := animator_mocks.NewMockAnimator(suite.T())
+		badAnim1.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		badAnim1.EXPECT().InstanceCount().Return(uint32(0)).Twice()
 
 		// badAnim2: InstanceCount=1, Model=nil fires pre-pass guard 2 and serial guard 2.
 		badAnim2 := animator_mocks.NewMockAnimator(suite.T())
+		badAnim2.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		badAnim2.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		badAnim2.EXPECT().Model().Return(nil).Twice()
 
@@ -13012,6 +13236,7 @@ func (suite *sceneImplTest) TestDrawCallsDirtyPrePassGuardContinues() {
 		model3.EXPECT().RenderMaterials().Return([]material.Material{}).Twice()
 		model3.EXPECT().LODMeshProvider(0).Return(meshBGP3).Once()
 		badAnim3 := animator_mocks.NewMockAnimator(suite.T())
+		badAnim3.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		badAnim3.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		badAnim3.EXPECT().Model().Return(model3).Twice()
 
@@ -13023,6 +13248,7 @@ func (suite *sceneImplTest) TestDrawCallsDirtyPrePassGuardContinues() {
 		model4.EXPECT().RenderMaterials().Return([]material.Material{mat4}).Twice()
 		model4.EXPECT().LODMeshProvider(0).Return(meshBGP4).Once()
 		badAnim4 := animator_mocks.NewMockAnimator(suite.T())
+		badAnim4.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		badAnim4.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		badAnim4.EXPECT().Model().Return(model4).Twice()
 
@@ -13035,6 +13261,7 @@ func (suite *sceneImplTest) TestDrawCallsDirtyPrePassGuardContinues() {
 		model5.EXPECT().LODMeshProvider(0).Return(meshBGP5).Once()
 		suite.rendererMock.EXPECT().Pipeline("k_bad5").Return(nil).Twice()
 		badAnim5 := animator_mocks.NewMockAnimator(suite.T())
+		badAnim5.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		badAnim5.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		badAnim5.EXPECT().Model().Return(model5).Twice()
 
@@ -13049,6 +13276,7 @@ func (suite *sceneImplTest) TestDrawCallsDirtyPrePassGuardContinues() {
 		pipe6.EXPECT().Shader(shader.ShaderTypeVertex).Return(nil).Twice()
 		suite.rendererMock.EXPECT().Pipeline("k_bad6").Return(pipe6).Twice()
 		badAnim6 := animator_mocks.NewMockAnimator(suite.T())
+		badAnim6.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		badAnim6.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		badAnim6.EXPECT().Model().Return(model6).Twice()
 
@@ -13068,6 +13296,7 @@ func (suite *sceneImplTest) TestDrawCallsDirtyPrePassGuardContinues() {
 		suite.rendererMock.EXPECT().Pipeline("k_good").Return(pipeGood).Twice()
 		suite.rendererMock.EXPECT().DrawCall("k_good", meshBGP, uint32(1), mock.Anything).Return(nil).Once()
 		goodAnim := animator_mocks.NewMockAnimator(suite.T())
+		goodAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		goodAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
 		goodAnim.EXPECT().Model().Return(modelGood).Twice()
 		goodAnim.EXPECT().CullingEnabled().Return(false).Once()
@@ -13129,6 +13358,7 @@ func (suite *sceneImplTest) TestDrawCallsGoroutineInfrastructure() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(fragShdrMock).Once()
 
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
 		animMock.EXPECT().Model().Return(mockModel).Twice()
 		// Called twice in goroutine: g2 BindingGroup+InstanceData (array stripped) and g3 Provider+Animator.
@@ -13185,6 +13415,7 @@ func (suite *sceneImplTest) TestDrawCallsGoroutineInvalidPath() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Twice()
 
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		// No DrawCall: goroutine invalid + serial skipMaterial. Only pre-pass guard + serial guard.
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Twice()
 		animMock.EXPECT().Model().Return(mockModel).Twice()
@@ -13226,6 +13457,7 @@ func (suite *sceneImplTest) TestDrawCallsGoroutineAnnotationCoverage() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
 		animMock.EXPECT().Model().Return(mockModel).Twice()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -13264,6 +13496,7 @@ func (suite *sceneImplTest) TestDrawCallsGoroutineAnnotationCoverage() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
 		animMock.EXPECT().Model().Return(mockModel).Twice()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -13300,6 +13533,7 @@ func (suite *sceneImplTest) TestDrawCallsGoroutineAnnotationCoverage() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
 		animMock.EXPECT().Model().Return(mockModel).Twice()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -13336,6 +13570,7 @@ func (suite *sceneImplTest) TestDrawCallsGoroutineAnnotationCoverage() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
 		animMock.EXPECT().Model().Return(mockModel).Twice()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -13368,6 +13603,7 @@ func (suite *sceneImplTest) TestDrawCallsGoroutineAnnotationCoverage() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
 		animMock.EXPECT().Model().Return(mockModel).Twice()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -13400,6 +13636,7 @@ func (suite *sceneImplTest) TestDrawCallsGoroutineAnnotationCoverage() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
 		animMock.EXPECT().Model().Return(mockModel).Twice()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -13433,6 +13670,7 @@ func (suite *sceneImplTest) TestDrawCallsGoroutineAnnotationCoverage() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
 		animMock.EXPECT().Model().Return(mockModel).Twice()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -13469,6 +13707,7 @@ func (suite *sceneImplTest) TestDrawCallsGoroutineAnnotationCoverage() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
 		animMock.EXPECT().Model().Return(mockModel).Twice()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -13507,6 +13746,7 @@ func (suite *sceneImplTest) TestDrawCallsGoroutineAnnotationCoverage() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
 		animMock.EXPECT().Model().Return(mockModel).Twice()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -13543,6 +13783,7 @@ func (suite *sceneImplTest) TestDrawCallsGoroutineAnnotationCoverage() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
 		animMock.EXPECT().Model().Return(mockModel).Twice()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -13575,6 +13816,7 @@ func (suite *sceneImplTest) TestDrawCallsGoroutineAnnotationCoverage() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
 		animMock.EXPECT().Model().Return(mockModel).Twice()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -13608,6 +13850,7 @@ func (suite *sceneImplTest) TestDrawCallsGoroutineAnnotationCoverage() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
 		animMock.EXPECT().Model().Return(mockModel).Twice()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -13640,6 +13883,7 @@ func (suite *sceneImplTest) TestDrawCallsGoroutineAnnotationCoverage() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
 		animMock.EXPECT().Model().Return(mockModel).Twice()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -13673,6 +13917,7 @@ func (suite *sceneImplTest) TestDrawCallsGoroutineAnnotationCoverage() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(vertShdrMock).Once()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Once()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
 		animMock.EXPECT().Model().Return(mockModel).Twice()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -13833,6 +14078,7 @@ func (suite *sceneImplTest) TestPrepareShadowsOuterScanBreak() {
 		mockModel.EXPECT().LODCount().Return(1).Maybe()
 
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Maybe()
 		mockAnim.EXPECT().Model().Return(mockModel).Maybe()
 		mockAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{0, 0, 0}, [3]float32{1, 1, 1}).Maybe()
@@ -14000,6 +14246,7 @@ func (suite *sceneImplTest) TestPrepareShadowsOuterScanRangeExceed() {
 		mockModel.EXPECT().BoundingRadius().Return(float32(1)).Maybe()
 
 		mockAnim := animator_mocks.NewMockAnimator(suite.T())
+		mockAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		mockAnim.EXPECT().InstanceCount().Return(uint32(1)).Maybe()
 		mockAnim.EXPECT().Model().Return(mockModel).Maybe()
 		// Instance is ~173 units from the light; rng+boundR*maxS = 10+1*1 = 11, so 173 > 11.
@@ -14042,7 +14289,7 @@ func (suite *sceneImplTest) TestCreateAnimatorShadowBufferPanicOnFail() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(nil, errors.New("fail")).Once()
 
-		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
+		suite.Panics(func() { startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs)) })
 	})
 }
 
@@ -14232,7 +14479,7 @@ func (suite *sceneImplTest) TestCreateAnimatorUncoveredPaths() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("slot1 compute fail")).Once()
-		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
+		suite.Panics(func() { startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs)) })
 	})
 
 	suite.Run("should init Hi-Z BGP when HiZBindGroupProvider returns non-nil", func() {
@@ -14257,7 +14504,7 @@ func (suite *sceneImplTest) TestCreateAnimatorUncoveredPaths() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(5)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.NotPanics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
+		suite.NotPanics(func() { startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs)) })
 	})
 
 	suite.Run("should share packed and scratch buffers for slot 1 compute", func() {
@@ -14298,7 +14545,7 @@ func (suite *sceneImplTest) TestCreateAnimatorUncoveredPaths() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(2)
 		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
-		suite.NotPanics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
+		suite.NotPanics(func() { startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs)) })
 	})
 
 	suite.Run("Hi-Z BGP slot 0 InitBindGroup panics", func() {
@@ -14319,7 +14566,7 @@ func (suite *sceneImplTest) TestCreateAnimatorUncoveredPaths() {
 		suite.scene.hizFallbackView = &wgpu.TextureView{}
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("hiz slot0 fail")).Once()
-		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
+		suite.Panics(func() { startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs)) })
 	})
 
 	suite.Run("Hi-Z BGP slot 1 InitBindGroup panics", func() {
@@ -14340,7 +14587,7 @@ func (suite *sceneImplTest) TestCreateAnimatorUncoveredPaths() {
 		suite.scene.hizFallbackView = &wgpu.TextureView{}
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(4)
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("hiz slot1 fail")).Once()
-		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
+		suite.Panics(func() { startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs)) })
 	})
 
 	suite.Run("output BGP slot 1 InitBindGroup panics", func() {
@@ -14374,7 +14621,62 @@ func (suite *sceneImplTest) TestCreateAnimatorUncoveredPaths() {
 			}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(2)
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("output slot1 fail")).Once()
-		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
+		suite.Panics(func() { startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs)) })
+	})
+}
+
+func (suite *sceneImplTest) TestShadowAnimatorBindGroup() {
+	suite.Run("nil animator returns nil", func() {
+		result := suite.scene.shadowAnimatorBindGroup(nil)
+		suite.Nil(result)
+	})
+
+	suite.Run("simple backend returns scene shadow animation provider", func() {
+		shadowBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().BackendType().Return(animator.BackendTypeSimple).Once()
+		suite.scene.shadowAnimationProviders = map[animator.Animator]bind_group_provider.BindGroupProvider{animMock: shadowBGP}
+		result := suite.scene.shadowAnimatorBindGroup(animMock)
+		suite.Equal(shadowBGP, result)
+	})
+
+	suite.Run("non-simple backend returns animator output provider", func() {
+		outputBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().BackendType().Return(animator.BackendTypeSkeletal).Once()
+		animMock.EXPECT().OutputBindGroupProvider().Return(outputBGP).Once()
+		result := suite.scene.shadowAnimatorBindGroup(animMock)
+		suite.Equal(outputBGP, result)
+	})
+}
+
+func (suite *sceneImplTest) TestReleaseSharedBufferBindGroupProvider() {
+	suite.Run("nil provider no-op", func() {
+		suite.NotPanics(func() { releaseSharedBufferBindGroupProvider(nil) })
+	})
+
+	suite.Run("non-nil provider clears both slots before release", func() {
+		provider := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		slotOrder := make([]int, 0, 2)
+		currentSlot := -1
+		clearedSlots := map[int]bool{}
+
+		provider.EXPECT().SetSlot(mock.Anything).Run(func(slot int) {
+			currentSlot = slot
+			slotOrder = append(slotOrder, slot)
+		}).Return().Twice()
+		provider.EXPECT().SetBuffers(mock.Anything).Run(func(buffers map[int]*wgpu.Buffer) {
+			suite.Len(buffers, 0)
+			clearedSlots[currentSlot] = true
+		}).Return().Twice()
+		provider.EXPECT().Release().Run(func() {
+			suite.True(clearedSlots[0])
+			suite.True(clearedSlots[1])
+		}).Return().Once()
+
+		releaseSharedBufferBindGroupProvider(provider)
+
+		suite.Equal([]int{0, 1}, slotOrder)
 	})
 }
 
@@ -14448,6 +14750,7 @@ func (suite *sceneImplTest) TestPrepareComputeLODPath() {
 		mockModel.EXPECT().ComputePipelineKey().Return("pc-lod1-key").Times(2)
 		mockModel.EXPECT().LODCount().Return(2).Times(2)
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Times(4)
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(8)
 		animMock.EXPECT().Model().Return(mockModel).Times(2)
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -14491,6 +14794,7 @@ func (suite *sceneImplTest) TestDrawCallsDirtyCacheElseMerge() {
 		mockPipe.EXPECT().Shader(shader.ShaderTypeVertex).Return(renderShdrMock).Twice()
 		mockPipe.EXPECT().Shader(shader.ShaderTypeFragment).Return(nil).Twice()
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(3)
 		animMock.EXPECT().Model().Return(mockModel).Twice()
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -14536,13 +14840,15 @@ func (suite *sceneImplTest) TestPrepareShadowsSecondLoopGuards() {
 		goodModel.EXPECT().BoundingRadius().Return(float32(1000)).Times(12)
 		goodAnim := animator_mocks.NewMockAnimator(suite.T())
 		goodAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		goodAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		goodAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(14)
 		goodAnim.EXPECT().Model().Return(goodModel).Times(20)
 		goodAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{0, 0, 0}, [3]float32{1, 1, 1}).Once()
-		goodAnim.EXPECT().OutputBindGroupProvider().Return(goodOutputBGP).Times(6)
+		goodAnim.EXPECT().OutputBindGroupProvider().Return(goodOutputBGP).Maybe()
 
 		badAnim := animator_mocks.NewMockAnimator(suite.T())
 		badAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		badAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		badAnim.EXPECT().InstanceCount().Return(uint32(0)).Times(8)
 
 		mapKey := model_mocks.NewMockModel(suite.T())
@@ -14590,13 +14896,15 @@ func (suite *sceneImplTest) TestPrepareShadowsSecondLoopGuards() {
 		goodModel.EXPECT().BoundingRadius().Return(float32(1000)).Times(12)
 		goodAnim := animator_mocks.NewMockAnimator(suite.T())
 		goodAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		goodAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		goodAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(14)
 		goodAnim.EXPECT().Model().Return(goodModel).Times(20)
 		goodAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{0, 0, 0}, [3]float32{1, 1, 1}).Once()
-		goodAnim.EXPECT().OutputBindGroupProvider().Return(goodOutputBGP).Times(6)
+		goodAnim.EXPECT().OutputBindGroupProvider().Return(goodOutputBGP).Maybe()
 
 		badAnim := animator_mocks.NewMockAnimator(suite.T())
 		badAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		badAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		badAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(8)
 		badAnim.EXPECT().Model().Return(nil).Times(8)
 
@@ -14645,10 +14953,11 @@ func (suite *sceneImplTest) TestPrepareShadowsSecondLoopGuards() {
 		goodModel.EXPECT().BoundingRadius().Return(float32(1000)).Times(12)
 		goodAnim := animator_mocks.NewMockAnimator(suite.T())
 		goodAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		goodAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		goodAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(14)
 		goodAnim.EXPECT().Model().Return(goodModel).Times(20)
 		goodAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{0, 0, 0}, [3]float32{1, 1, 1}).Once()
-		goodAnim.EXPECT().OutputBindGroupProvider().Return(goodOutputBGP).Times(6)
+		goodAnim.EXPECT().OutputBindGroupProvider().Return(goodOutputBGP).Maybe()
 
 		badMeshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		badModel := model_mocks.NewMockModel(suite.T())
@@ -14662,6 +14971,7 @@ func (suite *sceneImplTest) TestPrepareShadowsSecondLoopGuards() {
 		badModel.EXPECT().BoundingRadius().Return(float32(0.5)).Times(6)
 		badAnim := animator_mocks.NewMockAnimator(suite.T())
 		badAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		badAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		badAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(8)
 		badAnim.EXPECT().Model().Return(badModel).Times(14)
 		badAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{1000, 0, 0}, [3]float32{1, 1, 1}).Once()
@@ -14711,10 +15021,11 @@ func (suite *sceneImplTest) TestPrepareShadowsSecondLoopGuards() {
 		goodModel.EXPECT().BoundingRadius().Return(float32(1000)).Times(12)
 		goodAnim := animator_mocks.NewMockAnimator(suite.T())
 		goodAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		goodAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		goodAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(14)
 		goodAnim.EXPECT().Model().Return(goodModel).Times(20)
 		goodAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{0, 0, 0}, [3]float32{1, 1, 1}).Once()
-		goodAnim.EXPECT().OutputBindGroupProvider().Return(goodOutputBGP).Times(6)
+		goodAnim.EXPECT().OutputBindGroupProvider().Return(goodOutputBGP).Maybe()
 
 		badMeshBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		badModel := model_mocks.NewMockModel(suite.T())
@@ -14728,6 +15039,7 @@ func (suite *sceneImplTest) TestPrepareShadowsSecondLoopGuards() {
 		badModel.EXPECT().BoundingRadius().Return(float32(0.01)).Times(6)
 		badAnim := animator_mocks.NewMockAnimator(suite.T())
 		badAnim.EXPECT().BackendType().Return(animator.BackendTypeSimple).Maybe()
+		badAnim.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Maybe()
 		badAnim.EXPECT().InstanceCount().Return(uint32(1)).Times(8)
 		badAnim.EXPECT().Model().Return(badModel).Times(14)
 		badAnim.EXPECT().InstanceTransform(uint32(0)).Return([3]float32{0, 5, 0}, [3]float32{1, 1, 1}).Once()
@@ -14777,6 +15089,7 @@ func (suite *sceneImplTest) TestPrepareComputeLODRemainingBranches() {
 		mockModel.EXPECT().ComputePipelineKey().Return("pclod-a-key").Times(2)
 		mockModel.EXPECT().LODCount().Return(3).Times(2)
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Times(4)
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(8)
 		animMock.EXPECT().Model().Return(mockModel).Times(2)
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -14831,6 +15144,7 @@ func (suite *sceneImplTest) TestPrepareComputeLODRemainingBranches() {
 		mockModel.EXPECT().ComputePipelineKey().Return("pclod-b-key").Times(2)
 		mockModel.EXPECT().LODCount().Return(2).Times(2)
 		animMock := animator_mocks.NewMockAnimator(suite.T())
+		animMock.EXPECT().Lifecycle().Return(lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))).Times(4)
 		animMock.EXPECT().InstanceCount().Return(uint32(1)).Times(8)
 		animMock.EXPECT().Model().Return(mockModel).Times(2)
 		animMock.EXPECT().CullingEnabled().Return(false).Once()
@@ -15004,7 +15318,7 @@ func (suite *sceneImplTest) TestCreateAnimatorLODMeshInitPanics() {
 
 		suite.rendererMock.EXPECT().InitMeshBuffers(lodBGP, []byte{1}, []byte{1}, 3).Return(errors.New("lod mesh fail")).Once()
 
-		suite.Panics(func() { suite.scene.createAnimator(mdl, cs, vs, fs) })
+		suite.Panics(func() { startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs)) })
 	})
 }
 func (suite *sceneImplTest) TestReleaseResolutionDependentResourcesBGPPaths() {
@@ -15834,11 +16148,11 @@ func (suite *sceneImplTest) TestResizePostProcessingTAAEnabled() {
 }
 
 func (suite *sceneImplTest) TestBuilderOptions() {
-	suite.Run("WithDebugDisableAnimatorHiZOcclusion sets the field", func() {
+	suite.Run("WithCullingDisabled sets cullingDisabled", func() {
 		s := &scene{}
-		opt := WithDebugDisableAnimatorHiZOcclusion(true)
+		opt := WithCullingDisabled(true)
 		opt(s)
-		suite.True(s.debugDisableAnimatorHiZOcclusion)
+		suite.True(s.cullingDisabled)
 	})
 
 	suite.Run("WithGBufferHandler sets gBufferHandler", func() {
