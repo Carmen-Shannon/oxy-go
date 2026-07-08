@@ -26,6 +26,7 @@ linters:
   exclusions:
     paths:
       - tests/mocks
+      - engine/.*/mocks
       - ".*_test\\.go"
 
 formatters:
@@ -39,6 +40,7 @@ formatters:
   exclusions:
     paths:
       - tests/mocks
+      - engine/.*/mocks
       - ".*_test\\.go"
 
 issues:
