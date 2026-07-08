@@ -34,7 +34,8 @@ formatters:
     - goimports
   settings:
     goimports:
-      local-prefixes: github.com/Carmen-Shannon/oxy-go
+      local-prefixes:
+        - github.com/Carmen-Shannon/oxy-go
   exclusions:
     paths:
       - tests/mocks
