@@ -1,0 +1,38 @@
+# golangci-lint configuration for oxy-go
+# https://golangci-lint.run/docs/configuration/
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+  go: ""
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gofmt
+    - goimports
+    - misspell
+    - unconvert
+    - unparam
+    - wastedassign
+    - gosimple
+
+linters-settings:
+  goimports:
+    local-prefixes: github.com/Carmen-Shannon/oxy-go
+  misspell:
+    locale: US
+
+issues:
+  exclude-dirs:
+    - tests/mocks
+  exclude-files:
+    - ".*_test\\.go"
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  new: false

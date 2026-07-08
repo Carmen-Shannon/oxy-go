@@ -7,8 +7,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Carmen-Shannon/oxy-go/engine/command"
+	"github.com/Carmen-Shannon/oxy-go/engine/context"
 	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
 	"github.com/Carmen-Shannon/oxy-go/engine/profiler"
+	"github.com/Carmen-Shannon/oxy-go/engine/queue"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	"github.com/Carmen-Shannon/oxy-go/engine/window"
 )
@@ -18,6 +21,8 @@ import (
 type engine struct {
 	tickRateChannel chan time.Duration
 	resizeEvents    chan [2]int
+	cmdCtx          context.Context
+	cmdQueue        queue.Queue[command.Command]
 
 	running bool
 	wg      sync.WaitGroup
@@ -142,6 +147,7 @@ func (e *engine) shutdownSceneLifecycle(s scene.Scene) bool {
 // Each goroutine is tracked by the engine's WaitGroup.
 func (e *engine) handle() {
 	e.running = true
+	e.cmdQueue.Start(e.cmdCtx, e.quitChannel)
 	e.wg.Add(3)
 	go e.handleEngine()
 	go e.handleRender()
