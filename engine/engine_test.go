@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Carmen-Shannon/oxy-go/engine/command"
+	oxycontext "github.com/Carmen-Shannon/oxy-go/engine/context"
 	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
 	"github.com/Carmen-Shannon/oxy-go/engine/profiler"
 	renderer_mocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/mocks"
@@ -1309,5 +1311,32 @@ func (suite *engineTest) TestHandleRenderLifecycleFilteringBranches() {
 		}
 
 		sceneMock.AssertNotCalled(suite.T(), "PrepareCompute")
+	})
+}
+
+func (suite *engineTest) TestSubmitCommand() {
+	suite.Run("should delegate to the internal command queue without panicking", func() {
+		cmd := command.NewCommand(command.CommandTypeAsync, command.WithCommandFunc(func(_ oxycontext.Context) error {
+			return nil
+		}))
+		suite.NotPanics(func() {
+			suite.engine.SubmitCommand(cmd)
+		})
+	})
+
+	suite.Run("should accept a linear command", func() {
+		cmd := command.NewCommand(command.CommandTypeLinear, command.WithCommandFunc(func(_ oxycontext.Context) error {
+			return nil
+		}))
+		suite.NotPanics(func() {
+			suite.engine.SubmitCommand(cmd)
+		})
+	})
+}
+
+func (suite *engineTest) TestCommandQueue() {
+	suite.Run("should return the engine's command queue", func() {
+		q := suite.engine.CommandQueue()
+		suite.NotNil(q)
 	})
 }
