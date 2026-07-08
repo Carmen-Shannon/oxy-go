@@ -1,8 +1,10 @@
 package context
 
-import "maps"
+import (
+	"maps"
 
-import "github.com/Carmen-Shannon/oxy-go/engine/scene"
+	"github.com/Carmen-Shannon/oxy-go/engine/scene"
+)
 
 type Context interface {
 	// Scene returns the scene associated with the given key, nil if no scene exists for the key specified

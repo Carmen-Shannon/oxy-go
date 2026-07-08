@@ -59,8 +59,8 @@ func (q *queue[T]) LinearLifecycle() lifecycle.Lifecycle {
 func (q *queue[T]) Start(ctx context.Context, done <-chan struct{}) {
 	q.asyncOnce.Do(func() {
 		q.ctx = ctx
-		q.asyncLC.SetState(lifecycle.LifecycleStateStarting)
-		q.asyncLC.SetState(lifecycle.LifecycleStateRunning)
+		_ = q.asyncLC.SetState(lifecycle.LifecycleStateStarting)
+		_ = q.asyncLC.SetState(lifecycle.LifecycleStateRunning)
 		go func() {
 			for {
 				select {
@@ -76,8 +76,8 @@ func (q *queue[T]) Start(ctx context.Context, done <-chan struct{}) {
 		if q.ctx == nil {
 			q.ctx = ctx
 		}
-		q.linearLC.SetState(lifecycle.LifecycleStateStarting)
-		q.linearLC.SetState(lifecycle.LifecycleStateRunning)
+		_ = q.linearLC.SetState(lifecycle.LifecycleStateStarting)
+		_ = q.linearLC.SetState(lifecycle.LifecycleStateRunning)
 		go func() {
 			for {
 				select {
