@@ -2,8 +2,9 @@
 package ssao
 
 import (
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/oliverbestmann/webgpu/wgpu"
+
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 )
 
 // Handler defines the interface for the scene's SSAO subsystem.

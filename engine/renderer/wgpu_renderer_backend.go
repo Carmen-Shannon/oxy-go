@@ -7,11 +7,12 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/oliverbestmann/webgpu/wgpu"
+
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
-	"github.com/oliverbestmann/webgpu/wgpu"
 )
 
 type wgpuRendererBackendImpl struct {

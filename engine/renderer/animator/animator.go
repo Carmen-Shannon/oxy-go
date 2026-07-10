@@ -6,11 +6,12 @@
 package animator
 
 import (
+	"github.com/oliverbestmann/webgpu/wgpu"
+
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
-	"github.com/oliverbestmann/webgpu/wgpu"
 )
 
 // Animator defines the public interface for the animation system.

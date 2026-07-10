@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/oliverbestmann/webgpu/wgpu"
+
+	"github.com/Carmen-Shannon/oxy-go/common"
 )
 
 // shader is the implementation of the Shader interface.

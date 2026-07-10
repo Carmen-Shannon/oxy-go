@@ -5,9 +5,10 @@ import (
 	"math"
 	"testing"
 
+	"github.com/stretchr/testify/suite"
+
 	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
 	"github.com/Carmen-Shannon/oxy-go/engine/physics"
-	"github.com/stretchr/testify/suite"
 )
 
 type physicsTest struct {

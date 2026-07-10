@@ -9,8 +9,9 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/oliverbestmann/webgpu/wgpu"
+
+	"github.com/Carmen-Shannon/oxy-go/common"
 )
 
 // Window provides platform windowing and input event handling.

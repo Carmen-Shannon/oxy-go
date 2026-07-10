@@ -3,9 +3,10 @@ package animator
 import (
 	"sync"
 
+	"github.com/oliverbestmann/webgpu/wgpu"
+
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
-	"github.com/oliverbestmann/webgpu/wgpu"
 )
 
 // simpleAnimatorBackendImpl is a concrete implementation of the simple animator backend.

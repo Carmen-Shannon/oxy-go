@@ -4,8 +4,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/Carmen-Shannon/oxy-go/common"
 )
 
 // mockGltfParser is a hand-rolled mock for the unexported gltfParser interface.

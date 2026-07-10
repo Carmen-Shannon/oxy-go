@@ -1,8 +1,9 @@
 package bind_group_provider
 
 import (
-	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/oliverbestmann/webgpu/wgpu"
+
+	"github.com/Carmen-Shannon/oxy-go/common"
 )
 
 // bindGroupProvider is the unexported implementation of BindGroupProvider.

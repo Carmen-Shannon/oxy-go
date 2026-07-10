@@ -3,9 +3,10 @@ package loader_test
 import (
 	"testing"
 
+	"github.com/stretchr/testify/suite"
+
 	"github.com/Carmen-Shannon/oxy-go/engine/loader"
 	mocks "github.com/Carmen-Shannon/oxy-go/engine/model/mocks"
-	"github.com/stretchr/testify/suite"
 )
 
 func TestRunLoaderTests(t *testing.T) {

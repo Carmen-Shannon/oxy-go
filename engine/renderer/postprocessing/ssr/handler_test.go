@@ -3,10 +3,11 @@ package ssr_test
 import (
 	"testing"
 
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssr"
 	"github.com/oliverbestmann/webgpu/wgpu"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssr"
 )
 
 func TestRunSSRHandlerTests(t *testing.T) {

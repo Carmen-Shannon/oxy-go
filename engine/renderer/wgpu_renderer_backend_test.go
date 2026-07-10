@@ -4,11 +4,12 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/oliverbestmann/webgpu/wgpu"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
 	shadermocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/shader/mocks"
-	"github.com/oliverbestmann/webgpu/wgpu"
-	"github.com/stretchr/testify/suite"
 )
 
 type wgpuRendererBackendTest struct {

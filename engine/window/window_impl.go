@@ -1,8 +1,9 @@
 package window
 
 import (
-	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/oliverbestmann/webgpu/wgpu"
+
+	"github.com/Carmen-Shannon/oxy-go/common"
 )
 
 // platformBackend abstracts the platform-specific windowing operations.

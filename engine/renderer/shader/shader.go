@@ -8,8 +8,9 @@
 package shader
 
 import (
-	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/oliverbestmann/webgpu/wgpu"
+
+	"github.com/Carmen-Shannon/oxy-go/common"
 )
 
 // ShaderType identifies whether a shader is a render shader or a compute shader.

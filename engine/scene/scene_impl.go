@@ -11,6 +11,8 @@ import (
 	"sync"
 
 	"github.com/Carmen-Shannon/automation/tools/worker"
+	"github.com/oliverbestmann/webgpu/wgpu"
+
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/camera"
 	"github.com/Carmen-Shannon/oxy-go/engine/game_object"
@@ -29,7 +31,6 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssr"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/taa"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
-	"github.com/oliverbestmann/webgpu/wgpu"
 )
 
 // boneParticleUpdateGroup tracks the GPU resources needed to transform a kinematic

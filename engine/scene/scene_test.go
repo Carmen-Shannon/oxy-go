@@ -4,6 +4,9 @@ import (
 	"os"
 	"testing"
 
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
+
 	camera_mocks "github.com/Carmen-Shannon/oxy-go/engine/camera/mocks"
 	game_object_mocks "github.com/Carmen-Shannon/oxy-go/engine/game_object/mocks"
 	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
@@ -11,8 +14,6 @@ import (
 	renderer_mocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/mocks"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/taa"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/suite"
 )
 
 func TestRunSceneTests(t *testing.T) {

@@ -3,8 +3,9 @@ package gbuffer_test
 import (
 	"testing"
 
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/gbuffer"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/gbuffer"
 )
 
 func TestRunGBufferHandlerTests(t *testing.T) {

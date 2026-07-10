@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/Carmen-Shannon/automation/tools/worker"
+	"github.com/oliverbestmann/webgpu/wgpu"
+
 	"github.com/Carmen-Shannon/oxy-go/engine/camera"
 	"github.com/Carmen-Shannon/oxy-go/engine/game_object"
 	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
@@ -22,7 +24,6 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssr"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/taa"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
-	"github.com/oliverbestmann/webgpu/wgpu"
 )
 
 // SceneBuilderOption is a functional option for configuring a Scene.

@@ -2,8 +2,9 @@
 package taa
 
 import (
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/oliverbestmann/webgpu/wgpu"
+
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 )
 
 // Handler manages GPU resources and state for the Temporal Anti-Aliasing

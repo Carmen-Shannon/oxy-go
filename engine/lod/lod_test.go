@@ -3,9 +3,10 @@ package lod_test
 import (
 	"testing"
 
+	"github.com/stretchr/testify/suite"
+
 	"github.com/Carmen-Shannon/oxy-go/engine/lod"
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
-	"github.com/stretchr/testify/suite"
 )
 
 func TestRunLODTests(t *testing.T) {

@@ -3,9 +3,10 @@ package command_test
 import (
 	"testing"
 
+	"github.com/stretchr/testify/suite"
+
 	"github.com/Carmen-Shannon/oxy-go/engine/command"
 	"github.com/Carmen-Shannon/oxy-go/engine/context"
-	"github.com/stretchr/testify/suite"
 )
 
 func TestRunCommandTests(t *testing.T) {

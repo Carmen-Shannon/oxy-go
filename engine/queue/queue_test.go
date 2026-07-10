@@ -4,11 +4,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/suite"
+
 	"github.com/Carmen-Shannon/oxy-go/engine/command"
 	"github.com/Carmen-Shannon/oxy-go/engine/context"
 	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
 	"github.com/Carmen-Shannon/oxy-go/engine/queue"
-	"github.com/stretchr/testify/suite"
 )
 
 func TestRunQueueTests(t *testing.T) {

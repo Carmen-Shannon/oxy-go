@@ -4,14 +4,15 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/oliverbestmann/webgpu/wgpu"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/mocks"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
 	pipeline_mocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline/mocks"
-	"github.com/oliverbestmann/webgpu/wgpu"
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/suite"
 )
 
 type rendererImplTest struct {

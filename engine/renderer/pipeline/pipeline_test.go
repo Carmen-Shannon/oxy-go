@@ -3,10 +3,11 @@ package pipeline_test
 import (
 	"testing"
 
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 	"github.com/oliverbestmann/webgpu/wgpu"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 )
 
 type pipelineTest struct {

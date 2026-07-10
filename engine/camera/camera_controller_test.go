@@ -4,8 +4,9 @@ import (
 	"math"
 	"testing"
 
-	"github.com/Carmen-Shannon/oxy-go/engine/camera"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/Carmen-Shannon/oxy-go/engine/camera"
 )
 
 func TestRunCameraControllerTests(t *testing.T) {

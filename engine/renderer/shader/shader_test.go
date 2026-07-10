@@ -6,8 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 )
 
 // ── Suite 1: ShaderType constants ─────────────────────────────────────────────

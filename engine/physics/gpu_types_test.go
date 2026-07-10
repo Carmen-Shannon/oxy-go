@@ -6,8 +6,9 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/Carmen-Shannon/oxy-go/engine/physics"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/Carmen-Shannon/oxy-go/engine/physics"
 )
 
 func TestRunGPUTypesTests(t *testing.T) {

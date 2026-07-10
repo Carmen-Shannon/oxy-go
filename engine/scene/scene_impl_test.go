@@ -13,6 +13,9 @@ import (
 	"github.com/oliverbestmann/webgpu/wgpu"
 
 	"github.com/Carmen-Shannon/automation/tools/worker"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/Carmen-Shannon/oxy-go/common"
 	camera_mocks "github.com/Carmen-Shannon/oxy-go/engine/camera/mocks"
 	"github.com/Carmen-Shannon/oxy-go/engine/game_object"
@@ -46,8 +49,6 @@ import (
 	taa_mocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/taa/mocks"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 	shader_mocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/shader/mocks"
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/suite"
 )
 
 func TestRunSceneImplTests(t *testing.T) {

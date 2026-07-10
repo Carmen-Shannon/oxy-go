@@ -3,10 +3,11 @@ package context_test
 import (
 	"testing"
 
+	"github.com/stretchr/testify/suite"
+
 	"github.com/Carmen-Shannon/oxy-go/engine/context"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	scene_mocks "github.com/Carmen-Shannon/oxy-go/engine/scene/mocks"
-	"github.com/stretchr/testify/suite"
 )
 
 func TestRunContextTests(t *testing.T) {

@@ -4,9 +4,10 @@ import (
 	"math"
 	"sync"
 
+	"github.com/oliverbestmann/webgpu/wgpu"
+
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
-	"github.com/oliverbestmann/webgpu/wgpu"
 )
 
 // skeletalInstanceState holds the CPU-side animation playback state for a single skeletal instance.

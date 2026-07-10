@@ -6,6 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oliverbestmann/webgpu/wgpu"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/Carmen-Shannon/oxy-go/engine/command"
 	oxycontext "github.com/Carmen-Shannon/oxy-go/engine/context"
 	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
@@ -13,9 +17,6 @@ import (
 	renderer_mocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/mocks"
 	scene_mocks "github.com/Carmen-Shannon/oxy-go/engine/scene/mocks"
 	window_mocks "github.com/Carmen-Shannon/oxy-go/engine/window/mocks"
-	"github.com/oliverbestmann/webgpu/wgpu"
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/suite"
 )
 
 func TestRunEngineTests(t *testing.T) {

@@ -7,6 +7,8 @@ import (
 	"log"
 	"math"
 
+	"github.com/oliverbestmann/webgpu/wgpu"
+
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine"
 	"github.com/Carmen-Shannon/oxy-go/engine/camera"
@@ -22,7 +24,6 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	"github.com/Carmen-Shannon/oxy-go/engine/window"
-	"github.com/oliverbestmann/webgpu/wgpu"
 )
 
 func main() {
