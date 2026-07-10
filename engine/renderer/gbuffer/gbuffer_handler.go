@@ -2,7 +2,7 @@
 package gbuffer
 
 import (
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/oliverbestmann/webgpu/wgpu"
 )
 
 // Handler defines the interface for the scene's G-Buffer subsystem.

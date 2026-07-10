@@ -2,7 +2,7 @@ package light
 
 import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/oliverbestmann/webgpu/wgpu"
 )
 
 // lightSnapshot captures the shadow-relevant fields of a Light at a point in

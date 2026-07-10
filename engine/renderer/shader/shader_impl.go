@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"github.com/Carmen-Shannon/oxy-go/common"
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/oliverbestmann/webgpu/wgpu"
 )
 
 // shader is the implementation of the Shader interface.
@@ -42,7 +42,7 @@ func (s *shader) parseSourceFromPath(path string, injections map[string]string) 
 	}
 	s.module = &wgpu.ShaderModuleDescriptor{
 		Label: s.key,
-		WGSLDescriptor: &wgpu.ShaderModuleWGSLDescriptor{
+		WGSLSource: &wgpu.ShaderSourceWGSL{
 			Code: s.source,
 		},
 	}

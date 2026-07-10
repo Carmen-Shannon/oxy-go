@@ -1,6 +1,6 @@
 # Oxy Engine
 
-A 3D game engine written in pure Go, powered by WebGPU via [cogentcore/webgpu](https://github.com/cogentcore/webgpu).
+A 3D game engine written in pure Go, powered by WebGPU via [oliverbestmann/webgpu](https://github.com/oliverbestmann/webgpu).
 
 <p align="center">
   <a href="https://pkg.go.dev/github.com/Carmen-Shannon/oxy-go"><img src="https://pkg.go.dev/badge/github.com/Carmen-Shannon/oxy-go.svg" alt="Go Reference"></a>

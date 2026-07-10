@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/cogentcore/webgpu/wgpu"
-	"github.com/cogentcore/webgpu/wgpuglfw"
 	"github.com/go-gl/glfw/v3.4/glfw"
+	"github.com/oliverbestmann/webgpu/wgpu"
+	"github.com/oliverbestmann/webgpu/wgpuglfw"
 )
 
 // glfwWindow holds the GLFW-specific window state.

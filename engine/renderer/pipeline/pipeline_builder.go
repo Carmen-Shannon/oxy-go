@@ -2,7 +2,7 @@ package pipeline
 
 import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/oliverbestmann/webgpu/wgpu"
 )
 
 // PipelineBuilderOption is a functional option used to configure a Pipeline during construction.

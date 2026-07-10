@@ -10,7 +10,7 @@ import (
 	"runtime"
 
 	"github.com/Carmen-Shannon/oxy-go/common"
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/oliverbestmann/webgpu/wgpu"
 )
 
 // Window provides platform windowing and input event handling.

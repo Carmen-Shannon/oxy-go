@@ -112,9 +112,9 @@ The platform layer lives in `window_glfw.go` and handles all GLFW-specific logic
 
 | Package                                                                                  | Purpose                            |
 | ---------------------------------------------------------------------------------------- | ---------------------------------- |
-| [`go-gl/glfw/v3.3/glfw`](https://pkg.go.dev/github.com/go-gl/glfw/v3.4/glfw)             | GLFW bindings for Go               |
-| [`cogentcore/webgpu/wgpu`](https://pkg.go.dev/github.com/cogentcore/webgpu/wgpu)         | WebGPU types (`SurfaceDescriptor`) |
-| [`cogentcore/webgpu/wgpuglfw`](https://pkg.go.dev/github.com/cogentcore/webgpu/wgpuglfw) | GLFW → WebGPU surface bridge       |
+| [`go-gl/glfw/v3.4/glfw`](https://pkg.go.dev/github.com/go-gl/glfw/v3.4/glfw)             | GLFW bindings for Go               |
+| [`oliverbestmann/webgpu/wgpu`](https://pkg.go.dev/github.com/oliverbestmann/webgpu/wgpu)         | WebGPU types (`SurfaceDescriptor`) |
+| [`oliverbestmann/webgpu/wgpuglfw`](https://pkg.go.dev/github.com/oliverbestmann/webgpu/wgpuglfw) | GLFW → WebGPU surface bridge       |
 
 ---
 

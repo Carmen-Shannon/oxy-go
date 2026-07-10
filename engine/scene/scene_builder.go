@@ -22,7 +22,7 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssr"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/taa"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/oliverbestmann/webgpu/wgpu"
 )
 
 // SceneBuilderOption is a functional option for configuring a Scene.
@@ -360,10 +360,9 @@ func NewScene(name string, cam camera.Camera, r renderer.Renderer, options ...Sc
 	// Create a 1×1 Hi-Z fallback texture so animators added before lighting
 	// is initialized (or in unlit scenes) always have a valid view bound at
 	// @group(1) in the occlusion-culling compute shader.
-	if hizView, hizTex, _, _, _, err := r.CreateHiZTextures(1, 1); err == nil {
-		s.hizFallbackTexture = hizTex
-		s.hizFallbackView = hizView
-	}
+	hizView, hizTex, _, _, _ := r.CreateHiZTextures(1, 1)
+	s.hizFallbackTexture = hizTex
+	s.hizFallbackView = hizView
 
 	s.Delegate = s
 	s.registerLifecycleHooks()

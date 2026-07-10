@@ -7,7 +7,7 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
 	shadermocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/shader/mocks"
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/oliverbestmann/webgpu/wgpu"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -83,9 +83,8 @@ func (suite *wgpuRendererBackendTest) TestComputeGuards() {
 		backend := newTestWGPURendererBackend()
 		backend.computeFrameDepth = 1
 
-		err := backend.BeginComputeFrame()
+		backend.BeginComputeFrame()
 
-		suite.NoError(err)
 		suite.Equal(2, backend.computeFrameDepth)
 	})
 
@@ -169,9 +168,8 @@ func (suite *wgpuRendererBackendTest) TestGeometryFrameGuards() {
 		backend := newTestWGPURendererBackend()
 		backend.geometryFrameDepth = 1
 
-		err := backend.BeginGeometryFrame()
+		backend.BeginGeometryFrame()
 
-		suite.NoError(err)
 		suite.Equal(2, backend.geometryFrameDepth)
 	})
 
@@ -209,9 +207,8 @@ func (suite *wgpuRendererBackendTest) TestShadowFrameGuards() {
 		backend := newTestWGPURendererBackend()
 		backend.geometryFrameEncoder = new(wgpu.CommandEncoder)
 
-		err := backend.BeginShadowFrame()
+		backend.BeginShadowFrame()
 
-		suite.NoError(err)
 		suite.Equal(backend.geometryFrameEncoder, backend.shadowFrameEncoder)
 	})
 
@@ -281,9 +278,8 @@ func (suite *wgpuRendererBackendTest) TestGBufferGuards() {
 		backend := newTestWGPURendererBackend()
 		backend.geometryFrameEncoder = new(wgpu.CommandEncoder)
 
-		err := backend.BeginGBufferFrame()
+		backend.BeginGBufferFrame()
 
-		suite.NoError(err)
 		suite.Equal(backend.geometryFrameEncoder, backend.gbufferFrameEncoder)
 	})
 

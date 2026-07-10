@@ -154,7 +154,7 @@ func (suite *queueTest) TestStart() {
 		q := queue.NewQueue[command.Command]()
 		done := make(chan struct{})
 		ctx := context.NewContext()
-		
+
 		q.Start(ctx, done)
 		suite.Equal(lifecycle.LifecycleStateRunning, q.AsyncLifecycle().State())
 

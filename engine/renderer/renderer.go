@@ -11,7 +11,7 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/oliverbestmann/webgpu/wgpu"
 )
 
 // ComputeGroupProvider pairs a WGSL group index with the BindGroupProvider that
@@ -156,8 +156,7 @@ type Renderer interface {
 	//
 	// Returns:
 	//   - *wgpu.Buffer: the created GPU buffer
-	//   - error: an error if buffer creation fails
-	CreateBuffer(label string, size uint64, usage wgpu.BufferUsage) (*wgpu.Buffer, error)
+	CreateBuffer(label string, size uint64, usage wgpu.BufferUsage) *wgpu.Buffer
 
 	// CopyBufferToBuffer encodes a buffer-to-buffer copy on the current compute frame encoder.
 	// Must be called between BeginComputeFrame and EndComputeFrame, outside of any compute pass.
@@ -216,10 +215,7 @@ type Renderer interface {
 	// BeginComputeFrame creates a single command encoder for batching all compute dispatches
 	// within a frame into one GPU submission. Must be paired with EndComputeFrame after all
 	// DispatchComputeBatch calls for the frame.
-	//
-	// Returns:
-	//   - error: an error if the command encoder could not be created
-	BeginComputeFrame() error
+	BeginComputeFrame()
 
 	// EndComputeFrame finishes the batched compute command encoder and submits the resulting
 	// command buffer to the GPU queue. Must be called after BeginComputeFrame and all
@@ -289,10 +285,7 @@ type Renderer interface {
 	// render passes into a single GPU submission, reducing per-frame driver overhead.
 	// Uses reference counting so nested Begin/End pairs are safe. Must be paired with
 	// EndGeometryFrame after all shadow and G-Buffer passes.
-	//
-	// Returns:
-	//   - error: an error if the command encoder could not be created
-	BeginGeometryFrame() error
+	BeginGeometryFrame()
 
 	// EndGeometryFrame decrements the geometry frame reference count and, when it
 	// reaches zero, finishes the shared command encoder and submits the resulting
@@ -302,10 +295,7 @@ type Renderer interface {
 	// BeginShadowFrame creates a command encoder for batching shadow depth passes.
 	// Must be paired with EndShadowFrame. When a geometry frame is active, the
 	// shadow encoder aliases the shared geometry encoder.
-	//
-	// Returns:
-	//   - error: an error if the command encoder could not be created
-	BeginShadowFrame() error
+	BeginShadowFrame()
 
 	// ShadowDrawCall encodes a single instanced draw command within the current shadow pass.
 	//
@@ -337,14 +327,28 @@ type Renderer interface {
 
 	// CreateShadowDepthTexture creates a Depth32Float shadow atlas texture for
 	// depth-only shadow rendering.
-	CreateShadowDepthTexture(width, height int) (depthView *wgpu.TextureView, depthTex *wgpu.Texture, err error)
+	//
+	// Parameters:
+	//   - width: the width of the shadow atlas in pixels
+	//   - height: the height of the shadow atlas in pixels
+	//
+	// Returns:
+	//   - depthView: the texture view for the depth attachment
+	//   - depthTex: the underlying depth texture
+	CreateShadowDepthTexture(width, height int) (depthView *wgpu.TextureView, depthTex *wgpu.Texture)
 
 	// CreateComparisonSampler creates a comparison sampler for PCF shadow lookups.
-	CreateComparisonSampler() (*wgpu.Sampler, error)
+	//
+	// Returns:
+	//   - *wgpu.Sampler: the created comparison sampler
+	CreateComparisonSampler() *wgpu.Sampler
 
 	// CreateLinearSampler creates a standard linear filtering sampler for
 	// post-processing passes (SSAO, SSR, composition).
-	CreateLinearSampler() (*wgpu.Sampler, error)
+	//
+	// Returns:
+	//   - *wgpu.Sampler: the created linear sampler
+	CreateLinearSampler() *wgpu.Sampler
 
 	// RegisterShadowDepthPipeline creates a depth-only render pipeline for shadow maps.
 	RegisterShadowDepthPipeline(p pipeline.Pipeline) error
@@ -368,10 +372,7 @@ type Renderer interface {
 
 	// BeginGBufferFrame creates a command encoder for batching G-Buffer geometry
 	// pre-pass draw calls. Must be paired with EndGBufferFrame.
-	//
-	// Returns:
-	//   - error: an error if the command encoder could not be created
-	BeginGBufferFrame() error
+	BeginGBufferFrame()
 
 	// GBufferDrawCall encodes a single instanced draw command within the current
 	// G-Buffer MRT render pass.
@@ -429,8 +430,7 @@ type Renderer interface {
 	//   - albedoTex: the underlying albedo texture
 	//   - depthView: texture view for the depth texture
 	//   - depthTex: the underlying depth texture
-	//   - err: an error if texture creation fails
-	CreateGBufferTextures(width, height int) (normView *wgpu.TextureView, normTex *wgpu.Texture, albedoView *wgpu.TextureView, albedoTex *wgpu.Texture, depthView *wgpu.TextureView, depthTex *wgpu.Texture, err error)
+	CreateGBufferTextures(width, height int) (normView *wgpu.TextureView, normTex *wgpu.Texture, albedoView *wgpu.TextureView, albedoTex *wgpu.Texture, depthView *wgpu.TextureView, depthTex *wgpu.Texture)
 
 	// RegisterGBufferPipeline registers a render pipeline for the G-Buffer
 	// geometry pre-pass with MRT color targets and caches it.
@@ -456,8 +456,7 @@ type Renderer interface {
 	//   - blurredTex: the underlying blurred SSAO texture
 	//   - scratchView: texture view for the scratch blur texture
 	//   - scratchTex: the underlying scratch blur texture
-	//   - err: an error if texture creation fails
-	CreateSSAOTextures(width, height int) (rawView *wgpu.TextureView, rawTex *wgpu.Texture, blurredView *wgpu.TextureView, blurredTex *wgpu.Texture, scratchView *wgpu.TextureView, scratchTex *wgpu.Texture, err error)
+	CreateSSAOTextures(width, height int) (rawView *wgpu.TextureView, rawTex *wgpu.Texture, blurredView *wgpu.TextureView, blurredTex *wgpu.Texture, scratchView *wgpu.TextureView, scratchTex *wgpu.Texture)
 
 	// BeginHDRFrame creates a command encoder and begins a render pass targeting an
 	// offscreen RGBA16Float HDR texture instead of the swapchain. When MSAA is active,
@@ -470,10 +469,7 @@ type Renderer interface {
 	//   - resolveView: the HDR resolve target (nil when MSAA is off)
 	//   - depthView: the depth-stencil attachment texture view
 	//   - sampleCount: the MSAA sample count (1 when disabled)
-	//
-	// Returns:
-	//   - error: an error if the command encoder could not be created
-	BeginHDRFrame(colorView, resolveView, depthView *wgpu.TextureView, sampleCount uint32) error
+	BeginHDRFrame(colorView, resolveView, depthView *wgpu.TextureView, sampleCount uint32)
 
 	// CreateCompositionTextures creates the GPU textures required for the HDR
 	// composition pipeline: an RGBA16Float HDR texture, an optional MSAA texture,
@@ -491,8 +487,7 @@ type Renderer interface {
 	//   - msaaTex: the underlying MSAA texture (nil when sampleCount <= 1)
 	//   - depthView: texture view for the depth texture
 	//   - depthTex: the underlying depth texture
-	//   - err: an error if texture creation fails
-	CreateCompositionTextures(width, height int, sampleCount uint32) (hdrView *wgpu.TextureView, hdrTex *wgpu.Texture, msaaView *wgpu.TextureView, msaaTex *wgpu.Texture, depthView *wgpu.TextureView, depthTex *wgpu.Texture, err error)
+	CreateCompositionTextures(width, height int, sampleCount uint32) (hdrView *wgpu.TextureView, hdrTex *wgpu.Texture, msaaView *wgpu.TextureView, msaaTex *wgpu.Texture, depthView *wgpu.TextureView, depthTex *wgpu.Texture)
 
 	// CreateSSRTextures creates the GPU texture required for screen-space
 	// reflection output.
@@ -504,8 +499,7 @@ type Renderer interface {
 	// Returns:
 	//   - ssrView: texture view for the SSR output texture
 	//   - ssrTex: the underlying SSR output texture
-	//   - err: an error if texture creation fails
-	CreateSSRTextures(width, height int) (ssrView *wgpu.TextureView, ssrTex *wgpu.Texture, err error)
+	CreateSSRTextures(width, height int) (ssrView *wgpu.TextureView, ssrTex *wgpu.Texture)
 
 	// CreateContactShadowTextures creates the GPU texture required for contact
 	// shadow output.
@@ -517,8 +511,7 @@ type Renderer interface {
 	// Returns:
 	//   - csView: texture view for the contact shadow output texture
 	//   - csTex: the underlying contact shadow output texture
-	//   - err: an error if texture creation fails
-	CreateContactShadowTextures(width, height int) (csView *wgpu.TextureView, csTex *wgpu.Texture, err error)
+	CreateContactShadowTextures(width, height int) (csView *wgpu.TextureView, csTex *wgpu.Texture)
 
 	// CreateTAATextures creates two full-resolution RGBA16Float textures for TAA
 	// ping-pong history/resolve. Each texture has TextureBinding and StorageBinding
@@ -534,8 +527,7 @@ type Renderer interface {
 	//   - tex0:  texture 0
 	//   - view1: texture view for texture 1
 	//   - tex1:  texture 1
-	//   - err:   non-nil on allocation failure
-	CreateTAATextures(width, height int) (view0 *wgpu.TextureView, tex0 *wgpu.Texture, view1 *wgpu.TextureView, tex1 *wgpu.Texture, err error)
+	CreateTAATextures(width, height int) (view0 *wgpu.TextureView, tex0 *wgpu.Texture, view1 *wgpu.TextureView, tex1 *wgpu.Texture)
 
 	// CreateSharpenTexture creates a single full-resolution RGBA16Float texture for the
 	// CAS post-TAA sharpening pass. Usage: TextureBinding | StorageBinding.
@@ -548,8 +540,7 @@ type Renderer interface {
 	// Returns:
 	//   - view: texture view
 	//   - tex:  texture
-	//   - err:  non-nil on allocation failure
-	CreateSharpenTexture(width, height int) (view *wgpu.TextureView, tex *wgpu.Texture, err error)
+	CreateSharpenTexture(width, height int) (view *wgpu.TextureView, tex *wgpu.Texture)
 
 	// CreateHiZTextures creates the R32Float Hi-Z depth pyramid texture with a
 	// full mip chain, plus per-mip read and storage texture views.
@@ -564,8 +555,7 @@ type Renderer interface {
 	//   - mipReadViews: per-mip texture views for downsample input
 	//   - mipStorageViews: per-mip storage texture views for downsample output
 	//   - mipCount: the number of mip levels generated
-	//   - err: an error if texture creation fails
-	CreateHiZTextures(width, height int) (hizView *wgpu.TextureView, hizTex *wgpu.Texture, mipReadViews []*wgpu.TextureView, mipStorageViews []*wgpu.TextureView, mipCount int, err error)
+	CreateHiZTextures(width, height int) (hizView *wgpu.TextureView, hizTex *wgpu.Texture, mipReadViews []*wgpu.TextureView, mipStorageViews []*wgpu.TextureView, mipCount int)
 
 	// CreateBloomTextures creates two RGBA16Float mip chain textures for bloom
 	// processing — a downsample chain and an upsample chain — each with per-mip
@@ -695,14 +685,14 @@ func (r *renderer) Resize(width, height int)                            { r.back
 func (r *renderer) SetPresentMode(mode PresentMode)                     { r.backend.SetPresentMode(mode) }
 func (r *renderer) Pipelines() map[string]pipeline.Pipeline             { return r.pipelineCache }
 func (r *renderer) SetPipelines(pipelines map[string]pipeline.Pipeline) { r.pipelineCache = pipelines }
-func (r *renderer) BeginComputeFrame() error                            { return r.backend.BeginComputeFrame() }
+func (r *renderer) BeginComputeFrame()                                  { r.backend.BeginComputeFrame() }
 func (r *renderer) EndComputeFrame()                                    { r.backend.EndComputeFrame() }
 func (r *renderer) BeginFrame() error                                   { return r.backend.BeginFrame() }
 func (r *renderer) EndFrame()                                           { r.backend.EndFrame() }
 func (r *renderer) Present()                                            { r.backend.Present() }
-func (r *renderer) BeginGeometryFrame() error                           { return r.backend.BeginGeometryFrame() }
+func (r *renderer) BeginGeometryFrame()                                 { r.backend.BeginGeometryFrame() }
 func (r *renderer) EndGeometryFrame()                                   { r.backend.EndGeometryFrame() }
-func (r *renderer) BeginShadowFrame() error                             { return r.backend.BeginShadowFrame() }
+func (r *renderer) BeginShadowFrame()                                   { r.backend.BeginShadowFrame() }
 func (r *renderer) EndShadowFrame()                                     { r.backend.EndShadowFrame() }
 func (r *renderer) EndGBufferPass()                                     { r.backend.EndGBufferPass() }
 func (r *renderer) EndGBufferFrame()                                    { r.backend.EndGBufferFrame() }
@@ -718,6 +708,7 @@ func (r *renderer) SetInjections(injections map[string]string)          { r.inje
 func (r *renderer) GPUTimings() map[string]float64                      { return r.backend.GPUTimings() }
 func (r *renderer) SyncGPUTimestamps()                                  { r.backend.SyncGPUTimestamps() }
 func (r *renderer) CurrentFrameSlot() int                               { return r.backend.CurrentFrameSlot() }
+func (r *renderer) BeginGBufferFrame()                                  { r.backend.BeginGBufferFrame() }
 
 func (r *renderer) Pipeline(key string) pipeline.Pipeline {
 	r.mu.Lock()
@@ -770,7 +761,7 @@ func (r *renderer) InitSampler(provider bind_group_provider.BindGroupProvider, b
 	return r.backend.InitSampler(provider, bindingKey, samplerStagingData)
 }
 
-func (r *renderer) CreateBuffer(label string, size uint64, usage wgpu.BufferUsage) (*wgpu.Buffer, error) {
+func (r *renderer) CreateBuffer(label string, size uint64, usage wgpu.BufferUsage) *wgpu.Buffer {
 	return r.backend.CreateBuffer(label, size, usage)
 }
 
@@ -869,14 +860,14 @@ func (r *renderer) ShadowDrawCallIndirect(pipelineKey string, meshProvider bind_
 	return nil
 }
 
-func (r *renderer) CreateShadowDepthTexture(width, height int) (depthView *wgpu.TextureView, depthTex *wgpu.Texture, err error) {
+func (r *renderer) CreateShadowDepthTexture(width, height int) (depthView *wgpu.TextureView, depthTex *wgpu.Texture) {
 	return r.backend.CreateShadowDepthTexture(width, height)
 }
 
-func (r *renderer) CreateComparisonSampler() (*wgpu.Sampler, error) {
+func (r *renderer) CreateComparisonSampler() *wgpu.Sampler {
 	return r.backend.CreateComparisonSampler()
 }
-func (r *renderer) CreateLinearSampler() (*wgpu.Sampler, error) {
+func (r *renderer) CreateLinearSampler() *wgpu.Sampler {
 	return r.backend.CreateLinearSampler()
 }
 
@@ -908,8 +899,6 @@ func (r *renderer) EndShadowAtlasPass() {
 	r.backend.EndShadowAtlasPass()
 }
 
-func (r *renderer) BeginGBufferFrame() error { return r.backend.BeginGBufferFrame() }
-
 func (r *renderer) GBufferDrawCall(pipelineKey string, meshProvider bind_group_provider.BindGroupProvider, instanceCount uint32, bindGroups []bind_group_provider.BindGroupProvider) error {
 	r.mu.Lock()
 	p, exists := r.pipelineCache[pipelineKey]
@@ -940,7 +929,7 @@ func (r *renderer) BeginGBufferPass(normView, albedoView, depthView *wgpu.Textur
 	r.backend.BeginGBufferPass(normView, albedoView, depthView)
 }
 
-func (r *renderer) CreateGBufferTextures(width, height int) (normView *wgpu.TextureView, normTex *wgpu.Texture, albedoView *wgpu.TextureView, albedoTex *wgpu.Texture, depthView *wgpu.TextureView, depthTex *wgpu.Texture, err error) {
+func (r *renderer) CreateGBufferTextures(width, height int) (normView *wgpu.TextureView, normTex *wgpu.Texture, albedoView *wgpu.TextureView, albedoTex *wgpu.Texture, depthView *wgpu.TextureView, depthTex *wgpu.Texture) {
 	return r.backend.CreateGBufferTextures(width, height)
 }
 
@@ -960,35 +949,35 @@ func (r *renderer) RegisterGBufferPipeline(p pipeline.Pipeline) error {
 	return nil
 }
 
-func (r *renderer) CreateSSAOTextures(width, height int) (rawView *wgpu.TextureView, rawTex *wgpu.Texture, blurredView *wgpu.TextureView, blurredTex *wgpu.Texture, scratchView *wgpu.TextureView, scratchTex *wgpu.Texture, err error) {
+func (r *renderer) CreateSSAOTextures(width, height int) (rawView *wgpu.TextureView, rawTex *wgpu.Texture, blurredView *wgpu.TextureView, blurredTex *wgpu.Texture, scratchView *wgpu.TextureView, scratchTex *wgpu.Texture) {
 	return r.backend.CreateSSAOTextures(width, height)
 }
 
-func (r *renderer) BeginHDRFrame(colorView, resolveView, depthView *wgpu.TextureView, sampleCount uint32) error {
-	return r.backend.BeginHDRFrame(colorView, resolveView, depthView, sampleCount)
+func (r *renderer) BeginHDRFrame(colorView, resolveView, depthView *wgpu.TextureView, sampleCount uint32) {
+	r.backend.BeginHDRFrame(colorView, resolveView, depthView, sampleCount)
 }
 
-func (r *renderer) CreateCompositionTextures(width, height int, sampleCount uint32) (hdrView *wgpu.TextureView, hdrTex *wgpu.Texture, msaaView *wgpu.TextureView, msaaTex *wgpu.Texture, depthView *wgpu.TextureView, depthTex *wgpu.Texture, err error) {
+func (r *renderer) CreateCompositionTextures(width, height int, sampleCount uint32) (hdrView *wgpu.TextureView, hdrTex *wgpu.Texture, msaaView *wgpu.TextureView, msaaTex *wgpu.Texture, depthView *wgpu.TextureView, depthTex *wgpu.Texture) {
 	return r.backend.CreateCompositionTextures(width, height, sampleCount)
 }
 
-func (r *renderer) CreateSSRTextures(width, height int) (ssrView *wgpu.TextureView, ssrTex *wgpu.Texture, err error) {
+func (r *renderer) CreateSSRTextures(width, height int) (ssrView *wgpu.TextureView, ssrTex *wgpu.Texture) {
 	return r.backend.CreateSSRTextures(width, height)
 }
 
-func (r *renderer) CreateContactShadowTextures(width, height int) (csView *wgpu.TextureView, csTex *wgpu.Texture, err error) {
+func (r *renderer) CreateContactShadowTextures(width, height int) (csView *wgpu.TextureView, csTex *wgpu.Texture) {
 	return r.backend.CreateContactShadowTextures(width, height)
 }
 
-func (r *renderer) CreateTAATextures(width, height int) (view0 *wgpu.TextureView, tex0 *wgpu.Texture, view1 *wgpu.TextureView, tex1 *wgpu.Texture, err error) {
+func (r *renderer) CreateTAATextures(width, height int) (view0 *wgpu.TextureView, tex0 *wgpu.Texture, view1 *wgpu.TextureView, tex1 *wgpu.Texture) {
 	return r.backend.CreateTAATextures(width, height)
 }
 
-func (r *renderer) CreateSharpenTexture(width, height int) (view *wgpu.TextureView, tex *wgpu.Texture, err error) {
+func (r *renderer) CreateSharpenTexture(width, height int) (view *wgpu.TextureView, tex *wgpu.Texture) {
 	return r.backend.CreateSharpenTexture(width, height)
 }
 
-func (r *renderer) CreateHiZTextures(width, height int) (hizView *wgpu.TextureView, hizTex *wgpu.Texture, mipReadViews []*wgpu.TextureView, mipStorageViews []*wgpu.TextureView, mipCount int, err error) {
+func (r *renderer) CreateHiZTextures(width, height int) (hizView *wgpu.TextureView, hizTex *wgpu.Texture, mipReadViews []*wgpu.TextureView, mipStorageViews []*wgpu.TextureView, mipCount int) {
 	return r.backend.CreateHiZTextures(width, height)
 }
 

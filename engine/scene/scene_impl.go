@@ -29,7 +29,7 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssr"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/taa"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/oliverbestmann/webgpu/wgpu"
 )
 
 // boneParticleUpdateGroup tracks the GPU resources needed to transform a kinematic
@@ -824,10 +824,7 @@ func (s *scene) initSSAO() {
 	}
 
 	// 1. Create SSAO textures (raw, blurred, scratch at SSAO res).
-	rawView, rawTex, blurView, blurTex, scratchView, scratchTex, err := s.r.CreateSSAOTextures(ssaoW, ssaoHeight)
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create SSAO textures: %v", err))
-	}
+	rawView, rawTex, blurView, blurTex, scratchView, scratchTex := s.r.CreateSSAOTextures(ssaoW, ssaoHeight)
 	s.ssaoHandler.SetRawTexture(rawTex)
 	s.ssaoHandler.SetRawTextureView(rawView)
 	s.ssaoHandler.SetBlurredTexture(blurTex)
@@ -836,10 +833,7 @@ func (s *scene) initSSAO() {
 	s.ssaoHandler.SetScratchTextureView(scratchView)
 
 	// 2. Create or reuse linear sampler for the blurred SSAO texture in the lit shader.
-	linearSamp, err := s.r.CreateLinearSampler()
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create SSAO linear sampler: %v", err))
-	}
+	linearSamp := s.r.CreateLinearSampler()
 	s.ssaoHandler.SetLinearSampler(linearSamp)
 
 	// 3. Register SSAO compute pipeline.
@@ -914,10 +908,7 @@ func (s *scene) initSSAO() {
 	// Initialize slot 1 SSAO textures
 	ssaoH := s.ssaoHandler
 	ssaoH.SetSlot(1)
-	rawView1, rawTex1, blurView1, blurTex1, scratchView1, scratchTex1, err := s.r.CreateSSAOTextures(ssaoW, ssaoHeight)
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create SSAO textures slot 1: %v", err))
-	}
+	rawView1, rawTex1, blurView1, blurTex1, scratchView1, scratchTex1 := s.r.CreateSSAOTextures(ssaoW, ssaoHeight)
 	ssaoH.SetRawTexture(rawTex1)
 	ssaoH.SetRawTextureView(rawView1)
 	ssaoH.SetBlurredTexture(blurTex1)
@@ -964,10 +955,10 @@ func (s *scene) initSSAOLitBindGroup(litFragmentShader shader.Shader) {
 		// Bind the real blurred SSAO texture and linear sampler.
 		for _, entry := range desc.Entries {
 			binding := int(entry.Binding)
-			if entry.Texture.SampleType != wgpu.TextureSampleTypeUndefined {
+			if entry.Texture.SampleType != wgpu.TextureSampleTypeBindingNotUsed {
 				bgp.SetTextureView(binding, s.ssaoHandler.BlurredTextureView())
 			}
-			if entry.Sampler.Type != wgpu.SamplerBindingTypeUndefined {
+			if entry.Sampler.Type != wgpu.SamplerBindingTypeBindingNotUsed {
 				bgp.SetSampler(binding, s.ssaoHandler.LinearSampler())
 			}
 		}
@@ -975,7 +966,7 @@ func (s *scene) initSSAOLitBindGroup(litFragmentShader shader.Shader) {
 		// Create a 1×1 white fallback texture (ao=1.0, no darkening).
 		for _, entry := range desc.Entries {
 			binding := int(entry.Binding)
-			if entry.Texture.SampleType != wgpu.TextureSampleTypeUndefined {
+			if entry.Texture.SampleType != wgpu.TextureSampleTypeBindingNotUsed {
 				fallback := common.TextureStagingData{
 					Pixels: []byte{255, 255, 255, 255},
 					Width:  1,
@@ -986,7 +977,7 @@ func (s *scene) initSSAOLitBindGroup(litFragmentShader shader.Shader) {
 					panic(fmt.Sprintf("scene: failed to init SSAO fallback texture: %v", err))
 				}
 			}
-			if entry.Sampler.Type != wgpu.SamplerBindingTypeUndefined {
+			if entry.Sampler.Type != wgpu.SamplerBindingTypeBindingNotUsed {
 				fallbackSampler := common.SamplerStagingData{
 					AddressModeU:  wgpu.AddressModeClampToEdge,
 					AddressModeV:  wgpu.AddressModeClampToEdge,
@@ -1030,10 +1021,7 @@ func (s *scene) initGBuffer() {
 
 	// Create G-Buffer MRT textures (normal + albedo + depth; position is
 	// reconstructed from depth at read time by compute shaders).
-	normView, normTex, albView, albTex, depthView, depthTex, err := s.r.CreateGBufferTextures(w, h)
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create G-Buffer textures: %v", err))
-	}
+	normView, normTex, albView, albTex, depthView, depthTex := s.r.CreateGBufferTextures(w, h)
 	s.gBufferHandler.SetNormalTexture(normTex)
 	s.gBufferHandler.SetNormalTextureView(normView)
 	s.gBufferHandler.SetAlbedoTexture(albTex)
@@ -1044,10 +1032,7 @@ func (s *scene) initGBuffer() {
 	// Initialize slot 1
 	gbh := s.gBufferHandler
 	gbh.SetSlot(1)
-	normView1, normTex1, albView1, albTex1, depthView1, depthTex1, err := s.r.CreateGBufferTextures(w, h)
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create G-Buffer textures slot 1: %v", err))
-	}
+	normView1, normTex1, albView1, albTex1, depthView1, depthTex1 := s.r.CreateGBufferTextures(w, h)
 	gbh.SetNormalTexture(normTex1)
 	gbh.SetNormalTextureView(normView1)
 	gbh.SetAlbedoTexture(albTex1)
@@ -1111,28 +1096,19 @@ func (s *scene) initContactShadows() {
 	}
 
 	// 1. Create contact shadow output texture (full screen resolution).
-	csView, csTex, err := s.r.CreateContactShadowTextures(w, h)
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create contact shadow textures: %v", err))
-	}
+	csView, csTex := s.r.CreateContactShadowTextures(w, h)
 	csHandler.SetTexture(csTex)
 	csHandler.SetTextureView(csView)
 
 	// Initialize slot 1
 	csHandler.SetSlot(1)
-	csView1, csTex1, err := s.r.CreateContactShadowTextures(w, h)
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create contact shadow textures slot 1: %v", err))
-	}
+	csView1, csTex1 := s.r.CreateContactShadowTextures(w, h)
 	csHandler.SetTexture(csTex1)
 	csHandler.SetTextureView(csView1)
 	csHandler.SetSlot(0)
 
 	// 2. Create linear sampler for the lit shader to sample the contact shadow texture.
-	csLinearSamp, err := s.r.CreateLinearSampler()
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create contact shadow linear sampler: %v", err))
-	}
+	csLinearSamp := s.r.CreateLinearSampler()
 	csHandler.SetLinearSampler(csLinearSamp)
 
 	// 3. Register contact shadow compute pipeline.
@@ -1254,18 +1230,12 @@ func (s *scene) initShadowMap(shadowVertShader, shadowSkinnedVertShader shader.S
 	}
 
 	// Create CSM atlas depth texture: (atlasW × res).
-	depthView, depthTex, err := s.r.CreateShadowDepthTexture(atlasW, res)
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create CSM shadow depth texture: %v", err))
-	}
+	depthView, depthTex := s.r.CreateShadowDepthTexture(atlasW, res)
 	sh.SetCSMAtlasTexture(depthTex)
 	sh.SetCSMAtlasTextureView(depthView)
 
 	// Create comparison sampler for PCF shadow sampling in the lit fragment shader.
-	compSampler, err := s.r.CreateComparisonSampler()
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create CSM comparison sampler: %v", err))
-	}
+	compSampler := s.r.CreateComparisonSampler()
 	sh.SetComparisonSampler(compSampler)
 
 	// Create one "csm_data_N" BGP per cascade — each holds a GPUShadowUniform buffer
@@ -1329,10 +1299,7 @@ func (s *scene) initShadowMap(shadowVertShader, shadowSkinnedVertShader shader.S
 
 	spotAtlasW := cols * tileSize
 	spotAtlasH := rows * tileSize
-	spotView, spotTex, err := s.r.CreateShadowDepthTexture(spotAtlasW, spotAtlasH)
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create spot/point shadow depth texture: %v", err))
-	}
+	spotView, spotTex := s.r.CreateShadowDepthTexture(spotAtlasW, spotAtlasH)
 	sh.SetLightShadowAtlas(spotTex)
 	sh.SetLightShadowAtlasView(spotView)
 
@@ -1673,10 +1640,7 @@ func (s *scene) initComposition() {
 	sampleCount := s.r.SampleCount()
 
 	// 1. Create HDR + optional MSAA + depth textures.
-	hdrView, hdrTex, msaaView, msaaTex, depthView, depthTex, err := s.r.CreateCompositionTextures(w, h, sampleCount)
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create composition textures: %v", err))
-	}
+	hdrView, hdrTex, msaaView, msaaTex, depthView, depthTex := s.r.CreateCompositionTextures(w, h, sampleCount)
 	ch.SetHDRTexture(hdrTex)
 	ch.SetHDRTextureView(hdrView)
 	ch.SetMSAATexture(msaaTex)
@@ -1686,10 +1650,7 @@ func (s *scene) initComposition() {
 
 	// Initialize slot 1 composition textures
 	ch.SetSlot(1)
-	hdrView1, hdrTex1, msaaView1, msaaTex1, depthView1, depthTex1, err := s.r.CreateCompositionTextures(w, h, sampleCount)
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create composition textures slot 1: %v", err))
-	}
+	hdrView1, hdrTex1, msaaView1, msaaTex1, depthView1, depthTex1 := s.r.CreateCompositionTextures(w, h, sampleCount)
 	ch.SetHDRTexture(hdrTex1)
 	ch.SetHDRTextureView(hdrView1)
 	ch.SetMSAATexture(msaaTex1)
@@ -1704,10 +1665,7 @@ func (s *scene) initComposition() {
 	s.r.SetRenderTargetFormat(wgpu.TextureFormatRGBA16Float)
 
 	// 2. Create linear sampler for HDR and SSR texture sampling.
-	linearSamp, err := s.r.CreateLinearSampler()
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create composition linear sampler: %v", err))
-	}
+	linearSamp := s.r.CreateLinearSampler()
 	ch.SetLinearSampler(linearSamp)
 
 	// 3. Load composition shaders and register the fullscreen pipeline.
@@ -1775,10 +1733,7 @@ func (s *scene) initComposition() {
 // Must be called after the HDR texture view is set on ch and after bindings 0–3 are
 // set on compBGP, but before s.r.InitBindGroup(compBGP, ...) is called.
 func (s *scene) initLuminance(ch composition.Handler, compBGP bind_group_provider.BindGroupProvider) {
-	expBuf, err := s.r.CreateBuffer("luminance_exposure", 4, wgpu.BufferUsageStorage|wgpu.BufferUsageCopySrc)
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create luminance exposure buffer: %v", err))
-	}
+	expBuf := s.r.CreateBuffer("luminance_exposure", 4, wgpu.BufferUsageStorage|wgpu.BufferUsageCopySrc|wgpu.BufferUsageCopyDst)
 
 	initData := make([]byte, 4)
 	binary.LittleEndian.PutUint32(initData, math.Float32bits(ch.Exposure()))
@@ -1985,25 +1940,16 @@ func (s *scene) initSSR() {
 	}
 
 	// 1. Create SSR output texture (RGBA16Float, storage + texture binding).
-	ssrView, ssrTex, err := s.r.CreateSSRTextures(halfW, halfH)
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create SSR textures: %v", err))
-	}
+	ssrView, ssrTex := s.r.CreateSSRTextures(halfW, halfH)
 	ssrHandler.SetSSRTexture(ssrTex)
 	ssrHandler.SetSSRTextureView(ssrView)
 
 	// 2. Create linear sampler for composition shader to sample SSR result.
-	linearSamp, err := s.r.CreateLinearSampler()
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create SSR linear sampler: %v", err))
-	}
+	linearSamp := s.r.CreateLinearSampler()
 	ssrHandler.SetLinearSampler(linearSamp)
 
 	// 3. Create Hi-Z depth pyramid texture with full mip chain and per-mip views.
-	hizView, hizTex, mipReadViews, mipStorageViews, mipCount, err := s.r.CreateHiZTextures(w, h)
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create Hi-Z textures: %v", err))
-	}
+	hizView, hizTex, mipReadViews, mipStorageViews, mipCount := s.r.CreateHiZTextures(w, h)
 	ssrHandler.SetHiZTexture(hizTex)
 	ssrHandler.SetHiZTextureView(hizView)
 	ssrHandler.SetHiZMipCount(mipCount)
@@ -2011,10 +1957,7 @@ func (s *scene) initSSR() {
 	ssrHandler.SetHiZStorageViews(mipStorageViews)
 
 	// MAX Hi-Z pyramid for slot 0 (same dimensions/mip count as MIN).
-	maxHizView, maxHizTex, maxMipReadViews, maxMipStorageViews, _, err := s.r.CreateHiZTextures(w, h)
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create MAX Hi-Z textures: %v", err))
-	}
+	maxHizView, maxHizTex, maxMipReadViews, maxMipStorageViews, _ := s.r.CreateHiZTextures(w, h)
 	ssrHandler.SetHiZMaxTexture(maxHizTex)
 	ssrHandler.SetHiZMaxTextureView(maxHizView)
 	ssrHandler.SetHiZMaxMipReadViews(maxMipReadViews)
@@ -2022,16 +1965,10 @@ func (s *scene) initSSR() {
 
 	// Initialize slot 1 SSR textures
 	ssrHandler.SetSlot(1)
-	ssrView1, ssrTex1, err := s.r.CreateSSRTextures(halfW, halfH)
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create SSR textures slot 1: %v", err))
-	}
+	ssrView1, ssrTex1 := s.r.CreateSSRTextures(halfW, halfH)
 	ssrHandler.SetSSRTexture(ssrTex1)
 	ssrHandler.SetSSRTextureView(ssrView1)
-	hizView1, hizTex1, mipReadViews1, mipStorageViews1, mipCount1, err := s.r.CreateHiZTextures(w, h)
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create Hi-Z textures slot 1: %v", err))
-	}
+	hizView1, hizTex1, mipReadViews1, mipStorageViews1, mipCount1 := s.r.CreateHiZTextures(w, h)
 	ssrHandler.SetHiZTexture(hizTex1)
 	ssrHandler.SetHiZTextureView(hizView1)
 	ssrHandler.SetHiZMipCount(mipCount1)
@@ -2039,10 +1976,7 @@ func (s *scene) initSSR() {
 	ssrHandler.SetHiZStorageViews(mipStorageViews1)
 
 	// MAX Hi-Z pyramid for slot 1.
-	maxHizView1, maxHizTex1, maxMipReadViews1, maxMipStorageViews1, _, err := s.r.CreateHiZTextures(w, h)
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create MAX Hi-Z textures slot 1: %v", err))
-	}
+	maxHizView1, maxHizTex1, maxMipReadViews1, maxMipStorageViews1, _ := s.r.CreateHiZTextures(w, h)
 	ssrHandler.SetHiZMaxTexture(maxHizTex1)
 	ssrHandler.SetHiZMaxTextureView(maxHizView1)
 	ssrHandler.SetHiZMaxMipReadViews(maxMipReadViews1)
@@ -2240,10 +2174,7 @@ func (s *scene) initTAA() {
 	}
 
 	// 1. Create two ping-pong RGBA16Float textures.
-	view0, tex0, view1, tex1, err := s.r.CreateTAATextures(w, h)
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create TAA textures: %v", err))
-	}
+	view0, tex0, view1, tex1 := s.r.CreateTAATextures(w, h)
 
 	taaH.SetSlot(0)
 	taaH.SetTAATexture(tex0)
@@ -2256,17 +2187,11 @@ func (s *scene) initTAA() {
 	taaH.SetSlot(0)
 
 	// 2. Create a shared linear sampler for history sampling.
-	linearSamp, err := s.r.CreateLinearSampler()
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create TAA linear sampler: %v", err))
-	}
+	linearSamp := s.r.CreateLinearSampler()
 	taaH.SetLinearSampler(linearSamp)
 
 	// 2b. Create the CAS sharpening output texture (single, not ping-ponged).
-	sharpenView, sharpenTex, err := s.r.CreateSharpenTexture(w, h)
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create TAA sharpen texture: %v", err))
-	}
+	sharpenView, sharpenTex := s.r.CreateSharpenTexture(w, h)
 	taaH.SetSharpenTexture(sharpenTex)
 	taaH.SetSharpenTextureView(sharpenView)
 
@@ -2439,11 +2364,9 @@ func (s *scene) initLighting(screenWidth, screenHeight int) {
 	// Create a 1×1 fallback Hi-Z texture for animators that are registered before the real
 	// SSR pyramid is built. The shader guards access with hiz_mip_count == 0.
 	if s.hizFallbackView == nil {
-		hizFallbackView, hizFallbackTex, _, _, _, err := s.r.CreateHiZTextures(1, 1)
-		if err == nil {
-			s.hizFallbackTexture = hizFallbackTex
-			s.hizFallbackView = hizFallbackView
-		}
+		hizFallbackView, hizFallbackTex, _, _, _ := s.r.CreateHiZTextures(1, 1)
+		s.hizFallbackTexture = hizFallbackTex
+		s.hizFallbackView = hizFallbackView
 	}
 	s.initSSR()
 
@@ -2658,10 +2581,7 @@ func (s *scene) initPhysics() {
 	// Create a staging buffer for GPU→CPU readback of body positions and quaternions.
 	// Sized for the full body buffer so any number of bodies up to maxBodies can be read back.
 	stagingSize := maxBodies * uint64((&physics.GPUBody{}).Size())
-	stagingBuf, err := s.r.CreateBuffer("physics_staging", stagingSize, wgpu.BufferUsageMapRead|wgpu.BufferUsageCopyDst)
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create physics staging buffer: %v", err))
-	}
+	stagingBuf := s.r.CreateBuffer("physics_staging", stagingSize, wgpu.BufferUsageMapRead|wgpu.BufferUsageCopyDst)
 	ph.SetStagingBuffer(stagingBuf)
 }
 
@@ -3042,8 +2962,8 @@ func (s *scene) initMaterialGPU(mat material.Material, fragmentShader shader.Sha
 		descriptor := fragmentShader.BindGroupLayoutDescriptor(groupIdx)
 		for _, entry := range descriptor.Entries {
 			binding := int(entry.Binding)
-			isTexture := entry.Texture.SampleType != wgpu.TextureSampleTypeUndefined
-			isSampler := entry.Sampler.Type != wgpu.SamplerBindingTypeUndefined
+			isTexture := entry.Texture.SampleType != wgpu.TextureSampleTypeBindingNotUsed
+			isSampler := entry.Sampler.Type != wgpu.SamplerBindingTypeBindingNotUsed
 
 			if isTexture && provider.TextureView(binding) == nil {
 				role := gi.bindingRoles[binding]
@@ -3521,10 +3441,7 @@ func (s *scene) initAnimatorGPU(anim animator.Animator, computeShader, vertexSha
 		}
 	}
 
-	shadowBuf, err := s.r.CreateBuffer("shadow_indirect", 20, wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst)
-	if err != nil {
-		panic(fmt.Sprintf("scene: failed to create shadow indirect buffer for model %q: %v", mdl.Name(), err))
-	}
+	shadowBuf := s.r.CreateBuffer("shadow_indirect", 20, wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst)
 	s.shadowIndirectBuffers[anim] = shadowBuf
 	for _, decl := range computeShader.Declarations() {
 		if decl.Type == shader.AnnotationTypeBindingGroup && decl.Binding != nil {

@@ -7,7 +7,7 @@ package bind_group_provider
 
 import (
 	"github.com/Carmen-Shannon/oxy-go/common"
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/oliverbestmann/webgpu/wgpu"
 )
 
 // BindGroupProvider defines the interface for components that require GPU bind group resources.

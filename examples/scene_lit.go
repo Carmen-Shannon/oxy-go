@@ -23,9 +23,10 @@ import (
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/composition"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssao"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/ssr"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/taa"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	"github.com/Carmen-Shannon/oxy-go/engine/window"
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/oliverbestmann/webgpu/wgpu"
 )
 
 func main() {
@@ -74,9 +75,10 @@ func main() {
 			light.WithShadowHandler(light.NewShadowHandler(
 				light.WithPCFRadius(2.0),
 				light.WithShadowNearFar(0.1, 1000),
-				light.WithShadowNormalBiasScale(1.0),
+				light.WithShadowNormalBiasScale(3.0),
 				light.WithShadowMapResolution(2048),
 				light.WithShadowInnerRadius(250),
+				light.WithLightShadowTileSize(1024),
 			)),
 		)),
 		scene.WithSSAOHandler(ssao.NewHandler(
@@ -105,6 +107,10 @@ func main() {
 			ssr.WithSSRStride(1.5),
 			ssr.WithSSRRoughnessCutoff(0.5),
 		)),
+		scene.WithTAAHandler(taa.NewHandler(
+			taa.WithTAAHistoryRectificationScale(0.1),
+			taa.WithTAAJitterScale(0.6),
+		)),
 	)
 
 	// ── Lights ──────────────────────────────────────────────────────────
@@ -126,6 +132,7 @@ func main() {
 		light.WithRange(200),
 		light.WithEnabled(true),
 		light.WithCastsShadows(true),
+		light.WithShadowBias(0.001),
 	)
 	sc.AddLight(bluePoint)
 
@@ -137,6 +144,7 @@ func main() {
 		light.WithRange(200),
 		light.WithEnabled(true),
 		light.WithCastsShadows(true),
+		light.WithShadowBias(0.001),
 	)
 	sc.AddLight(orangePoint)
 

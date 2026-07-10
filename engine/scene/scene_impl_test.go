@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/oliverbestmann/webgpu/wgpu"
 
 	"github.com/Carmen-Shannon/automation/tools/worker"
 	"github.com/Carmen-Shannon/oxy-go/common"
@@ -279,13 +279,13 @@ func (suite *sceneImplTest) TestAddLight() {
 		suite.scene.buildInjectionMap()
 
 		suite.rendererMock.EXPECT().MaxTextureDimension2D().Return(uint32(0)).Maybe()
-		suite.rendererMock.EXPECT().CreateShadowDepthTexture(mock.Anything, mock.Anything).Return(nil, nil, nil).Maybe()
-		suite.rendererMock.EXPECT().CreateComparisonSampler().Return(nil, nil).Maybe()
+		suite.rendererMock.EXPECT().CreateShadowDepthTexture(mock.Anything, mock.Anything).Return(nil, nil).Maybe()
+		suite.rendererMock.EXPECT().CreateComparisonSampler().Return(nil).Maybe()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 		suite.rendererMock.EXPECT().RegisterShadowDepthPipeline(mock.Anything).Return(nil).Maybe()
 		suite.rendererMock.EXPECT().InitTextureView(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 		suite.rendererMock.EXPECT().InitSampler(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
-		suite.rendererMock.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0, nil).Maybe()
+		suite.rendererMock.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0).Maybe()
 
 		l := light.NewLight(light.LightTypeDirectional)
 		suite.scene.AddLight(l)
@@ -360,13 +360,13 @@ func (suite *sceneImplTest) TestDetachLight() {
 func (suite *sceneImplTest) TestPrepareGBuffer() {
 	suite.Run("early return when BeginGBufferFrame errors", func() {
 		suite.scene.gBufferHandler.SetEnabled(true)
-		suite.rendererMock.EXPECT().BeginGBufferFrame().Return(errors.New("fail")).Once()
+		suite.rendererMock.EXPECT().BeginGBufferFrame().Return().Once()
 		suite.NotPanics(func() { suite.scene.PrepareGBuffer() })
 	})
 
 	suite.Run("completes begin and end with empty animator pool", func() {
 		suite.scene.gBufferHandler.SetEnabled(true)
-		suite.rendererMock.EXPECT().BeginGBufferFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginGBufferFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginGBufferPass(mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferPass().Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferFrame().Return().Once()
@@ -375,7 +375,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 
 	suite.Run("skips animator with zero instance count", func() {
 		suite.scene.gBufferHandler.SetEnabled(true)
-		suite.rendererMock.EXPECT().BeginGBufferFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginGBufferFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginGBufferPass(mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferPass().Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferFrame().Return().Once()
@@ -391,7 +391,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 
 	suite.Run("skips animator with nil model", func() {
 		suite.scene.gBufferHandler.SetEnabled(true)
-		suite.rendererMock.EXPECT().BeginGBufferFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginGBufferFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginGBufferPass(mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferPass().Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferFrame().Return().Once()
@@ -408,7 +408,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 
 	suite.Run("skips animator with nil mesh provider", func() {
 		suite.scene.gBufferHandler.SetEnabled(true)
-		suite.rendererMock.EXPECT().BeginGBufferFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginGBufferFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginGBufferPass(mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferPass().Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferFrame().Return().Once()
@@ -427,7 +427,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 
 	suite.Run("skips animator when pipeline key is empty", func() {
 		suite.scene.gBufferHandler.SetEnabled(true)
-		suite.rendererMock.EXPECT().BeginGBufferFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginGBufferFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginGBufferPass(mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferPass().Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferFrame().Return().Once()
@@ -449,7 +449,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 	suite.Run("skips animator when camera BGP is nil", func() {
 		suite.scene.gBufferHandler.SetEnabled(true)
 		suite.scene.gBufferHandler.SetPipelineKey("static", "gbuffer_static")
-		suite.rendererMock.EXPECT().BeginGBufferFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginGBufferFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginGBufferPass(mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferPass().Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferFrame().Return().Once()
@@ -475,7 +475,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 	suite.Run("skips animator when model has no materials", func() {
 		suite.scene.gBufferHandler.SetEnabled(true)
 		suite.scene.gBufferHandler.SetPipelineKey("static", "gbuffer_static")
-		suite.rendererMock.EXPECT().BeginGBufferFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginGBufferFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginGBufferPass(mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferPass().Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferFrame().Return().Once()
@@ -503,7 +503,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 	suite.Run("skips animator when material BGP is nil", func() {
 		suite.scene.gBufferHandler.SetEnabled(true)
 		suite.scene.gBufferHandler.SetPipelineKey("static", "gbuffer_static")
-		suite.rendererMock.EXPECT().BeginGBufferFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginGBufferFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginGBufferPass(mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferPass().Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferFrame().Return().Once()
@@ -533,7 +533,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 	suite.Run("calls GBufferDrawCall when culling is disabled", func() {
 		suite.scene.gBufferHandler.SetEnabled(true)
 		suite.scene.gBufferHandler.SetPipelineKey("static", "gbuffer_static")
-		suite.rendererMock.EXPECT().BeginGBufferFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginGBufferFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginGBufferPass(mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferPass().Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferFrame().Return().Once()
@@ -568,7 +568,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 	suite.Run("culling enabled with empty compute key falls back to GBufferDrawCall", func() {
 		suite.scene.gBufferHandler.SetEnabled(true)
 		suite.scene.gBufferHandler.SetPipelineKey("static", "gbuffer_static")
-		suite.rendererMock.EXPECT().BeginGBufferFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginGBufferFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginGBufferPass(mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferPass().Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferFrame().Return().Once()
@@ -604,7 +604,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 	suite.Run("culling enabled with nil Pipeline falls back to GBufferDrawCall", func() {
 		suite.scene.gBufferHandler.SetEnabled(true)
 		suite.scene.gBufferHandler.SetPipelineKey("static", "gbuffer_static")
-		suite.rendererMock.EXPECT().BeginGBufferFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginGBufferFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginGBufferPass(mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferPass().Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferFrame().Return().Once()
@@ -640,7 +640,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 	suite.Run("culling enabled with nil Shader falls back to GBufferDrawCall", func() {
 		suite.scene.gBufferHandler.SetEnabled(true)
 		suite.scene.gBufferHandler.SetPipelineKey("static", "gbuffer_static")
-		suite.rendererMock.EXPECT().BeginGBufferFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginGBufferFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginGBufferPass(mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferPass().Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferFrame().Return().Once()
@@ -676,7 +676,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 	suite.Run("culling: indirect buffer nil falls back to GBufferDrawCall", func() {
 		suite.scene.gBufferHandler.SetEnabled(true)
 		suite.scene.gBufferHandler.SetPipelineKey("static", "gbuffer_static")
-		suite.rendererMock.EXPECT().BeginGBufferFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginGBufferFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginGBufferPass(mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferPass().Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferFrame().Return().Once()
@@ -713,7 +713,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 	suite.Run("calls GBufferDrawCallIndirect when indirect buffer available", func() {
 		suite.scene.gBufferHandler.SetEnabled(true)
 		suite.scene.gBufferHandler.SetPipelineKey("static", "gbuffer_static")
-		suite.rendererMock.EXPECT().BeginGBufferFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginGBufferFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginGBufferPass(mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferPass().Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferFrame().Return().Once()
@@ -751,7 +751,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 	suite.Run("culling: array<indirect_args> annotation triggers CutPrefix branch", func() {
 		suite.scene.gBufferHandler.SetEnabled(true)
 		suite.scene.gBufferHandler.SetPipelineKey("static", "gbuffer_static")
-		suite.rendererMock.EXPECT().BeginGBufferFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginGBufferFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginGBufferPass(mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferPass().Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferFrame().Return().Once()
@@ -789,7 +789,7 @@ func (suite *sceneImplTest) TestPrepareGBuffer() {
 	suite.Run("skinned model uses skinned pipeline key", func() {
 		suite.scene.gBufferHandler.SetEnabled(true)
 		suite.scene.gBufferHandler.SetPipelineKey("skinned", "gbuffer_skinned")
-		suite.rendererMock.EXPECT().BeginGBufferFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginGBufferFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginGBufferPass(mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferPass().Return().Once()
 		suite.rendererMock.EXPECT().EndGBufferFrame().Return().Once()
@@ -1104,7 +1104,7 @@ func (suite *sceneImplTest) TestPrepareContactShadows() {
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().Pipeline(mock.Anything).Return(nil).Once()
-		suite.rendererMock.EXPECT().BeginComputeFrame().Return(errors.New("fail")).Once()
+		suite.rendererMock.EXPECT().BeginComputeFrame().Return().Once()
 
 		suite.NotPanics(func() { suite.scene.PrepareContactShadows() })
 	})
@@ -1129,7 +1129,7 @@ func (suite *sceneImplTest) TestPrepareContactShadows() {
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().Pipeline(mock.Anything).Return(nil).Once()
-		suite.rendererMock.EXPECT().BeginComputeFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginComputeFrame().Return().Once()
 		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndComputeFrame().Return().Once()
 
@@ -1154,7 +1154,7 @@ func (suite *sceneImplTest) TestPrepareSSR() {
 
 		suite.rendererMock.EXPECT().CurrentFrameSlot().Return(int(0)).Once()
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
-		suite.rendererMock.EXPECT().BeginComputeFrame().Return(errors.New("fail")).Once()
+		suite.rendererMock.EXPECT().BeginComputeFrame().Return().Once()
 
 		suite.NotPanics(func() { suite.scene.PrepareSSR() })
 	})
@@ -1171,7 +1171,7 @@ func (suite *sceneImplTest) TestPrepareSSR() {
 
 		suite.rendererMock.EXPECT().CurrentFrameSlot().Return(int(0)).Once()
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
-		suite.rendererMock.EXPECT().BeginComputeFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginComputeFrame().Return().Once()
 		suite.rendererMock.EXPECT().Pipeline(mock.Anything).Return(nil).Times(4)
 		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.Anything).Return().Times(3)
 		suite.rendererMock.EXPECT().EndComputeFrame().Return().Once()
@@ -1192,7 +1192,7 @@ func (suite *sceneImplTest) TestPrepareSSR() {
 
 		suite.rendererMock.EXPECT().CurrentFrameSlot().Return(int(0)).Once()
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
-		suite.rendererMock.EXPECT().BeginComputeFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginComputeFrame().Return().Once()
 		suite.rendererMock.EXPECT().Pipeline(mock.Anything).Return(nil).Times(4)
 		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.Anything).Return().Times(5)
 		suite.rendererMock.EXPECT().EndComputeFrame().Return().Once()
@@ -1212,7 +1212,7 @@ func (suite *sceneImplTest) TestPrepareSSR() {
 
 		suite.rendererMock.EXPECT().CurrentFrameSlot().Return(int(1)).Once()
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
-		suite.rendererMock.EXPECT().BeginComputeFrame().Return(errors.New("fail")).Once()
+		suite.rendererMock.EXPECT().BeginComputeFrame().Return().Once()
 
 		suite.NotPanics(func() { suite.scene.PrepareSSR() })
 	})
@@ -1246,9 +1246,9 @@ func (suite *sceneImplTest) TestBeginHDRFrame() {
 		suite.scene.compositionHandler.SetEnabled(true)
 
 		suite.rendererMock.EXPECT().SampleCount().Return(uint32(1)).Once()
-		suite.rendererMock.EXPECT().BeginHDRFrame(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginHDRFrame(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
 
-		suite.NoError(suite.scene.BeginHDRFrame())
+		suite.scene.BeginHDRFrame()
 	})
 
 	suite.Run("MSAA path", func() {
@@ -1256,9 +1256,9 @@ func (suite *sceneImplTest) TestBeginHDRFrame() {
 		suite.scene.compositionHandler.SetMSAATextureView(&wgpu.TextureView{})
 
 		suite.rendererMock.EXPECT().SampleCount().Return(uint32(4)).Once()
-		suite.rendererMock.EXPECT().BeginHDRFrame(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginHDRFrame(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
 
-		suite.NoError(suite.scene.BeginHDRFrame())
+		suite.scene.BeginHDRFrame()
 	})
 }
 
@@ -1298,7 +1298,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.scene.cam = camMock
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(errors.New("shadow frame error")).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
 	})
@@ -1331,7 +1331,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.scene.cam = camMock
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Twice()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -1373,7 +1373,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Twice()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -1416,7 +1416,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Twice()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -1461,7 +1461,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Twice()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -1509,7 +1509,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Twice()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -1560,7 +1560,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Twice()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -1621,7 +1621,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		suite.rendererMock.EXPECT().WriteRawBuffer(mockBuf, uint64(0), mock.Anything).Return().Once()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Twice()
 		suite.rendererMock.EXPECT().ShadowDrawCallIndirect(mock.Anything, mock.Anything, mockBuf, mock.Anything).Return(nil).Twice()
@@ -1657,7 +1657,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -1693,7 +1693,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -1731,7 +1731,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -1772,7 +1772,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -1816,7 +1816,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -1871,7 +1871,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		suite.rendererMock.EXPECT().WriteRawBuffer(mockBuf, uint64(0), mock.Anything).Return().Once()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().ShadowDrawCallIndirect(mock.Anything, mock.Anything, mockBuf, mock.Anything).Return(nil).Once()
@@ -1907,7 +1907,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
 		suite.rendererMock.EXPECT().EndShadowFrame().Return().Once()
@@ -1961,7 +1961,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		suite.rendererMock.EXPECT().WriteRawBuffer(mockBuf, uint64(0), mock.Anything).Return().Once()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Times(6)
 		suite.rendererMock.EXPECT().ShadowDrawCallIndirect(mock.Anything, mock.Anything, mockBuf, mock.Anything).Return(nil).Times(6)
@@ -1999,7 +1999,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.scene.lightHandler.AddLight(pl2)
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
 		suite.rendererMock.EXPECT().EndShadowFrame().Return().Once()
@@ -2048,7 +2048,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.scene.cam = camMock
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Twice()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Times(3)
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Twice()
@@ -2088,7 +2088,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.scene.lightHandler.AddLight(pl)
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
 		suite.rendererMock.EXPECT().EndShadowFrame().Return().Once()
@@ -2123,7 +2123,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
 		suite.rendererMock.EXPECT().EndShadowFrame().Return().Once()
@@ -2166,7 +2166,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Times(6)
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -2213,7 +2213,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Times(6)
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -2277,7 +2277,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		suite.rendererMock.EXPECT().WriteRawBuffer(mockBuf, uint64(0), mock.Anything).Return().Once()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Twice()
 		suite.rendererMock.EXPECT().ShadowDrawCallIndirect(mock.Anything, mock.Anything, mockBuf, mock.Anything).Return(nil).Twice()
@@ -2336,7 +2336,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		suite.rendererMock.EXPECT().WriteRawBuffer(mockBuf, uint64(0), mock.Anything).Return().Once()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Twice()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -2388,7 +2388,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		suite.rendererMock.EXPECT().WriteRawBuffer(mockBuf, uint64(0), mock.Anything).Return().Once()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -2425,7 +2425,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.scene.cam = camMock
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().EndShadowFrame().Return().Once()
 
 		suite.NotPanics(func() { suite.scene.PrepareShadows() })
@@ -2474,7 +2474,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		suite.rendererMock.EXPECT().WriteRawBuffer(mockBuf, uint64(0), mock.Anything).Return().Once()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -2505,7 +2505,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.scene.lightPrevSlotMap = map[light.Light]uint32{pl: 999}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
 		suite.rendererMock.EXPECT().EndShadowFrame().Return().Once()
@@ -2534,7 +2534,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.scene.lightPrevSlotMap = map[light.Light]uint32{sl: 999}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -2575,7 +2575,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -2630,7 +2630,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		suite.rendererMock.EXPECT().WriteRawBuffer(mockBuf, uint64(0), mock.Anything).Return().Once()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().ShadowDrawCallIndirect(mock.Anything, mock.Anything, mockBuf, mock.Anything).Return(nil).Once()
@@ -2686,7 +2686,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		suite.rendererMock.EXPECT().WriteRawBuffer(mockBuf, uint64(0), mock.Anything).Return().Once()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Times(6)
 		suite.rendererMock.EXPECT().ShadowDrawCallIndirect(mock.Anything, mock.Anything, mockBuf, mock.Anything).Return(nil).Times(6)
@@ -2739,7 +2739,7 @@ func (suite *sceneImplTest) TestPrepareShadows() {
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 		suite.rendererMock.EXPECT().WriteRawBuffer(mockBuf, uint64(0), mock.Anything).Return().Once()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -2782,7 +2782,7 @@ func (suite *sceneImplTest) TestPrepareLightCulling() {
 		suite.scene.cam = camMock
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Twice()
-		suite.rendererMock.EXPECT().BeginComputeFrame().Return(errors.New("fail")).Once()
+		suite.rendererMock.EXPECT().BeginComputeFrame().Return().Once()
 
 		suite.NotPanics(func() { suite.scene.PrepareLightCulling() })
 	})
@@ -2803,7 +2803,7 @@ func (suite *sceneImplTest) TestPrepareLightCulling() {
 		suite.scene.cam = camMock
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Twice()
-		suite.rendererMock.EXPECT().BeginComputeFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginComputeFrame().Return().Once()
 		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndComputeFrame().Return().Once()
 
@@ -2932,7 +2932,7 @@ func (suite *sceneImplTest) TestAddGameObject() {
 					provider.SetBuffer(1, &wgpu.Buffer{})
 				}
 			}).Return(nil).Maybe()
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		suite.rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
 
@@ -3119,7 +3119,7 @@ func (suite *sceneImplTest) TestAddGameObject() {
 					provider.SetBuffer(1, &wgpu.Buffer{})
 				}
 			}).Return(nil).Maybe()
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		suite.rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
 
@@ -3291,7 +3291,7 @@ func (suite *sceneImplTest) TestAddGameObject() {
 
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Maybe()
-		suite.rendererMock.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).Return(nil, nil).Maybe()
+		suite.rendererMock.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 		suite.rendererMock.EXPECT().Pipeline(mock.Anything).Return(pipeMock).Maybe()
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
 
@@ -6324,7 +6324,7 @@ func (suite *sceneImplTest) TestNewScene() {
 		r.EXPECT().SetInjections(mock.Anything).Return().Once()
 		bgp.EXPECT().SetSlot(mock.Anything).Return().Maybe()
 		r.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(2)
-		r.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0, nil).Once()
+		r.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0).Once()
 
 		result := NewScene("test", cam, r)
 		suite.NotNil(result)
@@ -6377,7 +6377,7 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.rendererMock.EXPECT().CreateSSAOTextures(400, 300).
 			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), errors.New("tex err")).Once()
+				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Once()
 		suite.Panics(func() { suite.scene.initSSAO() })
 	})
 
@@ -6395,7 +6395,7 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.rendererMock.EXPECT().CreateSSAOTextures(800, 600).
 			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), errors.New("tex err")).Once()
+				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Once()
 		suite.Panics(func() { suite.scene.initSSAO() })
 	})
 
@@ -6413,14 +6413,14 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.rendererMock.EXPECT().CreateSSAOTextures(800, 600).
 			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil).Once()
+				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Once()
 		ssaoMock.EXPECT().SetRawTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetRawTextureView(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetBlurredTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetBlurredTextureView(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTextureView(mock.Anything).Maybe()
-		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil), errors.New("samp err")).Once()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil)).Once()
 		suite.Panics(func() { suite.scene.initSSAO() })
 	})
 
@@ -6439,14 +6439,14 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.rendererMock.EXPECT().CreateSSAOTextures(800, 600).
 			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil).Once()
+				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Once()
 		ssaoMock.EXPECT().SetRawTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetRawTextureView(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetBlurredTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetBlurredTextureView(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTextureView(mock.Anything).Maybe()
-		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil), nil).Once()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil)).Once()
 		ssaoMock.EXPECT().SetLinearSampler(mock.Anything).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(errors.New("reg err")).Once()
 		suite.Panics(func() { suite.scene.initSSAO() })
@@ -6467,14 +6467,14 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.rendererMock.EXPECT().CreateSSAOTextures(800, 600).
 			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil).Once()
+				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Once()
 		ssaoMock.EXPECT().SetRawTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetRawTextureView(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetBlurredTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetBlurredTextureView(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTextureView(mock.Anything).Maybe()
-		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil), nil).Once()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil)).Once()
 		ssaoMock.EXPECT().SetLinearSampler(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetPipelineKey("ssao_compute", "ssao_compute").Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Once()
@@ -6497,14 +6497,14 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.rendererMock.EXPECT().CreateSSAOTextures(800, 600).
 			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil).Once()
+				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Once()
 		ssaoMock.EXPECT().SetRawTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetRawTextureView(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetBlurredTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetBlurredTextureView(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTextureView(mock.Anything).Maybe()
-		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil), nil).Once()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil)).Once()
 		ssaoMock.EXPECT().SetLinearSampler(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetPipelineKey(mock.Anything, mock.Anything).Maybe()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Maybe()
@@ -6532,14 +6532,14 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.rendererMock.EXPECT().CreateSSAOTextures(800, 600).
 			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil).Once()
+				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Once()
 		ssaoMock.EXPECT().SetRawTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetRawTextureView(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetBlurredTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetBlurredTextureView(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTextureView(mock.Anything).Maybe()
-		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil), nil).Once()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil)).Once()
 		ssaoMock.EXPECT().SetLinearSampler(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetPipelineKey(mock.Anything, mock.Anything).Maybe()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Maybe()
@@ -6571,14 +6571,14 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.rendererMock.EXPECT().CreateSSAOTextures(800, 600).
 			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil).Once()
+				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Once()
 		ssaoMock.EXPECT().SetRawTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetRawTextureView(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetBlurredTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetBlurredTextureView(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTextureView(mock.Anything).Maybe()
-		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil), nil).Once()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil)).Once()
 		ssaoMock.EXPECT().SetLinearSampler(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetPipelineKey(mock.Anything, mock.Anything).Maybe()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Maybe()
@@ -6614,14 +6614,14 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.rendererMock.EXPECT().CreateSSAOTextures(800, 600).
 			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil).Once()
+				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Once()
 		ssaoMock.EXPECT().SetRawTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetRawTextureView(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetBlurredTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetBlurredTextureView(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTexture(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetScratchTextureView(mock.Anything).Maybe()
-		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil), nil).Once()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil)).Once()
 		ssaoMock.EXPECT().SetLinearSampler(mock.Anything).Maybe()
 		ssaoMock.EXPECT().SetPipelineKey(mock.Anything, mock.Anything).Maybe()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Maybe()
@@ -6648,7 +6648,7 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.rendererMock.EXPECT().CreateSSAOTextures(800, 600).
 			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), errors.New("slot1 err")).Once()
+				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Once()
 		suite.Panics(func() { suite.scene.initSSAO() })
 	})
 
@@ -6667,7 +6667,7 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		suite.rendererMock.EXPECT().CreateSSAOTextures(800, 600).
 			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil).Times(2)
+				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Times(2)
 		ssaoMock.EXPECT().SetRawTexture(mock.Anything).Times(2)
 		ssaoMock.EXPECT().SetRawTextureView(mock.Anything).Times(2)
 		ssaoMock.EXPECT().SetBlurredTexture(mock.Anything).Times(2)
@@ -6675,7 +6675,7 @@ func (suite *sceneImplTest) TestInitSSAO() {
 		ssaoMock.EXPECT().SetScratchTexture(mock.Anything).Times(2)
 		ssaoMock.EXPECT().SetScratchTextureView(mock.Anything).Times(2)
 		ssaoMock.EXPECT().SetSlot(mock.Anything).Maybe()
-		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil), nil).Once()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil)).Once()
 		ssaoMock.EXPECT().SetLinearSampler(mock.Anything).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Once()
@@ -6891,7 +6891,7 @@ func (suite *sceneImplTest) TestInitGBuffer() {
 		suite.rendererMock.EXPECT().CreateGBufferTextures(800, 600).
 			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), errors.New("gpu err")).Once()
+				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Once()
 		suite.Panics(func() { suite.scene.initGBuffer() })
 	})
 
@@ -6906,7 +6906,7 @@ func (suite *sceneImplTest) TestInitGBuffer() {
 		suite.rendererMock.EXPECT().CreateGBufferTextures(800, 600).
 			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil).Times(2)
+				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Times(2)
 		gbufMock.EXPECT().SetNormalTexture(mock.Anything).Maybe()
 		gbufMock.EXPECT().SetNormalTextureView(mock.Anything).Maybe()
 		gbufMock.EXPECT().SetAlbedoTexture(mock.Anything).Maybe()
@@ -6930,7 +6930,7 @@ func (suite *sceneImplTest) TestInitGBuffer() {
 		suite.rendererMock.EXPECT().CreateGBufferTextures(800, 600).
 			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil).Times(2)
+				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Times(2)
 		gbufMock.EXPECT().SetNormalTexture(mock.Anything).Maybe()
 		gbufMock.EXPECT().SetNormalTextureView(mock.Anything).Maybe()
 		gbufMock.EXPECT().SetAlbedoTexture(mock.Anything).Maybe()
@@ -6955,7 +6955,7 @@ func (suite *sceneImplTest) TestInitGBuffer() {
 		suite.rendererMock.EXPECT().CreateGBufferTextures(800, 600).
 			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil).Times(2)
+				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Times(2)
 		gbufMock.EXPECT().SetNormalTexture(mock.Anything).Times(2)
 		gbufMock.EXPECT().SetNormalTextureView(mock.Anything).Times(2)
 		gbufMock.EXPECT().SetAlbedoTexture(mock.Anything).Times(2)
@@ -7037,7 +7037,7 @@ func (suite *sceneImplTest) TestInitContactShadows() {
 		suite.scene.screenWidth = 800
 		suite.scene.screenHeight = 600
 		suite.rendererMock.EXPECT().CreateContactShadowTextures(800, 600).
-			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), errors.New("tex err")).Once()
+			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Once()
 		suite.Panics(func() { suite.scene.initContactShadows() })
 	})
 
@@ -7053,13 +7053,13 @@ func (suite *sceneImplTest) TestInitContactShadows() {
 		suite.scene.screenHeight = 600
 		// Slot 0 succeeds
 		suite.rendererMock.EXPECT().CreateContactShadowTextures(800, 600).
-			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil).Once()
+			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Once()
 		csMock.EXPECT().SetTexture(mock.Anything).Once()
 		csMock.EXPECT().SetTextureView(mock.Anything).Once()
 		csMock.EXPECT().SetSlot(1).Once()
 		// Slot 1 errors
 		suite.rendererMock.EXPECT().CreateContactShadowTextures(800, 600).
-			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), errors.New("slot1 err")).Once()
+			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Once()
 		suite.Panics(func() { suite.scene.initContactShadows() })
 	})
 
@@ -7074,12 +7074,12 @@ func (suite *sceneImplTest) TestInitContactShadows() {
 		suite.scene.screenWidth = 800
 		suite.scene.screenHeight = 600
 		suite.rendererMock.EXPECT().CreateContactShadowTextures(800, 600).
-			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil).Times(2)
+			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Times(2)
 		csMock.EXPECT().SetTexture(mock.Anything).Times(2)
 		csMock.EXPECT().SetTextureView(mock.Anything).Times(2)
 		csMock.EXPECT().SetSlot(mock.Anything).Maybe()
 		suite.rendererMock.EXPECT().CreateLinearSampler().
-			Return((*wgpu.Sampler)(nil), errors.New("samp err")).Once()
+			Return((*wgpu.Sampler)(nil)).Once()
 		suite.Panics(func() { suite.scene.initContactShadows() })
 	})
 
@@ -7094,11 +7094,11 @@ func (suite *sceneImplTest) TestInitContactShadows() {
 		suite.scene.screenWidth = 800
 		suite.scene.screenHeight = 600
 		suite.rendererMock.EXPECT().CreateContactShadowTextures(800, 600).
-			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil).Times(2)
+			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Times(2)
 		csMock.EXPECT().SetTexture(mock.Anything).Times(2)
 		csMock.EXPECT().SetTextureView(mock.Anything).Times(2)
 		csMock.EXPECT().SetSlot(mock.Anything).Maybe()
-		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil), nil).Once()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil)).Once()
 		csMock.EXPECT().SetLinearSampler(mock.Anything).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).
 			Return(errors.New("pipe err")).Once()
@@ -7116,11 +7116,11 @@ func (suite *sceneImplTest) TestInitContactShadows() {
 		suite.scene.screenWidth = 800
 		suite.scene.screenHeight = 600
 		suite.rendererMock.EXPECT().CreateContactShadowTextures(800, 600).
-			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil).Times(2)
+			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Times(2)
 		csMock.EXPECT().SetTexture(mock.Anything).Times(2)
 		csMock.EXPECT().SetTextureView(mock.Anything).Times(2)
 		csMock.EXPECT().SetSlot(mock.Anything).Maybe()
-		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil), nil).Once()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil)).Once()
 		csMock.EXPECT().SetLinearSampler(mock.Anything).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Once()
 		csMock.EXPECT().SetPipelineKey("contact_shadow_compute", "contact_shadow_compute").Once()
@@ -7148,11 +7148,11 @@ func (suite *sceneImplTest) TestInitContactShadows() {
 		suite.scene.screenWidth = 800
 		suite.scene.screenHeight = 600
 		suite.rendererMock.EXPECT().CreateContactShadowTextures(800, 600).
-			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil).Times(2)
+			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Times(2)
 		csMock.EXPECT().SetTexture(mock.Anything).Times(2)
 		csMock.EXPECT().SetTextureView(mock.Anything).Times(2)
 		csMock.EXPECT().SetSlot(mock.Anything).Maybe()
-		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil), nil).Once()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil)).Once()
 		csMock.EXPECT().SetLinearSampler(mock.Anything).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Once()
 		csMock.EXPECT().SetPipelineKey("contact_shadow_compute", "contact_shadow_compute").Once()
@@ -7308,10 +7308,10 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 
 	setupThroughCascades := func(lhMock *light_mocks.MockLightingHandler, shMock *light_mocks.MockShadowHandler, shaderMock *shader_mocks.MockShader) {
 		suite.rendererMock.EXPECT().MaxTextureDimension2D().Return(uint32(0)).Once()
-		suite.rendererMock.EXPECT().CreateShadowDepthTexture(2048, 1024).Return(nil, nil, nil).Once()
+		suite.rendererMock.EXPECT().CreateShadowDepthTexture(2048, 1024).Return(nil, nil).Once()
 		shMock.EXPECT().SetCSMAtlasTexture(mock.Anything).Once()
 		shMock.EXPECT().SetCSMAtlasTextureView(mock.Anything).Once()
-		suite.rendererMock.EXPECT().CreateComparisonSampler().Return(nil, nil).Once()
+		suite.rendererMock.EXPECT().CreateComparisonSampler().Return(nil).Once()
 		shMock.EXPECT().SetComparisonSampler(mock.Anything).Once()
 		shaderMock.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		shaderMock.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
@@ -7336,7 +7336,7 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 	setupThroughStaticPipelines := func(shMock *light_mocks.MockShadowHandler) {
 		shMock.EXPECT().SetLightShadowAtlasSlots(6).Once()
 		shMock.EXPECT().SetLightShadowAtlasCols(3).Once()
-		suite.rendererMock.EXPECT().CreateShadowDepthTexture(768, 512).Return(nil, nil, nil).Once()
+		suite.rendererMock.EXPECT().CreateShadowDepthTexture(768, 512).Return(nil, nil).Once()
 		shMock.EXPECT().SetLightShadowAtlas(mock.Anything).Once()
 		shMock.EXPECT().SetLightShadowAtlasView(mock.Anything).Once()
 		spotKeys := []string{"spot_shadow_0", "spot_shadow_1", "spot_shadow_2", "spot_shadow_3", "spot_shadow_4", "spot_shadow_5"}
@@ -7369,7 +7369,7 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		lhMock, _ := newBaseHandlers()
 		shaderMock := shader_mocks.NewMockShader(suite.T())
 		suite.rendererMock.EXPECT().MaxTextureDimension2D().Return(uint32(0)).Once()
-		suite.rendererMock.EXPECT().CreateShadowDepthTexture(2048, 1024).Return(nil, nil, errors.New("csm err")).Once()
+		suite.rendererMock.EXPECT().CreateShadowDepthTexture(2048, 1024).Return(nil, nil).Once()
 		suite.scene.lightHandler = lhMock
 		suite.Panics(func() { suite.scene.initShadowMap(shaderMock, nil) })
 	})
@@ -7378,10 +7378,10 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		lhMock, shMock := newBaseHandlers()
 		shaderMock := shader_mocks.NewMockShader(suite.T())
 		suite.rendererMock.EXPECT().MaxTextureDimension2D().Return(uint32(0)).Once()
-		suite.rendererMock.EXPECT().CreateShadowDepthTexture(2048, 1024).Return(nil, nil, nil).Once()
+		suite.rendererMock.EXPECT().CreateShadowDepthTexture(2048, 1024).Return(nil, nil).Once()
 		shMock.EXPECT().SetCSMAtlasTexture(mock.Anything).Once()
 		shMock.EXPECT().SetCSMAtlasTextureView(mock.Anything).Once()
-		suite.rendererMock.EXPECT().CreateComparisonSampler().Return(nil, errors.New("sampler err")).Once()
+		suite.rendererMock.EXPECT().CreateComparisonSampler().Return(nil).Once()
 		suite.scene.lightHandler = lhMock
 		suite.Panics(func() { suite.scene.initShadowMap(shaderMock, nil) })
 	})
@@ -7390,10 +7390,10 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		lhMock, shMock := newBaseHandlers()
 		shaderMock := shader_mocks.NewMockShader(suite.T())
 		suite.rendererMock.EXPECT().MaxTextureDimension2D().Return(uint32(0)).Once()
-		suite.rendererMock.EXPECT().CreateShadowDepthTexture(2048, 1024).Return(nil, nil, nil).Once()
+		suite.rendererMock.EXPECT().CreateShadowDepthTexture(2048, 1024).Return(nil, nil).Once()
 		shMock.EXPECT().SetCSMAtlasTexture(mock.Anything).Once()
 		shMock.EXPECT().SetCSMAtlasTextureView(mock.Anything).Once()
-		suite.rendererMock.EXPECT().CreateComparisonSampler().Return(nil, nil).Once()
+		suite.rendererMock.EXPECT().CreateComparisonSampler().Return(nil).Once()
 		shMock.EXPECT().SetComparisonSampler(mock.Anything).Once()
 		shaderMock.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		shaderMock.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
@@ -7409,10 +7409,10 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		lhMock, shMock := newBaseHandlers()
 		shaderMock := shader_mocks.NewMockShader(suite.T())
 		suite.rendererMock.EXPECT().MaxTextureDimension2D().Return(uint32(0)).Once()
-		suite.rendererMock.EXPECT().CreateShadowDepthTexture(2048, 1024).Return(nil, nil, nil).Once()
+		suite.rendererMock.EXPECT().CreateShadowDepthTexture(2048, 1024).Return(nil, nil).Once()
 		shMock.EXPECT().SetCSMAtlasTexture(mock.Anything).Once()
 		shMock.EXPECT().SetCSMAtlasTextureView(mock.Anything).Once()
-		suite.rendererMock.EXPECT().CreateComparisonSampler().Return(nil, nil).Once()
+		suite.rendererMock.EXPECT().CreateComparisonSampler().Return(nil).Once()
 		shMock.EXPECT().SetComparisonSampler(mock.Anything).Once()
 		shaderMock.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		shaderMock.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
@@ -7430,10 +7430,10 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		lhMock, shMock := newBaseHandlers()
 		shaderMock := shader_mocks.NewMockShader(suite.T())
 		suite.rendererMock.EXPECT().MaxTextureDimension2D().Return(uint32(0)).Once()
-		suite.rendererMock.EXPECT().CreateShadowDepthTexture(2048, 1024).Return(nil, nil, nil).Once()
+		suite.rendererMock.EXPECT().CreateShadowDepthTexture(2048, 1024).Return(nil, nil).Once()
 		shMock.EXPECT().SetCSMAtlasTexture(mock.Anything).Once()
 		shMock.EXPECT().SetCSMAtlasTextureView(mock.Anything).Once()
-		suite.rendererMock.EXPECT().CreateComparisonSampler().Return(nil, nil).Once()
+		suite.rendererMock.EXPECT().CreateComparisonSampler().Return(nil).Once()
 		shMock.EXPECT().SetComparisonSampler(mock.Anything).Once()
 		shaderMock.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		desc := wgpu.BindGroupLayoutDescriptor{
@@ -7472,10 +7472,10 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		lhMock, shMock := newBaseHandlers()
 		shaderMock := shader_mocks.NewMockShader(suite.T())
 		suite.rendererMock.EXPECT().MaxTextureDimension2D().Return(uint32(99999)).Once()
-		suite.rendererMock.EXPECT().CreateShadowDepthTexture(2048, 1024).Return(nil, nil, nil).Once()
+		suite.rendererMock.EXPECT().CreateShadowDepthTexture(2048, 1024).Return(nil, nil).Once()
 		shMock.EXPECT().SetCSMAtlasTexture(mock.Anything).Once()
 		shMock.EXPECT().SetCSMAtlasTextureView(mock.Anything).Once()
-		suite.rendererMock.EXPECT().CreateComparisonSampler().Return(nil, nil).Once()
+		suite.rendererMock.EXPECT().CreateComparisonSampler().Return(nil).Once()
 		shMock.EXPECT().SetComparisonSampler(mock.Anything).Once()
 		shaderMock.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		shaderMock.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
@@ -7504,10 +7504,10 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		lhMock, shMock := newBaseHandlers()
 		shaderMock := shader_mocks.NewMockShader(suite.T())
 		suite.rendererMock.EXPECT().MaxTextureDimension2D().Return(uint32(0)).Once()
-		suite.rendererMock.EXPECT().CreateShadowDepthTexture(2048, 1024).Return(nil, nil, nil).Once()
+		suite.rendererMock.EXPECT().CreateShadowDepthTexture(2048, 1024).Return(nil, nil).Once()
 		shMock.EXPECT().SetCSMAtlasTexture(mock.Anything).Once()
 		shMock.EXPECT().SetCSMAtlasTextureView(mock.Anything).Once()
-		suite.rendererMock.EXPECT().CreateComparisonSampler().Return(nil, nil).Once()
+		suite.rendererMock.EXPECT().CreateComparisonSampler().Return(nil).Once()
 		shMock.EXPECT().SetComparisonSampler(mock.Anything).Once()
 		shaderMock.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		shaderMock.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
@@ -7529,7 +7529,7 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		shMock.EXPECT().LightShadowTileSize().Return(16384).Once()
 		shMock.EXPECT().SetLightShadowAtlasSlots(1).Once()
 		shMock.EXPECT().SetLightShadowAtlasCols(1).Once()
-		suite.rendererMock.EXPECT().CreateShadowDepthTexture(16384, 16384).Return(nil, nil, nil).Once()
+		suite.rendererMock.EXPECT().CreateShadowDepthTexture(16384, 16384).Return(nil, nil).Once()
 		shMock.EXPECT().SetLightShadowAtlas(mock.Anything).Once()
 		shMock.EXPECT().SetLightShadowAtlasView(mock.Anything).Once()
 		spotBGP := bgp_mocks.NewMockBindGroupProvider(suite.T())
@@ -7551,7 +7551,7 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		setupThroughCascades(lhMock, shMock, shaderMock)
 		shMock.EXPECT().SetLightShadowAtlasSlots(6).Once()
 		shMock.EXPECT().SetLightShadowAtlasCols(3).Once()
-		suite.rendererMock.EXPECT().CreateShadowDepthTexture(768, 512).Return(nil, nil, errors.New("spot err")).Once()
+		suite.rendererMock.EXPECT().CreateShadowDepthTexture(768, 512).Return(nil, nil).Once()
 		suite.scene.lightHandler = lhMock
 		suite.Panics(func() { suite.scene.initShadowMap(shaderMock, nil) })
 	})
@@ -7562,7 +7562,7 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		setupThroughCascades(lhMock, shMock, shaderMock)
 		shMock.EXPECT().SetLightShadowAtlasSlots(6).Once()
 		shMock.EXPECT().SetLightShadowAtlasCols(3).Once()
-		suite.rendererMock.EXPECT().CreateShadowDepthTexture(768, 512).Return(nil, nil, nil).Once()
+		suite.rendererMock.EXPECT().CreateShadowDepthTexture(768, 512).Return(nil, nil).Once()
 		shMock.EXPECT().SetLightShadowAtlas(mock.Anything).Once()
 		shMock.EXPECT().SetLightShadowAtlasView(mock.Anything).Once()
 		spotBGP0 := bgp_mocks.NewMockBindGroupProvider(suite.T())
@@ -7579,7 +7579,7 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		setupThroughCascades(lhMock, shMock, shaderMock)
 		shMock.EXPECT().SetLightShadowAtlasSlots(6).Once()
 		shMock.EXPECT().SetLightShadowAtlasCols(3).Once()
-		suite.rendererMock.EXPECT().CreateShadowDepthTexture(768, 512).Return(nil, nil, nil).Once()
+		suite.rendererMock.EXPECT().CreateShadowDepthTexture(768, 512).Return(nil, nil).Once()
 		shMock.EXPECT().SetLightShadowAtlas(mock.Anything).Once()
 		shMock.EXPECT().SetLightShadowAtlasView(mock.Anything).Once()
 		spotBGP0 := bgp_mocks.NewMockBindGroupProvider(suite.T())
@@ -7598,7 +7598,7 @@ func (suite *sceneImplTest) TestInitShadowMap() {
 		setupThroughCascades(lhMock, shMock, shaderMock)
 		shMock.EXPECT().SetLightShadowAtlasSlots(6).Once()
 		shMock.EXPECT().SetLightShadowAtlasCols(3).Once()
-		suite.rendererMock.EXPECT().CreateShadowDepthTexture(768, 512).Return(nil, nil, nil).Once()
+		suite.rendererMock.EXPECT().CreateShadowDepthTexture(768, 512).Return(nil, nil).Once()
 		shMock.EXPECT().SetLightShadowAtlas(mock.Anything).Once()
 		shMock.EXPECT().SetLightShadowAtlasView(mock.Anything).Once()
 		spotKeys := []string{"spot_shadow_0", "spot_shadow_1", "spot_shadow_2", "spot_shadow_3", "spot_shadow_4", "spot_shadow_5"}
@@ -8367,11 +8367,11 @@ func (suite *sceneImplTest) TestInitSSR() {
 			mipStorageViews[i] = &wgpu.TextureView{}
 		}
 		suite.rendererMock.EXPECT().CreateSSRTextures(mock.Anything, mock.Anything).
-			Return(&wgpu.TextureView{}, &wgpu.Texture{}, nil).Maybe()
+			Return(&wgpu.TextureView{}, &wgpu.Texture{}).Maybe()
 		suite.rendererMock.EXPECT().CreateLinearSampler().
-			Return(&wgpu.Sampler{}, nil).Maybe()
+			Return(&wgpu.Sampler{}).Maybe()
 		suite.rendererMock.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).
-			Return(&wgpu.TextureView{}, &wgpu.Texture{}, mipReadViews, mipStorageViews, mipCount, nil).Maybe()
+			Return(&wgpu.TextureView{}, &wgpu.Texture{}, mipReadViews, mipStorageViews, mipCount).Maybe()
 		ssrMock.EXPECT().SetSSRTexture(mock.Anything).Maybe()
 		ssrMock.EXPECT().SetSSRTextureView(mock.Anything).Maybe()
 		ssrMock.EXPECT().SetLinearSampler(mock.Anything).Maybe()
@@ -8473,7 +8473,7 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.scene.screenWidth = 1
 		suite.scene.screenHeight = 600
 		suite.rendererMock.EXPECT().CreateSSRTextures(1, mock.Anything).
-			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), errors.New("x")).Once()
+			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Once()
 		suite.Panics(func() { suite.scene.initSSR() })
 	})
 
@@ -8483,7 +8483,7 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.scene.screenWidth = 800
 		suite.scene.screenHeight = 1
 		suite.rendererMock.EXPECT().CreateSSRTextures(mock.Anything, 1).
-			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), errors.New("x")).Once()
+			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Once()
 		suite.Panics(func() { suite.scene.initSSR() })
 	})
 
@@ -8493,7 +8493,7 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.scene.screenWidth = 800
 		suite.scene.screenHeight = 600
 		suite.rendererMock.EXPECT().CreateSSRTextures(mock.Anything, mock.Anything).
-			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), errors.New("ssr err")).Once()
+			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Once()
 		suite.Panics(func() { suite.scene.initSSR() })
 	})
 
@@ -8503,11 +8503,11 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.scene.screenWidth = 800
 		suite.scene.screenHeight = 600
 		suite.rendererMock.EXPECT().CreateSSRTextures(mock.Anything, mock.Anything).
-			Return(&wgpu.TextureView{}, &wgpu.Texture{}, nil).Once()
+			Return(&wgpu.TextureView{}, &wgpu.Texture{}).Once()
 		ssrMock.EXPECT().SetSSRTexture(mock.Anything).Once()
 		ssrMock.EXPECT().SetSSRTextureView(mock.Anything).Once()
 		suite.rendererMock.EXPECT().CreateLinearSampler().
-			Return((*wgpu.Sampler)(nil), errors.New("samp err")).Once()
+			Return((*wgpu.Sampler)(nil)).Once()
 		suite.Panics(func() { suite.scene.initSSR() })
 	})
 
@@ -8517,14 +8517,14 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.scene.screenWidth = 800
 		suite.scene.screenHeight = 600
 		suite.rendererMock.EXPECT().CreateSSRTextures(mock.Anything, mock.Anything).
-			Return(&wgpu.TextureView{}, &wgpu.Texture{}, nil).Once()
+			Return(&wgpu.TextureView{}, &wgpu.Texture{}).Once()
 		ssrMock.EXPECT().SetSSRTexture(mock.Anything).Once()
 		ssrMock.EXPECT().SetSSRTextureView(mock.Anything).Once()
 		suite.rendererMock.EXPECT().CreateLinearSampler().
-			Return(&wgpu.Sampler{}, nil).Once()
+			Return(&wgpu.Sampler{}).Once()
 		ssrMock.EXPECT().SetLinearSampler(mock.Anything).Once()
 		suite.rendererMock.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).
-			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil, nil, 0, errors.New("hiz err")).Once()
+			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil, nil, 0).Once()
 		suite.Panics(func() { suite.scene.initSSR() })
 	})
 
@@ -8534,21 +8534,21 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.scene.screenWidth = 800
 		suite.scene.screenHeight = 600
 		suite.rendererMock.EXPECT().CreateSSRTextures(mock.Anything, mock.Anything).
-			Return(&wgpu.TextureView{}, &wgpu.Texture{}, nil).Once()
+			Return(&wgpu.TextureView{}, &wgpu.Texture{}).Once()
 		ssrMock.EXPECT().SetSSRTexture(mock.Anything).Once()
 		ssrMock.EXPECT().SetSSRTextureView(mock.Anything).Once()
 		suite.rendererMock.EXPECT().CreateLinearSampler().
-			Return(&wgpu.Sampler{}, nil).Once()
+			Return(&wgpu.Sampler{}).Once()
 		ssrMock.EXPECT().SetLinearSampler(mock.Anything).Once()
 		suite.rendererMock.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).
-			Return(&wgpu.TextureView{}, &wgpu.Texture{}, []*wgpu.TextureView{}, []*wgpu.TextureView{}, 1, nil).Once()
+			Return(&wgpu.TextureView{}, &wgpu.Texture{}, []*wgpu.TextureView{}, []*wgpu.TextureView{}, 1).Once()
 		ssrMock.EXPECT().SetHiZTexture(mock.Anything).Once()
 		ssrMock.EXPECT().SetHiZTextureView(mock.Anything).Once()
 		ssrMock.EXPECT().SetHiZMipCount(mock.Anything).Once()
 		ssrMock.EXPECT().SetHiZMipReadViews(mock.Anything).Once()
 		ssrMock.EXPECT().SetHiZStorageViews(mock.Anything).Once()
 		suite.rendererMock.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).
-			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil, nil, 0, errors.New("max hiz err")).Once()
+			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil, nil, 0).Once()
 		suite.Panics(func() { suite.scene.initSSR() })
 	})
 
@@ -8558,28 +8558,28 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.scene.screenWidth = 800
 		suite.scene.screenHeight = 600
 		suite.rendererMock.EXPECT().CreateSSRTextures(mock.Anything, mock.Anything).
-			Return(&wgpu.TextureView{}, &wgpu.Texture{}, nil).Once()
+			Return(&wgpu.TextureView{}, &wgpu.Texture{}).Once()
 		ssrMock.EXPECT().SetSSRTexture(mock.Anything).Once()
 		ssrMock.EXPECT().SetSSRTextureView(mock.Anything).Once()
 		suite.rendererMock.EXPECT().CreateLinearSampler().
-			Return(&wgpu.Sampler{}, nil).Once()
+			Return(&wgpu.Sampler{}).Once()
 		ssrMock.EXPECT().SetLinearSampler(mock.Anything).Once()
 		suite.rendererMock.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).
-			Return(&wgpu.TextureView{}, &wgpu.Texture{}, []*wgpu.TextureView{}, []*wgpu.TextureView{}, 1, nil).Once()
+			Return(&wgpu.TextureView{}, &wgpu.Texture{}, []*wgpu.TextureView{}, []*wgpu.TextureView{}, 1).Once()
 		ssrMock.EXPECT().SetHiZTexture(mock.Anything).Once()
 		ssrMock.EXPECT().SetHiZTextureView(mock.Anything).Once()
 		ssrMock.EXPECT().SetHiZMipCount(mock.Anything).Once()
 		ssrMock.EXPECT().SetHiZMipReadViews(mock.Anything).Once()
 		ssrMock.EXPECT().SetHiZStorageViews(mock.Anything).Once()
 		suite.rendererMock.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).
-			Return(&wgpu.TextureView{}, &wgpu.Texture{}, []*wgpu.TextureView{}, []*wgpu.TextureView{}, 1, nil).Once()
+			Return(&wgpu.TextureView{}, &wgpu.Texture{}, []*wgpu.TextureView{}, []*wgpu.TextureView{}, 1).Once()
 		ssrMock.EXPECT().SetHiZMaxTexture(mock.Anything).Once()
 		ssrMock.EXPECT().SetHiZMaxTextureView(mock.Anything).Once()
 		ssrMock.EXPECT().SetHiZMaxMipReadViews(mock.Anything).Once()
 		ssrMock.EXPECT().SetHiZMaxStorageViews(mock.Anything).Once()
 		ssrMock.EXPECT().SetSlot(1).Once()
 		suite.rendererMock.EXPECT().CreateSSRTextures(mock.Anything, mock.Anything).
-			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), errors.New("slot1 ssr err")).Once()
+			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Once()
 		suite.Panics(func() { suite.scene.initSSR() })
 	})
 
@@ -8589,32 +8589,32 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.scene.screenWidth = 800
 		suite.scene.screenHeight = 600
 		suite.rendererMock.EXPECT().CreateSSRTextures(mock.Anything, mock.Anything).
-			Return(&wgpu.TextureView{}, &wgpu.Texture{}, nil).Once()
+			Return(&wgpu.TextureView{}, &wgpu.Texture{}).Once()
 		ssrMock.EXPECT().SetSSRTexture(mock.Anything).Once()
 		ssrMock.EXPECT().SetSSRTextureView(mock.Anything).Once()
 		suite.rendererMock.EXPECT().CreateLinearSampler().
-			Return(&wgpu.Sampler{}, nil).Once()
+			Return(&wgpu.Sampler{}).Once()
 		ssrMock.EXPECT().SetLinearSampler(mock.Anything).Once()
 		suite.rendererMock.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).
-			Return(&wgpu.TextureView{}, &wgpu.Texture{}, []*wgpu.TextureView{}, []*wgpu.TextureView{}, 1, nil).Once()
+			Return(&wgpu.TextureView{}, &wgpu.Texture{}, []*wgpu.TextureView{}, []*wgpu.TextureView{}, 1).Once()
 		ssrMock.EXPECT().SetHiZTexture(mock.Anything).Once()
 		ssrMock.EXPECT().SetHiZTextureView(mock.Anything).Once()
 		ssrMock.EXPECT().SetHiZMipCount(mock.Anything).Once()
 		ssrMock.EXPECT().SetHiZMipReadViews(mock.Anything).Once()
 		ssrMock.EXPECT().SetHiZStorageViews(mock.Anything).Once()
 		suite.rendererMock.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).
-			Return(&wgpu.TextureView{}, &wgpu.Texture{}, []*wgpu.TextureView{}, []*wgpu.TextureView{}, 1, nil).Once()
+			Return(&wgpu.TextureView{}, &wgpu.Texture{}, []*wgpu.TextureView{}, []*wgpu.TextureView{}, 1).Once()
 		ssrMock.EXPECT().SetHiZMaxTexture(mock.Anything).Once()
 		ssrMock.EXPECT().SetHiZMaxTextureView(mock.Anything).Once()
 		ssrMock.EXPECT().SetHiZMaxMipReadViews(mock.Anything).Once()
 		ssrMock.EXPECT().SetHiZMaxStorageViews(mock.Anything).Once()
 		ssrMock.EXPECT().SetSlot(1).Once()
 		suite.rendererMock.EXPECT().CreateSSRTextures(mock.Anything, mock.Anything).
-			Return(&wgpu.TextureView{}, &wgpu.Texture{}, nil).Once()
+			Return(&wgpu.TextureView{}, &wgpu.Texture{}).Once()
 		ssrMock.EXPECT().SetSSRTexture(mock.Anything).Once()
 		ssrMock.EXPECT().SetSSRTextureView(mock.Anything).Once()
 		suite.rendererMock.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).
-			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil, nil, 0, errors.New("slot1 hiz err")).Once()
+			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil, nil, 0).Once()
 		suite.Panics(func() { suite.scene.initSSR() })
 	})
 
@@ -8624,14 +8624,14 @@ func (suite *sceneImplTest) TestInitSSR() {
 		suite.scene.screenWidth = 800
 		suite.scene.screenHeight = 600
 		suite.rendererMock.EXPECT().CreateSSRTextures(mock.Anything, mock.Anything).
-			Return(&wgpu.TextureView{}, &wgpu.Texture{}, nil).Once()
+			Return(&wgpu.TextureView{}, &wgpu.Texture{}).Once()
 		ssrMock.EXPECT().SetSSRTexture(mock.Anything).Once()
 		ssrMock.EXPECT().SetSSRTextureView(mock.Anything).Once()
-		suite.rendererMock.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}).Once()
 		ssrMock.EXPECT().SetLinearSampler(mock.Anything).Once()
 		// MIN Hi-Z slot 0
 		suite.rendererMock.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).
-			Return(&wgpu.TextureView{}, &wgpu.Texture{}, []*wgpu.TextureView{}, []*wgpu.TextureView{}, 1, nil).Once()
+			Return(&wgpu.TextureView{}, &wgpu.Texture{}, []*wgpu.TextureView{}, []*wgpu.TextureView{}, 1).Once()
 		ssrMock.EXPECT().SetHiZTexture(mock.Anything).Once()
 		ssrMock.EXPECT().SetHiZTextureView(mock.Anything).Once()
 		ssrMock.EXPECT().SetHiZMipCount(mock.Anything).Once()
@@ -8639,7 +8639,7 @@ func (suite *sceneImplTest) TestInitSSR() {
 		ssrMock.EXPECT().SetHiZStorageViews(mock.Anything).Once()
 		// MAX Hi-Z slot 0
 		suite.rendererMock.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).
-			Return(&wgpu.TextureView{}, &wgpu.Texture{}, []*wgpu.TextureView{}, []*wgpu.TextureView{}, 1, nil).Once()
+			Return(&wgpu.TextureView{}, &wgpu.Texture{}, []*wgpu.TextureView{}, []*wgpu.TextureView{}, 1).Once()
 		ssrMock.EXPECT().SetHiZMaxTexture(mock.Anything).Once()
 		ssrMock.EXPECT().SetHiZMaxTextureView(mock.Anything).Once()
 		ssrMock.EXPECT().SetHiZMaxMipReadViews(mock.Anything).Once()
@@ -8647,12 +8647,12 @@ func (suite *sceneImplTest) TestInitSSR() {
 		ssrMock.EXPECT().SetSlot(1).Once()
 		// SSR slot 1
 		suite.rendererMock.EXPECT().CreateSSRTextures(mock.Anything, mock.Anything).
-			Return(&wgpu.TextureView{}, &wgpu.Texture{}, nil).Once()
+			Return(&wgpu.TextureView{}, &wgpu.Texture{}).Once()
 		ssrMock.EXPECT().SetSSRTexture(mock.Anything).Once()
 		ssrMock.EXPECT().SetSSRTextureView(mock.Anything).Once()
 		// MIN Hi-Z slot 1
 		suite.rendererMock.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).
-			Return(&wgpu.TextureView{}, &wgpu.Texture{}, []*wgpu.TextureView{}, []*wgpu.TextureView{}, 1, nil).Once()
+			Return(&wgpu.TextureView{}, &wgpu.Texture{}, []*wgpu.TextureView{}, []*wgpu.TextureView{}, 1).Once()
 		ssrMock.EXPECT().SetHiZTexture(mock.Anything).Once()
 		ssrMock.EXPECT().SetHiZTextureView(mock.Anything).Once()
 		ssrMock.EXPECT().SetHiZMipCount(mock.Anything).Once()
@@ -8660,7 +8660,7 @@ func (suite *sceneImplTest) TestInitSSR() {
 		ssrMock.EXPECT().SetHiZStorageViews(mock.Anything).Once()
 		// MAX Hi-Z slot 1 FAILS (line 1409)
 		suite.rendererMock.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).
-			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil, nil, 0, errors.New("max hiz slot1 err")).Once()
+			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil), nil, nil, 0).Once()
 		suite.Panics(func() { suite.scene.initSSR() })
 	})
 
@@ -9069,7 +9069,7 @@ func (suite *sceneImplTest) TestInitComposition() {
 
 		suite.rendererMock.EXPECT().SampleCount().Return(uint32(1)).Maybe()
 		suite.rendererMock.EXPECT().CreateCompositionTextures(800, 600, uint32(1)).
-			Return(nil, nil, nil, nil, nil, nil, nil).Maybe()
+			Return(nil, nil, nil, nil, nil, nil).Maybe()
 		suite.rendererMock.EXPECT().SetRenderTargetFormat(wgpu.TextureFormatRGBA16Float).Maybe()
 
 		chMock.EXPECT().SetHDRTexture(mock.Anything).Maybe()
@@ -9091,7 +9091,7 @@ func (suite *sceneImplTest) TestInitComposition() {
 	) {
 		lhMock, chMock, ssrMock, bgpMock := makeBase()
 
-		suite.rendererMock.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}, nil).Maybe()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}).Maybe()
 		chMock.EXPECT().SetLinearSampler(mock.Anything).Maybe()
 		suite.rendererMock.EXPECT().RegisterCompositionPipeline(mock.Anything).Return(nil).Maybe()
 		chMock.EXPECT().SetPipelineKey("composition", "composition").Maybe()
@@ -9101,7 +9101,7 @@ func (suite *sceneImplTest) TestInitComposition() {
 		bgpMock.EXPECT().SetSampler(3, mock.Anything).Maybe()
 		bgpMock.EXPECT().SetBuffer(mock.Anything, mock.Anything).Maybe()
 
-		suite.rendererMock.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).Return((*wgpu.Buffer)(nil), nil).Maybe()
+		suite.rendererMock.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).Return((*wgpu.Buffer)(nil)).Maybe()
 		suite.rendererMock.EXPECT().WriteRawBuffer(mock.Anything, mock.Anything, mock.Anything).Maybe()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Maybe()
 		chMock.EXPECT().Exposure().Return(float32(1.0)).Maybe()
@@ -9155,7 +9155,7 @@ func (suite *sceneImplTest) TestInitComposition() {
 		suite.scene.screenHeight = 600
 		suite.rendererMock.EXPECT().SampleCount().Return(uint32(1)).Once()
 		suite.rendererMock.EXPECT().CreateCompositionTextures(800, 600, uint32(1)).
-			Return(nil, nil, nil, nil, nil, nil, errors.New("tex err")).Once()
+			Return(nil, nil, nil, nil, nil, nil).Once()
 		suite.Panics(func() { suite.scene.initComposition() })
 	})
 
@@ -9168,7 +9168,7 @@ func (suite *sceneImplTest) TestInitComposition() {
 		suite.scene.screenHeight = 600
 		suite.rendererMock.EXPECT().SampleCount().Return(uint32(1)).Once()
 		suite.rendererMock.EXPECT().CreateCompositionTextures(800, 600, uint32(1)).
-			Return(nil, nil, nil, nil, nil, nil, nil).Once()
+			Return(nil, nil, nil, nil, nil, nil).Once()
 		chMock.EXPECT().SetHDRTexture(mock.Anything).Once()
 		chMock.EXPECT().SetHDRTextureView(mock.Anything).Once()
 		chMock.EXPECT().SetMSAATexture(mock.Anything).Once()
@@ -9177,21 +9177,21 @@ func (suite *sceneImplTest) TestInitComposition() {
 		chMock.EXPECT().SetDepthTextureView(mock.Anything).Once()
 		chMock.EXPECT().SetSlot(1).Once()
 		suite.rendererMock.EXPECT().CreateCompositionTextures(800, 600, uint32(1)).
-			Return(nil, nil, nil, nil, nil, nil, errors.New("slot1 err")).Once()
+			Return(nil, nil, nil, nil, nil, nil).Once()
 		suite.Panics(func() { suite.scene.initComposition() })
 	})
 
 	suite.Run("CreateLinearSampler error panics", func() {
 		lhMock, _, _, _ := makeBase()
 		suite.scene.lightHandler = lhMock
-		suite.rendererMock.EXPECT().CreateLinearSampler().Return(nil, errors.New("samp err")).Once()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return(nil).Once()
 		suite.Panics(func() { suite.scene.initComposition() })
 	})
 
 	suite.Run("RegisterCompositionPipeline error panics", func() {
 		lhMock, chMock, _, _ := makeBase()
 		suite.scene.lightHandler = lhMock
-		suite.rendererMock.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}).Once()
 		chMock.EXPECT().SetLinearSampler(mock.Anything).Once()
 		suite.rendererMock.EXPECT().RegisterCompositionPipeline(mock.Anything).Return(errors.New("pipe err")).Once()
 		suite.Panics(func() { suite.scene.initComposition() })
@@ -9416,25 +9416,25 @@ func (suite *sceneImplTest) TestInitLighting() {
 		camBGPMock.EXPECT().SetSlot(mock.Anything).Return().Maybe()
 
 		suite.rendererMock.EXPECT().MaxTextureDimension2D().Return(uint32(0)).Maybe()
-		suite.rendererMock.EXPECT().CreateShadowDepthTexture(mock.Anything, mock.Anything).Return(nil, nil, nil).Maybe()
-		suite.rendererMock.EXPECT().CreateComparisonSampler().Return(nil, nil).Maybe()
+		suite.rendererMock.EXPECT().CreateShadowDepthTexture(mock.Anything, mock.Anything).Return(nil, nil).Maybe()
+		suite.rendererMock.EXPECT().CreateComparisonSampler().Return(nil).Maybe()
 		suite.rendererMock.EXPECT().RegisterShadowDepthPipeline(mock.Anything).Return(nil).Maybe()
-		suite.rendererMock.EXPECT().CreateGBufferTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, nil, nil, nil).Maybe()
+		suite.rendererMock.EXPECT().CreateGBufferTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, nil, nil).Maybe()
 		suite.rendererMock.EXPECT().RegisterGBufferPipeline(mock.Anything).Return(nil).Maybe()
-		suite.rendererMock.EXPECT().CreateSSAOTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, nil, nil, nil).Maybe()
-		suite.rendererMock.EXPECT().CreateLinearSampler().Return(nil, nil).Maybe()
-		suite.rendererMock.EXPECT().CreateContactShadowTextures(mock.Anything, mock.Anything).Return(nil, nil, nil).Maybe()
+		suite.rendererMock.EXPECT().CreateSSAOTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, nil, nil).Maybe()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return(nil).Maybe()
+		suite.rendererMock.EXPECT().CreateContactShadowTextures(mock.Anything, mock.Anything).Return(nil, nil).Maybe()
 		suite.rendererMock.EXPECT().SampleCount().Return(uint32(1)).Maybe()
-		suite.rendererMock.EXPECT().CreateCompositionTextures(mock.Anything, mock.Anything, mock.Anything).Return(nil, nil, nil, nil, nil, nil, nil).Maybe()
+		suite.rendererMock.EXPECT().CreateCompositionTextures(mock.Anything, mock.Anything, mock.Anything).Return(nil, nil, nil, nil, nil, nil).Maybe()
 		suite.rendererMock.EXPECT().SetRenderTargetFormat(mock.Anything).Maybe()
-		suite.rendererMock.EXPECT().CreateSSRTextures(mock.Anything, mock.Anything).Return(nil, nil, nil).Maybe()
-		suite.rendererMock.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, make([]*wgpu.TextureView, 1), make([]*wgpu.TextureView, 1), 1, nil).Maybe()
+		suite.rendererMock.EXPECT().CreateSSRTextures(mock.Anything, mock.Anything).Return(nil, nil).Maybe()
+		suite.rendererMock.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, make([]*wgpu.TextureView, 1), make([]*wgpu.TextureView, 1), 1).Maybe()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Maybe()
 		suite.rendererMock.EXPECT().RegisterCompositionPipeline(mock.Anything).Return(nil).Maybe()
 		suite.rendererMock.EXPECT().InitTextureView(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 		suite.rendererMock.EXPECT().InitSampler(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Maybe()
-		suite.rendererMock.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).Return((*wgpu.Buffer)(nil), nil).Maybe()
+		suite.rendererMock.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).Return((*wgpu.Buffer)(nil)).Maybe()
 		suite.rendererMock.EXPECT().WriteRawBuffer(mock.Anything, mock.Anything, mock.Anything).Maybe()
 
 		return
@@ -9587,7 +9587,7 @@ func (suite *sceneImplTest) TestInitPhysics() {
 		makeBase()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Maybe()
-		suite.rendererMock.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).Return((*wgpu.Buffer)(nil), errors.New("buf err")).Once()
+		suite.rendererMock.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).Return((*wgpu.Buffer)(nil)).Once()
 		suite.Panics(func() { suite.scene.initPhysics() })
 	})
 
@@ -9595,7 +9595,7 @@ func (suite *sceneImplTest) TestInitPhysics() {
 		makeBase()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Maybe()
-		suite.rendererMock.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).Return((*wgpu.Buffer)(nil), nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).Return((*wgpu.Buffer)(nil)).Once()
 		suite.NotPanics(func() { suite.scene.initPhysics() })
 	})
 }
@@ -10426,7 +10426,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		anim := startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 		suite.NotNil(anim)
@@ -10456,7 +10456,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitMeshBuffers(bgpMock, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -10481,7 +10481,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -10530,7 +10530,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -10559,7 +10559,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -10589,7 +10589,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Maybe()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Maybe()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Maybe()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Maybe()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Maybe()
 		suite.rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
 		suite.scene.createAnimator(mdl, cs, vs, fs)
@@ -10621,7 +10621,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -10652,7 +10652,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{vsDecl}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(2).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -10682,7 +10682,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{vsDecl}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(2).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -10711,7 +10711,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{vsDecl}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(3).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -10739,7 +10739,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{vsDecl}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -10768,7 +10768,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{vsDecl}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -10804,7 +10804,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		}
 		vs.EXPECT().BindGroupLayoutDescriptor(1).Return(outputDesc).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -10840,7 +10840,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		}
 		vs.EXPECT().BindGroupLayoutDescriptor(1).Return(outputDesc).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -10883,7 +10883,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -10918,7 +10918,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -10951,7 +10951,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -10984,7 +10984,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -11013,7 +11013,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -11043,7 +11043,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -11077,7 +11077,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -11111,7 +11111,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -11145,7 +11145,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -11176,7 +11176,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Maybe()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Maybe()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Maybe()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Maybe()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Maybe()
 		suite.rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
 		suite.scene.createAnimator(mdl, cs, vs, fs)
@@ -11205,7 +11205,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -11233,7 +11233,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		}
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(outputDesc).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -11291,7 +11291,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(errors.New("cp err")).Once()
 		suite.Panics(func() { startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs)) })
 	})
@@ -11313,7 +11313,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(errors.New("rp err")).Once()
 		suite.Panics(func() { startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs)) })
@@ -11340,7 +11340,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -11366,7 +11366,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -11395,7 +11395,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(3)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -11424,7 +11424,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(3)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -11454,7 +11454,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(3)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -11484,7 +11484,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -11514,7 +11514,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -11542,7 +11542,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(errors.New("mat pipe err")).Once()
 		suite.Panics(func() { startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs)) })
@@ -11579,7 +11579,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("mat bg err")).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		suite.Panics(func() { startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs)) })
@@ -11604,7 +11604,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		anim := startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 		suite.NotNil(anim)
@@ -11636,7 +11636,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -11666,7 +11666,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -11698,7 +11698,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -11728,7 +11728,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -11769,7 +11769,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		anim := startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 		suite.NotNil(anim)
@@ -11798,7 +11798,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
 	})
@@ -11848,7 +11848,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 
 		anim := startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
@@ -11874,7 +11874,7 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
 		mockBuf := &wgpu.Buffer{}
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(mockBuf, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(mockBuf).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 
 		anim := startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs))
@@ -12456,7 +12456,7 @@ func (suite *sceneImplTest) TestPrepareBloom() {
 		suite.scene.compositionHandler.SetBloomEnabled(true)
 		suite.scene.compositionHandler.SetBloomMipCount(1)
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
-		suite.rendererMock.EXPECT().BeginComputeFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginComputeFrame().Return().Once()
 		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndComputeFrame().Return().Once()
 		suite.NotPanics(func() { suite.scene.PrepareBloom() })
@@ -12467,7 +12467,7 @@ func (suite *sceneImplTest) TestPrepareBloom() {
 		suite.scene.compositionHandler.SetBloomEnabled(true)
 		suite.scene.compositionHandler.SetBloomMipCount(2)
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
-		suite.rendererMock.EXPECT().BeginComputeFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginComputeFrame().Return().Once()
 		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.Anything).Return().Times(3)
 		suite.rendererMock.EXPECT().EndComputeFrame().Return().Once()
 		suite.NotPanics(func() { suite.scene.PrepareBloom() })
@@ -12478,7 +12478,7 @@ func (suite *sceneImplTest) TestPrepareBloom() {
 		suite.scene.compositionHandler.SetBloomEnabled(true)
 		suite.scene.compositionHandler.SetBloomMipCount(1)
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Once()
-		suite.rendererMock.EXPECT().BeginComputeFrame().Return(errors.New("fail")).Once()
+		suite.rendererMock.EXPECT().BeginComputeFrame().Return().Once()
 		suite.NotPanics(func() { suite.scene.PrepareBloom() })
 	})
 }
@@ -13561,7 +13561,7 @@ func (suite *sceneImplTest) TestPrepareShadowsPointLightNoCastShadows() {
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
 		suite.rendererMock.EXPECT().EndShadowFrame().Return().Once()
@@ -13583,7 +13583,7 @@ func (suite *sceneImplTest) TestPrepareLightCullingZeroLights() {
 		suite.scene.cam = camMock
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Twice()
-		suite.rendererMock.EXPECT().BeginComputeFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginComputeFrame().Return().Once()
 		suite.rendererMock.EXPECT().DispatchComputeBatch(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndComputeFrame().Return().Once()
 
@@ -13697,7 +13697,7 @@ func (suite *sceneImplTest) TestInitLuminancePanicPaths() {
 		chMock := composition_mocks.NewMockHandler(suite.T())
 		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		suite.rendererMock.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).
-			Return(nil, errors.New("buf err")).Once()
+			Return(nil).Once()
 		suite.Panics(func() { suite.scene.initLuminance(chMock, compBGPMock) })
 	})
 
@@ -13706,7 +13706,7 @@ func (suite *sceneImplTest) TestInitLuminancePanicPaths() {
 		chMock := composition_mocks.NewMockHandler(suite.T())
 		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		suite.rendererMock.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).
-			Return(&wgpu.Buffer{}, nil).Once()
+			Return(&wgpu.Buffer{}).Once()
 		chMock.EXPECT().Exposure().Return(float32(1.0)).Once()
 		suite.rendererMock.EXPECT().WriteRawBuffer(mock.Anything, mock.Anything, mock.Anything).Once()
 		chMock.EXPECT().SetExposureBuffer(mock.Anything).Once()
@@ -13720,7 +13720,7 @@ func (suite *sceneImplTest) TestInitLuminancePanicPaths() {
 		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		lumBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		suite.rendererMock.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).
-			Return(&wgpu.Buffer{}, nil).Once()
+			Return(&wgpu.Buffer{}).Once()
 		chMock.EXPECT().Exposure().Return(float32(1.0)).Once()
 		suite.rendererMock.EXPECT().WriteRawBuffer(mock.Anything, mock.Anything, mock.Anything).Once()
 		chMock.EXPECT().SetExposureBuffer(mock.Anything).Once()
@@ -13740,7 +13740,7 @@ func (suite *sceneImplTest) TestInitLuminancePanicPaths() {
 		compBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		lumBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
 		suite.rendererMock.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).
-			Return(&wgpu.Buffer{}, nil).Once()
+			Return(&wgpu.Buffer{}).Once()
 		chMock.EXPECT().Exposure().Return(float32(1.0)).Once()
 		suite.rendererMock.EXPECT().WriteRawBuffer(mock.Anything, mock.Anything, mock.Anything).Once()
 		chMock.EXPECT().SetExposureBuffer(mock.Anything).Once()
@@ -14625,10 +14625,10 @@ func (suite *sceneImplTest) TestInitGBufferSlot1Panic() {
 		suite.scene.screenWidth = 800
 		suite.scene.screenHeight = 600
 		suite.rendererMock.EXPECT().CreateGBufferTextures(800, 600).Return(
-			&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil,
+			&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{},
 		).Once()
 		suite.rendererMock.EXPECT().CreateGBufferTextures(800, 600).Return(
-			nil, nil, nil, nil, nil, nil, errors.New("slot-1 err"),
+			nil, nil, nil, nil, nil, nil,
 		).Once()
 		suite.Panics(func() { suite.scene.initGBuffer() })
 	})
@@ -14647,7 +14647,7 @@ func (suite *sceneImplTest) TestInitSSAOHalfResolution() {
 		suite.scene.screenWidth = 800
 		suite.scene.screenHeight = 600
 		suite.rendererMock.EXPECT().CreateSSAOTextures(400, 300).Return(
-			nil, nil, nil, nil, nil, nil, errors.New("ssao err"),
+			nil, nil, nil, nil, nil, nil,
 		).Once()
 		suite.Panics(func() { suite.scene.initSSAO() })
 	})
@@ -14671,7 +14671,7 @@ func (suite *sceneImplTest) TestInitCompositionSSRNonNilPath() {
 
 		suite.rendererMock.EXPECT().SampleCount().Return(uint32(1)).Once()
 		suite.rendererMock.EXPECT().CreateCompositionTextures(800, 600, mock.Anything).Return(
-			&wgpu.TextureView{}, &wgpu.Texture{}, nil, nil, &wgpu.TextureView{}, &wgpu.Texture{}, nil,
+			&wgpu.TextureView{}, &wgpu.Texture{}, nil, nil, &wgpu.TextureView{}, &wgpu.Texture{},
 		).Twice()
 		chMock.EXPECT().SetHDRTexture(mock.Anything).Maybe()
 		chMock.EXPECT().SetHDRTextureView(mock.Anything).Maybe()
@@ -14682,7 +14682,7 @@ func (suite *sceneImplTest) TestInitCompositionSSRNonNilPath() {
 		chMock.EXPECT().SetSlot(mock.Anything).Maybe()
 
 		suite.rendererMock.EXPECT().SetRenderTargetFormat(mock.Anything).Once()
-		suite.rendererMock.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}).Once()
 		chMock.EXPECT().SetLinearSampler(mock.Anything).Once()
 		suite.rendererMock.EXPECT().RegisterCompositionPipeline(mock.Anything).Return(nil).Once()
 		chMock.EXPECT().SetPipelineKey("composition", "composition").Once()
@@ -14693,7 +14693,7 @@ func (suite *sceneImplTest) TestInitCompositionSSRNonNilPath() {
 		ssrMock.EXPECT().SSRTextureView().Return(ssrView).Maybe()
 
 		suite.rendererMock.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).
-			Return(nil, errors.New("buf err")).Once()
+			Return(nil).Once()
 
 		suite.Panics(func() { suite.scene.initComposition() })
 	})
@@ -14767,7 +14767,7 @@ func (suite *sceneImplTest) TestPrepareShadowsOuterScanBreak() {
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -14826,7 +14826,7 @@ func (suite *sceneImplTest) TestResizePostProcessingGBufferEnabled() {
 		ssrMock.EXPECT().HiZMipCount().Return(0).Maybe()
 
 		suite.rendererMock.EXPECT().CreateGBufferTextures(800, 600).Return(
-			&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil,
+			&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{},
 		).Twice()
 		gbhMock.EXPECT().SetPipelineKey(mock.Anything, mock.Anything).Maybe()
 		gbhMock.EXPECT().Resize(800, 600).Once()
@@ -14886,7 +14886,7 @@ func (suite *sceneImplTest) TestPrepareShadowsFrustumInvisible() {
 		suite.scene.cam = camMock
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -14936,7 +14936,7 @@ func (suite *sceneImplTest) TestPrepareShadowsOuterScanRangeExceed() {
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {mockAnim}}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
 		suite.rendererMock.EXPECT().EndShadowFrame().Return().Once()
@@ -14967,7 +14967,7 @@ func (suite *sceneImplTest) TestCreateAnimatorShadowBufferPanicOnFail() {
 		vs.EXPECT().Declarations().Return([]shader.Annotation{}).Once()
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(nil, errors.New("fail")).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(nil).Once()
 
 		suite.Panics(func() { startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs)) })
 	})
@@ -15182,7 +15182,7 @@ func (suite *sceneImplTest) TestCreateAnimatorUncoveredPaths() {
 		vs.EXPECT().BindGroupLayoutDescriptor(0).Return(wgpu.BindGroupLayoutDescriptor{}).Once()
 		suite.scene.hizFallbackView = &wgpu.TextureView{}
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(5)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		suite.NotPanics(func() { startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs)) })
 	})
@@ -15223,7 +15223,7 @@ func (suite *sceneImplTest) TestCreateAnimatorUncoveredPaths() {
 				return nil
 			}).Once()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(2)
-		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateBuffer("shadow_indirect", uint64(20), wgpu.BufferUsageIndirect|wgpu.BufferUsageCopyDst).Return(&wgpu.Buffer{}).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Times(2)
 		suite.NotPanics(func() { startAnimator(suite.scene.createAnimator(mdl, cs, vs, fs)) })
 	})
@@ -15535,7 +15535,7 @@ func (suite *sceneImplTest) TestPrepareShadowsSecondLoopGuards() {
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {goodAnim, badAnim}}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Times(6)
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -15592,7 +15592,7 @@ func (suite *sceneImplTest) TestPrepareShadowsSecondLoopGuards() {
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {goodAnim, badAnim}}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Times(6)
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -15660,7 +15660,7 @@ func (suite *sceneImplTest) TestPrepareShadowsSecondLoopGuards() {
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {goodAnim, badAnim}}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Times(6)
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -15728,7 +15728,7 @@ func (suite *sceneImplTest) TestPrepareShadowsSecondLoopGuards() {
 		suite.scene.animatorPool = map[model.Model][]animator.Animator{mapKey: {goodAnim, badAnim}}
 
 		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Return().Maybe()
-		suite.rendererMock.EXPECT().BeginShadowFrame().Return(nil).Once()
+		suite.rendererMock.EXPECT().BeginShadowFrame().Return().Once()
 		suite.rendererMock.EXPECT().BeginShadowAtlasPass(mock.Anything).Return().Once()
 		suite.rendererMock.EXPECT().SetShadowViewport(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Times(6)
 		suite.rendererMock.EXPECT().EndShadowAtlasPass().Return().Once()
@@ -16176,7 +16176,6 @@ func (suite *sceneImplTest) TestResizePostProcessingSSAOEnabled() {
 			(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 			(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 			(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-			errors.New("ssao fail"),
 		).Once()
 
 		suite.scene.lightHandler = lhMock
@@ -16279,7 +16278,6 @@ func (suite *sceneImplTest) TestResizePostProcessingCompositionEnabled() {
 			(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 			(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
 			(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-			errors.New("comp fail"),
 		).Once()
 
 		suite.scene.lightHandler = lhMock
@@ -16345,7 +16343,6 @@ func (suite *sceneImplTest) TestResizePostProcessingSSREnabled() {
 		// halfW=400, halfH=300; CreateSSRTextures is the first GPU call in initSSR
 		suite.rendererMock.EXPECT().CreateSSRTextures(400, 300).Return(
 			(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
-			errors.New("ssr fail"),
 		).Once()
 
 		suite.scene.lightHandler = lhMock
@@ -16496,11 +16493,11 @@ func (suite *sceneImplTest) TestInitTAA() {
 
 	makeCreates := func() {
 		suite.rendererMock.EXPECT().CreateTAATextures(800, 600).Return(
-			&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil,
+			&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{},
 		).Once()
-		suite.rendererMock.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}).Once()
 		suite.rendererMock.EXPECT().CreateSharpenTexture(800, 600).Return(
-			&wgpu.TextureView{}, &wgpu.Texture{}, nil,
+			&wgpu.TextureView{}, &wgpu.Texture{},
 		).Once()
 	}
 
@@ -16566,7 +16563,7 @@ func (suite *sceneImplTest) TestInitTAA() {
 	suite.Run("CreateTAATextures error panics", func() {
 		makeBase()
 		suite.rendererMock.EXPECT().CreateTAATextures(800, 600).Return(
-			nil, nil, nil, nil, errors.New("tex fail"),
+			nil, nil, nil, nil,
 		).Once()
 		suite.Panics(func() { suite.scene.initTAA() })
 	})
@@ -16574,20 +16571,20 @@ func (suite *sceneImplTest) TestInitTAA() {
 	suite.Run("CreateLinearSampler error panics", func() {
 		makeBase()
 		suite.rendererMock.EXPECT().CreateTAATextures(800, 600).Return(
-			&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil,
+			&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{},
 		).Once()
-		suite.rendererMock.EXPECT().CreateLinearSampler().Return(nil, errors.New("samp fail")).Once()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return(nil).Once()
 		suite.Panics(func() { suite.scene.initTAA() })
 	})
 
 	suite.Run("CreateSharpenTexture error panics", func() {
 		makeBase()
 		suite.rendererMock.EXPECT().CreateTAATextures(800, 600).Return(
-			&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil,
+			&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{},
 		).Once()
-		suite.rendererMock.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}).Once()
 		suite.rendererMock.EXPECT().CreateSharpenTexture(800, 600).Return(
-			nil, nil, errors.New("sharp fail"),
+			nil, nil,
 		).Once()
 		suite.Panics(func() { suite.scene.initTAA() })
 	})
@@ -16809,11 +16806,11 @@ func (suite *sceneImplTest) TestResizePostProcessingTAAEnabled() {
 		suite.rendererMock.EXPECT().InitTextureView(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 		suite.rendererMock.EXPECT().InitSampler(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 		suite.rendererMock.EXPECT().CreateTAATextures(800, 600).Return(
-			&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{}, nil,
+			&wgpu.TextureView{}, &wgpu.Texture{}, &wgpu.TextureView{}, &wgpu.Texture{},
 		).Once()
-		suite.rendererMock.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}, nil).Once()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return(&wgpu.Sampler{}).Once()
 		suite.rendererMock.EXPECT().CreateSharpenTexture(800, 600).Return(
-			&wgpu.TextureView{}, &wgpu.Texture{}, nil,
+			&wgpu.TextureView{}, &wgpu.Texture{},
 		).Once()
 		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Maybe()
 		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()

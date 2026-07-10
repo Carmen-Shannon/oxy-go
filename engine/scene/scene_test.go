@@ -1,9 +1,7 @@
 package scene_test
 
 import (
-	"fmt"
 	"os"
-	"strings"
 	"testing"
 
 	camera_mocks "github.com/Carmen-Shannon/oxy-go/engine/camera/mocks"
@@ -44,7 +42,7 @@ func (suite *sceneTest) SetupSubTest() {
 	suite.cameraMock.EXPECT().BindGroupProvider().Return(nil).Maybe()
 	suite.rendererMock = renderer_mocks.NewMockRenderer(suite.T())
 	suite.rendererMock.EXPECT().SetInjections(mock.Anything).Return().Maybe()
-	suite.rendererMock.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0, nil).Maybe()
+	suite.rendererMock.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0).Maybe()
 	suite.scene = scene.NewScene("test", suite.cameraMock, suite.rendererMock)
 }
 
@@ -74,7 +72,7 @@ func (suite *sceneTest) TestNewScene() {
 		cam.EXPECT().BindGroupProvider().Return(nil).Maybe()
 		r := renderer_mocks.NewMockRenderer(suite.T())
 		r.EXPECT().SetInjections(mock.Anything).Return().Maybe()
-		r.EXPECT().CreateHiZTextures(1, 1).Return(nil, nil, nil, nil, 0, fmt.Errorf("hiz creation failed")).Once()
+		r.EXPECT().CreateHiZTextures(1, 1).Return(nil, nil, nil, nil, 0).Once()
 		var s scene.Scene
 		suite.NotPanics(func() {
 			s = scene.NewScene("hiz-fail", cam, r)
@@ -151,7 +149,7 @@ func (suite *sceneTest) TestCullingDisabled() {
 		cam.EXPECT().BindGroupProvider().Return(nil).Maybe()
 		r := renderer_mocks.NewMockRenderer(suite.T())
 		r.EXPECT().SetInjections(mock.Anything).Return().Maybe()
-		r.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0, nil).Maybe()
+		r.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0).Maybe()
 		s := scene.NewScene("cull-test", cam, r, scene.WithCullingDisabled(true))
 		suite.True(s.CullingDisabled())
 	})
@@ -253,7 +251,7 @@ func (suite *sceneTest) TestResize() {
 		cam.EXPECT().BindGroupProvider().Return(nil).Maybe()
 		r := renderer_mocks.NewMockRenderer(suite.T())
 		r.EXPECT().SetInjections(mock.Anything).Return().Maybe()
-		r.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0, nil).Maybe()
+		r.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0).Maybe()
 		handler := taa.NewHandler(taa.WithTAAScreenSize(640, 480))
 		handler.SetEnabled(true)
 		s := scene.NewScene("taa-resize", cam, r, scene.WithTAAHandler(handler))
@@ -340,10 +338,10 @@ func (suite *sceneTest) TestPrepareComposition() {
 }
 
 func (suite *sceneTest) TestBeginHDRFrame() {
-	suite.Run("returns non-nil error containing composition not initialized", func() {
-		err := suite.scene.BeginHDRFrame()
-		suite.Error(err)
-		suite.True(strings.Contains(err.Error(), "composition not initialized"))
+	suite.Run("does not panic when composition not initialized", func() {
+		suite.NotPanics(func() {
+			suite.scene.BeginHDRFrame()
+		})
 	})
 }
 
@@ -361,7 +359,7 @@ func (suite *sceneTest) TestWithTAAHandler() {
 		cam.EXPECT().BindGroupProvider().Return(nil).Maybe()
 		r := renderer_mocks.NewMockRenderer(suite.T())
 		r.EXPECT().SetInjections(mock.Anything).Return().Maybe()
-		r.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0, nil).Maybe()
+		r.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0).Maybe()
 		handler := taa.NewHandler(taa.WithTAAScreenSize(800, 600))
 		s := scene.NewScene("taa-test", cam, r, scene.WithTAAHandler(handler))
 		suite.NotNil(s)

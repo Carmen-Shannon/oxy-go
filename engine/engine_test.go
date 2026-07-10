@@ -13,7 +13,7 @@ import (
 	renderer_mocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/mocks"
 	scene_mocks "github.com/Carmen-Shannon/oxy-go/engine/scene/mocks"
 	window_mocks "github.com/Carmen-Shannon/oxy-go/engine/window/mocks"
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/oliverbestmann/webgpu/wgpu"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
@@ -423,10 +423,10 @@ func (suite *engineTest) TestHandleRender() {
 		}).Maybe()
 
 		sceneMock.EXPECT().Renderer().Return(rendererMock).Maybe()
-		rendererMock.EXPECT().BeginComputeFrame().Return(nil).Maybe()
+		rendererMock.EXPECT().BeginComputeFrame().Return().Maybe()
 		sceneMock.EXPECT().PrepareCompute(mock.AnythingOfType("float32")).Return().Maybe()
 		rendererMock.EXPECT().EndComputeFrame().Return().Maybe()
-		rendererMock.EXPECT().BeginGeometryFrame().Return(nil).Maybe()
+		rendererMock.EXPECT().BeginGeometryFrame().Return().Maybe()
 		sceneMock.EXPECT().PrepareShadows().Return().Maybe()
 		sceneMock.EXPECT().PrepareLights().Return().Maybe()
 		sceneMock.EXPECT().PrepareGBuffer().Return().Maybe()
@@ -484,7 +484,7 @@ func (suite *engineTest) TestHandleRender() {
 		rendererMock.EXPECT().SyncGPUTimestamps().Return().Maybe()
 		rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
 		sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
-		rendererMock.EXPECT().BeginComputeFrame().Return(nil).Maybe()
+		rendererMock.EXPECT().BeginComputeFrame().Return().Maybe()
 		sceneMock.EXPECT().PrepareCompute(mock.AnythingOfType("float32")).Return().Maybe()
 		rendererMock.EXPECT().EndComputeFrame().Return().Maybe()
 
@@ -531,10 +531,10 @@ func (suite *engineTest) TestHandleRender() {
 		}).Maybe()
 
 		sceneMock.EXPECT().Renderer().Return(rendererMock).Maybe()
-		rendererMock.EXPECT().BeginComputeFrame().Return(nil).Maybe()
+		rendererMock.EXPECT().BeginComputeFrame().Return().Maybe()
 		sceneMock.EXPECT().PrepareCompute(mock.AnythingOfType("float32")).Return().Maybe()
 		rendererMock.EXPECT().EndComputeFrame().Return().Maybe()
-		rendererMock.EXPECT().BeginGeometryFrame().Return(nil).Maybe()
+		rendererMock.EXPECT().BeginGeometryFrame().Return().Maybe()
 		sceneMock.EXPECT().PrepareShadows().Return().Maybe()
 		sceneMock.EXPECT().PrepareLights().Return().Maybe()
 		sceneMock.EXPECT().PrepareGBuffer().Return().Maybe()
@@ -545,7 +545,7 @@ func (suite *engineTest) TestHandleRender() {
 		rendererMock.EXPECT().SyncGPUTimestamps().Return().Maybe()
 		rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
 		sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
-		sceneMock.EXPECT().BeginHDRFrame().Return(fmt.Errorf("hdr unavailable")).Maybe()
+		sceneMock.EXPECT().BeginHDRFrame().Return(nil).Maybe()
 		rendererMock.EXPECT().BeginFrame().Return(nil).Maybe()
 		sceneMock.EXPECT().DrawCalls().Return(nil).Maybe()
 		rendererMock.EXPECT().EndFrame().Return().Maybe()
@@ -640,10 +640,10 @@ func (suite *engineTest) TestHandleRender() {
 		sceneMock, _ := suite.configurePrimaryScene("running-panic-scene", lifecycle.LifecycleStateRunning)
 
 		sceneMock.EXPECT().Renderer().Return(rendererMock).Maybe()
-		rendererMock.EXPECT().BeginComputeFrame().Return(nil).Maybe()
+		rendererMock.EXPECT().BeginComputeFrame().Return().Maybe()
 		sceneMock.EXPECT().PrepareCompute(mock.AnythingOfType("float32")).Return().Maybe()
 		rendererMock.EXPECT().EndComputeFrame().Return().Maybe()
-		rendererMock.EXPECT().BeginGeometryFrame().Return(nil).Maybe()
+		rendererMock.EXPECT().BeginGeometryFrame().Return().Maybe()
 		sceneMock.EXPECT().PrepareShadows().Return().Maybe()
 		sceneMock.EXPECT().PrepareLights().Return().Maybe()
 		sceneMock.EXPECT().PrepareGBuffer().Return().Maybe()
@@ -762,10 +762,10 @@ func (suite *engineTest) TestHandleRender() {
 		rendererMock.EXPECT().SyncGPUTimestamps().Return().Maybe()
 		rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
 		sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
-		rendererMock.EXPECT().BeginComputeFrame().Return(nil).Maybe()
+		rendererMock.EXPECT().BeginComputeFrame().Return().Maybe()
 		sceneMock.EXPECT().PrepareCompute(mock.AnythingOfType("float32")).Return().Maybe()
 		rendererMock.EXPECT().EndComputeFrame().Return().Maybe()
-		rendererMock.EXPECT().BeginGeometryFrame().Return(nil).Maybe()
+		rendererMock.EXPECT().BeginGeometryFrame().Return().Maybe()
 		sceneMock.EXPECT().PrepareShadows().Return().Maybe()
 		sceneMock.EXPECT().PrepareLights().Return().Maybe()
 		sceneMock.EXPECT().PrepareGBuffer().Return().Maybe()
@@ -852,10 +852,10 @@ func (suite *engineTest) TestHandleRender() {
 		rendererMock.EXPECT().SyncGPUTimestamps().Return().Maybe()
 		rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
 		sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
-		rendererMock.EXPECT().BeginComputeFrame().Return(nil).Maybe()
+		rendererMock.EXPECT().BeginComputeFrame().Return().Maybe()
 		sceneMock.EXPECT().PrepareCompute(mock.AnythingOfType("float32")).Return().Maybe()
 		rendererMock.EXPECT().EndComputeFrame().Return().Maybe()
-		rendererMock.EXPECT().BeginGeometryFrame().Return(nil).Maybe()
+		rendererMock.EXPECT().BeginGeometryFrame().Return().Maybe()
 		sceneMock.EXPECT().PrepareShadows().Return().Maybe()
 		sceneMock.EXPECT().PrepareLights().Return().Maybe()
 		sceneMock.EXPECT().PrepareGBuffer().Return().Maybe()
@@ -1202,88 +1202,6 @@ func (suite *engineTest) TestHandleRenderLifecycleFilteringBranches() {
 		eImpl := suite.engine.(*engine)
 		sceneMock, _ := suite.configurePrimaryScene("paused-no-renderer-scene", lifecycle.LifecycleStatePaused)
 		sceneMock.EXPECT().Renderer().Return(nil).Maybe()
-
-		called := make(chan struct{}, 1)
-		var once sync.Once
-		eImpl.renderCallback = func(dt float32) {
-			once.Do(func() { called <- struct{}{} })
-		}
-
-		eImpl.wg.Add(1)
-		go eImpl.handleRender()
-
-		select {
-		case <-called:
-		case <-time.After(2 * time.Second):
-			suite.Fail("render callback was not called within timeout")
-		}
-
-		eImpl.signalQuit()
-
-		done := make(chan struct{})
-		go func() { eImpl.wg.Wait(); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(2 * time.Second):
-			suite.Fail("handleRender did not exit within timeout")
-		}
-
-		sceneMock.AssertNotCalled(suite.T(), "PrepareCompute")
-	})
-
-	suite.Run("paused compute path handles BeginComputeFrame error", func() {
-		eImpl := suite.engine.(*engine)
-		rendererMock := renderer_mocks.NewMockRenderer(suite.T())
-		sceneMock, _ := suite.configurePrimaryScene("paused-compute-error-scene", lifecycle.LifecycleStatePaused)
-
-		sceneMock.EXPECT().Renderer().Return(rendererMock).Maybe()
-		rendererMock.EXPECT().SyncGPUTimestamps().Return().Maybe()
-		rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
-		sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
-		rendererMock.EXPECT().BeginComputeFrame().Return(fmt.Errorf("compute failed")).Maybe()
-
-		called := make(chan struct{}, 1)
-		var once sync.Once
-		eImpl.renderCallback = func(dt float32) {
-			once.Do(func() { called <- struct{}{} })
-		}
-
-		eImpl.wg.Add(1)
-		go eImpl.handleRender()
-
-		select {
-		case <-called:
-		case <-time.After(2 * time.Second):
-			suite.Fail("render callback was not called within timeout")
-		}
-
-		eImpl.signalQuit()
-
-		done := make(chan struct{})
-		go func() { eImpl.wg.Wait(); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(2 * time.Second):
-			suite.Fail("handleRender did not exit within timeout")
-		}
-
-		rendererMock.AssertNotCalled(suite.T(), "FlushFrame")
-		sceneMock.AssertNotCalled(suite.T(), "PrepareCompute")
-	})
-
-	suite.Run("running compute path handles BeginComputeFrame error", func() {
-		eImpl := suite.engine.(*engine)
-		rendererMock := renderer_mocks.NewMockRenderer(suite.T())
-		sceneMock, _ := suite.configurePrimaryScene("running-compute-error-scene", lifecycle.LifecycleStateRunning)
-
-		sceneMock.EXPECT().Renderer().Return(rendererMock).Maybe()
-		rendererMock.EXPECT().SyncGPUTimestamps().Return().Maybe()
-		rendererMock.EXPECT().CurrentFrameSlot().Return(0).Maybe()
-		sceneMock.EXPECT().SyncFrameSlot(mock.Anything).Maybe()
-		rendererMock.EXPECT().BeginComputeFrame().Return(fmt.Errorf("compute failed")).Maybe()
-		rendererMock.EXPECT().BeginGeometryFrame().Return(fmt.Errorf("geometry failed")).Maybe()
-		sceneMock.EXPECT().BeginHDRFrame().Return(fmt.Errorf("hdr failed")).Maybe()
-		rendererMock.EXPECT().BeginFrame().Return(fmt.Errorf("frame failed")).Maybe()
 
 		called := make(chan struct{}, 1)
 		var once sync.Once

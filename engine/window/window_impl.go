@@ -2,7 +2,7 @@ package window
 
 import (
 	"github.com/Carmen-Shannon/oxy-go/common"
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/oliverbestmann/webgpu/wgpu"
 )
 
 // platformBackend abstracts the platform-specific windowing operations.

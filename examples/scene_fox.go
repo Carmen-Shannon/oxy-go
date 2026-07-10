@@ -18,10 +18,11 @@ import (
 	bgp "github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/material"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/taa"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	"github.com/Carmen-Shannon/oxy-go/engine/window"
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/oliverbestmann/webgpu/wgpu"
 )
 
 func main() {
@@ -62,7 +63,12 @@ func main() {
 	)
 
 	// ── Scene ───────────────────────────────────────────────────────────
-	sc := scene.NewScene("Fox Animation Test", cam, r)
+	sc := scene.NewScene("Fox Animation Test", cam, r,
+		scene.WithTAAHandler(taa.NewHandler(
+			taa.WithTAAHistoryRectificationScale(0.1),
+			taa.WithTAAJitterScale(0.6),
+		)),
+	)
 
 	// ── Load Fox Model ──────────────────────────────────────────────────
 	ldr := loader.NewLoader(loader.BackendTypeGLTF)
