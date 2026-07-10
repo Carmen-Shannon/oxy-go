@@ -1,0 +1,49 @@
+# Lint Workflow
+#
+# Runs golangci-lint on every push to main and every pull request.
+# Replaces the retired Go Report Card service.
+
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+          xorg-dev \
+          libwayland-dev \
+          wayland-protocols \
+          libxkbcommon-dev \
+          libgl1-mesa-dev
+
+      - name: Install mockery
+        run: go install github.com/vektra/mockery/v2@v2.53.5
+
+      - name: Generate mocks
+        run: mockery
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: latest
+          only-new-issues: true

@@ -5,9 +5,10 @@ import (
 	"os"
 	"testing"
 
-	"github.com/Carmen-Shannon/oxy-go/common"
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/oliverbestmann/webgpu/wgpu"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/Carmen-Shannon/oxy-go/common"
 )
 
 type gltfMaterialExtractorImplTest struct {

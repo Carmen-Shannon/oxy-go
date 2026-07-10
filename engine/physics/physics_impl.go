@@ -3,9 +3,10 @@ package physics
 import (
 	"math"
 
+	"github.com/oliverbestmann/webgpu/wgpu"
+
 	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
-	"github.com/cogentcore/webgpu/wgpu"
 )
 
 // physicsImpl is the implementation of the Physics interface. It manages GPU-side

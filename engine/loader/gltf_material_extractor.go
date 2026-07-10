@@ -9,7 +9,7 @@ import (
 
 	"github.com/Carmen-Shannon/oxy-go/common"
 
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/oliverbestmann/webgpu/wgpu"
 )
 
 // gltfMaterialExtractorImpl is the implementation of the gltfMaterialExtractor interface.

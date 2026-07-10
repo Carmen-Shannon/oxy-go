@@ -5,8 +5,9 @@ import (
 	"math"
 	"testing"
 
-	"github.com/Carmen-Shannon/oxy-go/engine/light"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/Carmen-Shannon/oxy-go/engine/light"
 )
 
 func TestRunLightingHandlerTests(t *testing.T) {

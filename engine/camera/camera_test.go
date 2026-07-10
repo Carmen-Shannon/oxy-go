@@ -4,10 +4,11 @@ import (
 	"math"
 	"testing"
 
+	"github.com/stretchr/testify/suite"
+
 	"github.com/Carmen-Shannon/oxy-go/engine/camera"
 	camera_mocks "github.com/Carmen-Shannon/oxy-go/engine/camera/mocks"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
-	"github.com/stretchr/testify/suite"
 )
 
 func TestRunCameraTests(t *testing.T) {

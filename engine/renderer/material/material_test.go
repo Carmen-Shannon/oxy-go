@@ -5,10 +5,11 @@ import (
 	"math"
 	"testing"
 
+	"github.com/stretchr/testify/suite"
+
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/material"
-	"github.com/stretchr/testify/suite"
 )
 
 func TestRunMaterialTests(t *testing.T) {

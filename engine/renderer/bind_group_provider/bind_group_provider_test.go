@@ -3,9 +3,10 @@ package bind_group_provider_test
 import (
 	"testing"
 
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/oliverbestmann/webgpu/wgpu"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 )
 
 func TestRunBindGroupProviderTests(t *testing.T) {

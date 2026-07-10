@@ -3,9 +3,10 @@ package light_test
 import (
 	"testing"
 
+	"github.com/stretchr/testify/suite"
+
 	"github.com/Carmen-Shannon/oxy-go/engine/light"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
-	"github.com/stretchr/testify/suite"
 )
 
 func TestRunContactShadowHandlerTests(t *testing.T) {

@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 
 	"github.com/Carmen-Shannon/automation/tools/worker"
+
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/camera"
 	"github.com/Carmen-Shannon/oxy-go/engine/game_object"
@@ -439,9 +440,7 @@ func (s *scene) PrepareGBuffer() {
 		return
 	}
 
-	if err := s.r.BeginGBufferFrame(); err != nil {
-		return
-	}
+	s.r.BeginGBufferFrame()
 	s.r.BeginGBufferPass(
 		s.gBufferHandler.NormalTextureView(),
 		s.gBufferHandler.AlbedoTextureView(),
@@ -684,9 +683,7 @@ func (s *scene) PrepareContactShadows() {
 	workGroupsX := (uint32(s.screenWidth) + csWGX - 1) / csWGX
 	workGroupsY := (uint32(s.screenHeight) + csWGY - 1) / csWGY
 
-	if err := s.r.BeginComputeFrame(); err != nil {
-		return
-	}
+	s.r.BeginComputeFrame()
 	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
 		{PipelineKey: csHandler.PipelineKey("contact_shadow_compute"), Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: csBGP}}, WorkGroupCount: [3]uint32{workGroupsX, workGroupsY, 1}},
 	})
@@ -737,9 +734,7 @@ func (s *scene) PrepareSSR() {
 		{Provider: ssrBGP, Binding: 0, Offset: 0, Data: ssrParams.Marshal()},
 	})
 
-	if err := s.r.BeginComputeFrame(); err != nil {
-		return
-	}
+	s.r.BeginComputeFrame()
 
 	// --- Hi-Z depth pyramid generation ---
 	mipCount := ssrHandler.HiZMipCount()
@@ -860,9 +855,7 @@ func (s *scene) PrepareBloom() {
 	}
 	s.r.WriteBuffers(writes)
 
-	if err := s.r.BeginComputeFrame(); err != nil {
-		return
-	}
+	s.r.BeginComputeFrame()
 
 	// Pre-compute mip dimensions.
 	halfW := ch.ScreenWidth() / 2
@@ -959,10 +952,12 @@ func (s *scene) BeginHDRFrame() error {
 	sampleCount := s.r.SampleCount()
 	if sampleCount > 1 && ch.MSAATextureView() != nil {
 		// MSAA active: render to multi-sampled texture, resolve into HDR.
-		return s.r.BeginHDRFrame(ch.MSAATextureView(), ch.HDRTextureView(), ch.DepthTextureView(), sampleCount)
+		s.r.BeginHDRFrame(ch.MSAATextureView(), ch.HDRTextureView(), ch.DepthTextureView(), sampleCount)
+		return nil
 	}
 	// No MSAA: render directly to HDR texture.
-	return s.r.BeginHDRFrame(ch.HDRTextureView(), nil, ch.DepthTextureView(), 1)
+	s.r.BeginHDRFrame(ch.HDRTextureView(), nil, ch.DepthTextureView(), 1)
+	return nil
 }
 
 func (s *scene) PrepareLights() {
@@ -1418,9 +1413,7 @@ func (s *scene) PrepareShadows() {
 		}
 	}
 
-	if err := s.r.BeginShadowFrame(); err != nil {
-		return
-	}
+	s.r.BeginShadowFrame()
 
 	// CSM cascade depth passes — single atlas pass, per-cascade viewport switch.
 	if shadowLight != nil {
@@ -1794,9 +1787,7 @@ func (s *scene) PrepareLightCulling() {
 	})
 
 	// Dispatch the light culling compute shader.
-	if err := s.r.BeginComputeFrame(); err != nil {
-		return
-	}
+	s.r.BeginComputeFrame()
 	s.r.DispatchComputeBatch([]renderer.ComputeDispatch{
 		{PipelineKey: s.lightHandler.PipelineKey("light_cull"), Providers: []renderer.ComputeGroupProvider{{Group: 0, Provider: cullBGP}}, WorkGroupCount: [3]uint32{uint32(s.lightHandler.TileCountX()), uint32(s.lightHandler.TileCountY()), 1}},
 	})

@@ -4,10 +4,11 @@ import (
 	"encoding/binary"
 	"testing"
 
+	"github.com/stretchr/testify/suite"
+
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
 	model_mocks "github.com/Carmen-Shannon/oxy-go/engine/model/mocks"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
-	"github.com/stretchr/testify/suite"
 )
 
 func TestRunAnimatorImplTests(t *testing.T) {

@@ -9,6 +9,8 @@ package engine
 import (
 	"time"
 
+	"github.com/Carmen-Shannon/oxy-go/engine/command"
+	"github.com/Carmen-Shannon/oxy-go/engine/queue"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	"github.com/Carmen-Shannon/oxy-go/engine/window"
 )
@@ -86,6 +88,19 @@ type Engine interface {
 	// This is an alternative to submitting a MessageShutdown message.
 	// Safe to call multiple times; subsequent calls are no-ops.
 	Quit()
+
+	// SubmitCommand sends a command to the engine's command queue for execution.
+	// The command is routed to the async or linear queue based on its CommandType.
+	//
+	// Parameters:
+	//   - cmd: the command to submit
+	SubmitCommand(cmd command.Command)
+
+	// CommandQueue returns the engine's command queue.
+	//
+	// Returns:
+	//   - queue.Queue[command.Command]: the engine's command queue
+	CommandQueue() queue.Queue[command.Command]
 }
 
 var _ Engine = &engine{}
@@ -97,10 +112,13 @@ func (e *engine) SetTickCallback(callback func(deltaTime float32)) { e.tickCallb
 func (e *engine) Scene(key int) scene.Scene                        { return e.scenes[key] }
 func (e *engine) Scenes() map[int]scene.Scene                      { return e.scenes }
 func (e *engine) Window() window.Window                            { return e.window }
+func (e *engine) SubmitCommand(cmd command.Command)                { e.cmdQueue.Submit(cmd) }
+func (e *engine) CommandQueue() queue.Queue[command.Command]       { return e.cmdQueue }
 
 func (e *engine) AddScene(key int, s scene.Scene) {
 	e.scenes[key] = s
 	e.startSceneLifecycle(s)
+	e.cmdCtx.SetScenes(e.scenes)
 }
 
 func (e *engine) RemoveScene(key int) {
@@ -114,6 +132,7 @@ func (e *engine) RemoveScene(key int) {
 	}
 
 	delete(e.scenes, key)
+	e.cmdCtx.SetScenes(e.scenes)
 }
 
 func (e *engine) Run() {

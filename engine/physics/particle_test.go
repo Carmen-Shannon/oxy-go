@@ -5,9 +5,10 @@ import (
 	"math"
 	"testing"
 
+	"github.com/stretchr/testify/suite"
+
 	"github.com/Carmen-Shannon/oxy-go/engine/model"
 	"github.com/Carmen-Shannon/oxy-go/engine/physics"
-	"github.com/stretchr/testify/suite"
 )
 
 func TestRunParticleTests(t *testing.T) {

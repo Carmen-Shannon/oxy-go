@@ -5,8 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Carmen-Shannon/oxy-go/engine/profiler"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/Carmen-Shannon/oxy-go/engine/profiler"
 )
 
 type profilerTest struct {

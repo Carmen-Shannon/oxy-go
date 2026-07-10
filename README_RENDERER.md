@@ -24,7 +24,7 @@ The `Renderer` interface resolves pipeline keys, acquires the mutex, and forward
 
 | Constant          | Value | Description                                 |
 | ----------------- | ----- | ------------------------------------------- |
-| `BackendTypeWGPU` | `0`   | WebGPU backend via `cogentcore/webgpu/wgpu` |
+| `BackendTypeWGPU` | `0`   | WebGPU backend via `oliverbestmann/webgpu/wgpu` |
 
 Additional backends can be added by implementing the `RendererBackend` interface and extending `RendererBackendType`.
 
@@ -369,4 +369,4 @@ Embedded WGSL source: `GPUGBufferOutputSource` (`assets/gbuffer-output.wgsl`)
 | `renderer_impl.go`         | Unexported `renderer` struct definition                                            |
 | `renderer_builder.go`      | `RendererBuilderOption` type, `With*` builder functions, `NewRenderer` constructor |
 | `renderer_backend.go`      | `RendererBackend` interface definition                                             |
-| `wgpu_renderer_backend.go` | `wgpuRendererBackend` implementation of `RendererBackend` using `cogentcore/wgpu`  |
+| `wgpu_renderer_backend.go` | `wgpuRendererBackend` implementation of `RendererBackend` using `oliverbestmann/webgpu`  |

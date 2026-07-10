@@ -6,8 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 )
 
 // ── Suite 1: ShaderType constants ─────────────────────────────────────────────
@@ -582,7 +583,7 @@ func (suite *newShaderTest) TestVertexShader() {
 		suite.Equal("vs", vs.Module().Label)
 	})
 	suite.Run("Module WGSL descriptor is non-nil", func() {
-		suite.NotNil(vs.Module().WGSLDescriptor)
+		suite.NotNil(vs.Module().WGSLSource)
 	})
 	suite.Run("VertexLayouts is non-empty", func() {
 		suite.NotEmpty(vs.VertexLayouts())

@@ -4,8 +4,9 @@ import (
 	"math"
 	"testing"
 
-	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/Carmen-Shannon/oxy-go/common"
 )
 
 type physicsImplTest struct {

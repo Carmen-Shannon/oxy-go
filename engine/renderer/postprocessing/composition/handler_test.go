@@ -3,10 +3,11 @@ package composition_test
 import (
 	"testing"
 
+	"github.com/oliverbestmann/webgpu/wgpu"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/composition"
-	"github.com/cogentcore/webgpu/wgpu"
-	"github.com/stretchr/testify/suite"
 )
 
 func TestRunCompositionHandlerTests(t *testing.T) {

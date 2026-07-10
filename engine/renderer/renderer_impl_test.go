@@ -4,14 +4,15 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/oliverbestmann/webgpu/wgpu"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/mocks"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
 	pipeline_mocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline/mocks"
-	"github.com/cogentcore/webgpu/wgpu"
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/suite"
 )
 
 type rendererImplTest struct {
@@ -131,6 +132,30 @@ func (suite *rendererImplTest) TestRegisterPipelines() {
 		suite.Error(err)
 		suite.Nil(suite.r.Pipeline("render-key"))
 	})
+	suite.Run("should register multiple pipelines in one call", func() {
+		computePipe := pipeline_mocks.NewMockPipeline(suite.T())
+		computePipe.EXPECT().PipelineKey().Return("compute-key").Once()
+		computePipe.EXPECT().Type().Return(pipeline.PipelineTypeCompute).Once()
+		suite.backendMock.EXPECT().RegisterComputePipeline(computePipe).Return(nil).Once()
+
+		renderPipe := pipeline_mocks.NewMockPipeline(suite.T())
+		renderPipe.EXPECT().PipelineKey().Return("render-key").Once()
+		renderPipe.EXPECT().Type().Return(pipeline.PipelineTypeRender).Once()
+		suite.backendMock.EXPECT().RegisterRenderPipeline(renderPipe).Return(nil).Once()
+
+		err := suite.r.RegisterPipelines(computePipe, renderPipe)
+		suite.NoError(err)
+		suite.Equal(computePipe, suite.r.Pipeline("compute-key"))
+		suite.Equal(renderPipe, suite.r.Pipeline("render-key"))
+	})
+	suite.Run("should cache pipeline with unknown type without backend registration", func() {
+		mockPipeline := pipeline_mocks.NewMockPipeline(suite.T())
+		mockPipeline.EXPECT().PipelineKey().Return("unknown-key").Once()
+		mockPipeline.EXPECT().Type().Return(pipeline.PipelineType(99)).Once()
+		err := suite.r.RegisterPipelines(mockPipeline)
+		suite.NoError(err)
+		suite.Equal(mockPipeline, suite.r.Pipeline("unknown-key"))
+	})
 }
 
 // --- RegisterShadowDepthPipeline ---
@@ -240,6 +265,17 @@ func (suite *rendererImplTest) TestDispatchComputeBatch() {
 		})).Return().Once()
 		suite.r.DispatchComputeBatch([]renderer.ComputeDispatch{
 			{PipelineKey: "key", Providers: nil, WorkGroupCount: [3]uint32{1, 1, 1}},
+		})
+	})
+	suite.Run("should dispatch only found pipelines in a mixed batch", func() {
+		mockPipeline := pipeline_mocks.NewMockPipeline(suite.T())
+		suite.r.SetPipeline("found", mockPipeline)
+		suite.backendMock.EXPECT().DispatchComputeBatch(mock.MatchedBy(func(e []renderer.ComputeDispatchEntry) bool {
+			return len(e) == 1 && e[0].Pipeline == mockPipeline
+		})).Return().Once()
+		suite.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+			{PipelineKey: "found", Providers: nil, WorkGroupCount: [3]uint32{1, 1, 1}},
+			{PipelineKey: "missing", Providers: nil, WorkGroupCount: [3]uint32{2, 2, 2}},
 		})
 	})
 }
@@ -389,10 +425,9 @@ func (suite *rendererImplTest) TestSetPresentMode() {
 }
 
 func (suite *rendererImplTest) TestBeginComputeFrame() {
-	suite.Run("should return the backend result", func() {
-		suite.backendMock.EXPECT().BeginComputeFrame().Return(nil).Once()
-		err := suite.r.BeginComputeFrame()
-		suite.NoError(err)
+	suite.Run("should call the backend", func() {
+		suite.backendMock.EXPECT().BeginComputeFrame().Return().Once()
+		suite.r.BeginComputeFrame()
 	})
 }
 
@@ -426,10 +461,9 @@ func (suite *rendererImplTest) TestPresent() {
 }
 
 func (suite *rendererImplTest) TestBeginGeometryFrame() {
-	suite.Run("should return the backend result", func() {
-		suite.backendMock.EXPECT().BeginGeometryFrame().Return(nil).Once()
-		err := suite.r.BeginGeometryFrame()
-		suite.NoError(err)
+	suite.Run("should call the backend", func() {
+		suite.backendMock.EXPECT().BeginGeometryFrame().Return().Once()
+		suite.r.BeginGeometryFrame()
 	})
 }
 
@@ -441,10 +475,9 @@ func (suite *rendererImplTest) TestEndGeometryFrame() {
 }
 
 func (suite *rendererImplTest) TestBeginShadowFrame() {
-	suite.Run("should return the backend result", func() {
-		suite.backendMock.EXPECT().BeginShadowFrame().Return(nil).Once()
-		err := suite.r.BeginShadowFrame()
-		suite.NoError(err)
+	suite.Run("should call the backend", func() {
+		suite.backendMock.EXPECT().BeginShadowFrame().Return().Once()
+		suite.r.BeginShadowFrame()
 	})
 }
 
@@ -491,10 +524,9 @@ func (suite *rendererImplTest) TestEndGBufferFrame() {
 }
 
 func (suite *rendererImplTest) TestBeginGBufferFrame() {
-	suite.Run("should return the backend result", func() {
-		suite.backendMock.EXPECT().BeginGBufferFrame().Return(nil).Once()
-		err := suite.r.BeginGBufferFrame()
-		suite.NoError(err)
+	suite.Run("should call the backend", func() {
+		suite.backendMock.EXPECT().BeginGBufferFrame().Return().Once()
+		suite.r.BeginGBufferFrame()
 	})
 }
 
@@ -638,10 +670,9 @@ func (suite *rendererImplTest) TestInitSampler() {
 }
 
 func (suite *rendererImplTest) TestCreateBuffer() {
-	suite.Run("should delegate to the backend and return the buffer and error", func() {
-		suite.backendMock.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).Return(nil, nil).Once()
-		buf, err := suite.r.CreateBuffer("label", 64, 0)
-		suite.NoError(err)
+	suite.Run("should delegate to the backend and return the buffer", func() {
+		suite.backendMock.EXPECT().CreateBuffer(mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+		buf := suite.r.CreateBuffer("label", 64, 0)
 		suite.Nil(buf)
 	})
 }
@@ -672,9 +703,8 @@ func (suite *rendererImplTest) TestWriteTexture() {
 
 func (suite *rendererImplTest) TestCreateShadowDepthTexture() {
 	suite.Run("should delegate to the backend and return results", func() {
-		suite.backendMock.EXPECT().CreateShadowDepthTexture(mock.Anything, mock.Anything).Return(nil, nil, nil).Once()
-		view, tex, err := suite.r.CreateShadowDepthTexture(512, 512)
-		suite.NoError(err)
+		suite.backendMock.EXPECT().CreateShadowDepthTexture(mock.Anything, mock.Anything).Return(nil, nil).Once()
+		view, tex := suite.r.CreateShadowDepthTexture(512, 512)
 		suite.Nil(view)
 		suite.Nil(tex)
 	})
@@ -682,27 +712,24 @@ func (suite *rendererImplTest) TestCreateShadowDepthTexture() {
 
 func (suite *rendererImplTest) TestCreateComparisonSampler() {
 	suite.Run("should delegate to the backend and return results", func() {
-		suite.backendMock.EXPECT().CreateComparisonSampler().Return(nil, nil).Once()
-		sampler, err := suite.r.CreateComparisonSampler()
-		suite.NoError(err)
+		suite.backendMock.EXPECT().CreateComparisonSampler().Return(nil).Once()
+		sampler := suite.r.CreateComparisonSampler()
 		suite.Nil(sampler)
 	})
 }
 
 func (suite *rendererImplTest) TestCreateLinearSampler() {
 	suite.Run("should delegate to the backend and return results", func() {
-		suite.backendMock.EXPECT().CreateLinearSampler().Return(nil, nil).Once()
-		sampler, err := suite.r.CreateLinearSampler()
-		suite.NoError(err)
+		suite.backendMock.EXPECT().CreateLinearSampler().Return(nil).Once()
+		sampler := suite.r.CreateLinearSampler()
 		suite.Nil(sampler)
 	})
 }
 
 func (suite *rendererImplTest) TestCreateGBufferTextures() {
 	suite.Run("should delegate to the backend and return results", func() {
-		suite.backendMock.EXPECT().CreateGBufferTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, nil, nil, nil).Once()
-		normView, normTex, albedoView, albedoTex, depthView, depthTex, err := suite.r.CreateGBufferTextures(1920, 1080)
-		suite.NoError(err)
+		suite.backendMock.EXPECT().CreateGBufferTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, nil, nil).Once()
+		normView, normTex, albedoView, albedoTex, depthView, depthTex := suite.r.CreateGBufferTextures(1920, 1080)
 		suite.Nil(normView)
 		suite.Nil(normTex)
 		suite.Nil(albedoView)
@@ -714,9 +741,8 @@ func (suite *rendererImplTest) TestCreateGBufferTextures() {
 
 func (suite *rendererImplTest) TestCreateSSAOTextures() {
 	suite.Run("should delegate to the backend and return results", func() {
-		suite.backendMock.EXPECT().CreateSSAOTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, nil, nil, nil).Once()
-		rawView, rawTex, blurredView, blurredTex, scratchView, scratchTex, err := suite.r.CreateSSAOTextures(1920, 1080)
-		suite.NoError(err)
+		suite.backendMock.EXPECT().CreateSSAOTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, nil, nil).Once()
+		rawView, rawTex, blurredView, blurredTex, scratchView, scratchTex := suite.r.CreateSSAOTextures(1920, 1080)
 		suite.Nil(rawView)
 		suite.Nil(rawTex)
 		suite.Nil(blurredView)
@@ -727,18 +753,16 @@ func (suite *rendererImplTest) TestCreateSSAOTextures() {
 }
 
 func (suite *rendererImplTest) TestBeginHDRFrame() {
-	suite.Run("should delegate to the backend and return results", func() {
-		suite.backendMock.EXPECT().BeginHDRFrame(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
-		err := suite.r.BeginHDRFrame(nil, nil, nil, 1)
-		suite.NoError(err)
+	suite.Run("should delegate to the backend", func() {
+		suite.backendMock.EXPECT().BeginHDRFrame(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
+		suite.r.BeginHDRFrame(nil, nil, nil, 1)
 	})
 }
 
 func (suite *rendererImplTest) TestCreateCompositionTextures() {
 	suite.Run("should delegate to the backend and return results", func() {
-		suite.backendMock.EXPECT().CreateCompositionTextures(mock.Anything, mock.Anything, mock.Anything).Return(nil, nil, nil, nil, nil, nil, nil).Once()
-		hdrView, hdrTex, msaaView, msaaTex, depthView, depthTex, err := suite.r.CreateCompositionTextures(1920, 1080, 1)
-		suite.NoError(err)
+		suite.backendMock.EXPECT().CreateCompositionTextures(mock.Anything, mock.Anything, mock.Anything).Return(nil, nil, nil, nil, nil, nil).Once()
+		hdrView, hdrTex, msaaView, msaaTex, depthView, depthTex := suite.r.CreateCompositionTextures(1920, 1080, 1)
 		suite.Nil(hdrView)
 		suite.Nil(hdrTex)
 		suite.Nil(msaaView)
@@ -750,9 +774,8 @@ func (suite *rendererImplTest) TestCreateCompositionTextures() {
 
 func (suite *rendererImplTest) TestCreateSSRTextures() {
 	suite.Run("should delegate to the backend and return results", func() {
-		suite.backendMock.EXPECT().CreateSSRTextures(mock.Anything, mock.Anything).Return(nil, nil, nil).Once()
-		ssrView, ssrTex, err := suite.r.CreateSSRTextures(1920, 1080)
-		suite.NoError(err)
+		suite.backendMock.EXPECT().CreateSSRTextures(mock.Anything, mock.Anything).Return(nil, nil).Once()
+		ssrView, ssrTex := suite.r.CreateSSRTextures(1920, 1080)
 		suite.Nil(ssrView)
 		suite.Nil(ssrTex)
 	})
@@ -760,9 +783,8 @@ func (suite *rendererImplTest) TestCreateSSRTextures() {
 
 func (suite *rendererImplTest) TestCreateContactShadowTextures() {
 	suite.Run("should delegate to the backend and return results", func() {
-		suite.backendMock.EXPECT().CreateContactShadowTextures(mock.Anything, mock.Anything).Return(nil, nil, nil).Once()
-		csView, csTex, err := suite.r.CreateContactShadowTextures(1920, 1080)
-		suite.NoError(err)
+		suite.backendMock.EXPECT().CreateContactShadowTextures(mock.Anything, mock.Anything).Return(nil, nil).Once()
+		csView, csTex := suite.r.CreateContactShadowTextures(1920, 1080)
 		suite.Nil(csView)
 		suite.Nil(csTex)
 	})
@@ -786,9 +808,8 @@ func (suite *rendererImplTest) TestCreateBloomTextures() {
 
 func (suite *rendererImplTest) TestCreateHiZTextures() {
 	suite.Run("should delegate to the backend and return results", func() {
-		suite.backendMock.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0, nil).Once()
-		hizView, hizTex, mipReadViews, mipStorageViews, mipCount, err := suite.r.CreateHiZTextures(1920, 1080)
-		suite.NoError(err)
+		suite.backendMock.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, 0).Once()
+		hizView, hizTex, mipReadViews, mipStorageViews, mipCount := suite.r.CreateHiZTextures(1920, 1080)
 		suite.Nil(hizView)
 		suite.Nil(hizTex)
 		suite.Nil(mipReadViews)
@@ -799,9 +820,8 @@ func (suite *rendererImplTest) TestCreateHiZTextures() {
 
 func (suite *rendererImplTest) TestCreateTAATextures() {
 	suite.Run("should delegate to the backend and return results", func() {
-		suite.backendMock.EXPECT().CreateTAATextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil, nil).Once()
-		view0, tex0, view1, tex1, err := suite.r.CreateTAATextures(1920, 1080)
-		suite.NoError(err)
+		suite.backendMock.EXPECT().CreateTAATextures(mock.Anything, mock.Anything).Return(nil, nil, nil, nil).Once()
+		view0, tex0, view1, tex1 := suite.r.CreateTAATextures(1920, 1080)
 		suite.Nil(view0)
 		suite.Nil(tex0)
 		suite.Nil(view1)
@@ -811,9 +831,8 @@ func (suite *rendererImplTest) TestCreateTAATextures() {
 
 func (suite *rendererImplTest) TestCreateSharpenTexture() {
 	suite.Run("should delegate to the backend and return results", func() {
-		suite.backendMock.EXPECT().CreateSharpenTexture(mock.Anything, mock.Anything).Return(nil, nil, nil).Once()
-		view, tex, err := suite.r.CreateSharpenTexture(1920, 1080)
-		suite.NoError(err)
+		suite.backendMock.EXPECT().CreateSharpenTexture(mock.Anything, mock.Anything).Return(nil, nil).Once()
+		view, tex := suite.r.CreateSharpenTexture(1920, 1080)
 		suite.Nil(view)
 		suite.Nil(tex)
 	})
