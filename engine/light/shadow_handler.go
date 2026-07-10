@@ -1,8 +1,9 @@
 package light
 
 import (
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/oliverbestmann/webgpu/wgpu"
+
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 )
 
 // ShadowType identifies the kind of shadow map entry.
