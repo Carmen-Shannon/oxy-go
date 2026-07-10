@@ -48,7 +48,7 @@ func main() {
 	cam := camera.NewCamera(
 		camera.WithFov(float32(45.0*math.Pi/180.0)),
 		camera.WithAspect(float32(eng.Window().Width())/float32(eng.Window().Height())),
-		camera.WithNear(0.01),
+		camera.WithNear(0.5),
 		camera.WithFar(10000),
 		camera.WithController(camera.NewCameraController(
 			camera.WithRadius(200),
