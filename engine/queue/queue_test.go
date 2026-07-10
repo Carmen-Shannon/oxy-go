@@ -151,16 +151,32 @@ func (suite *queueTest) TestStart() {
 		close(done)
 	})
 
-	suite.Run("should be idempotent for async lifecycle", func() {
+	suite.Run("calling start twice is idempotent for both lifecycles", func() {
 		q := queue.NewQueue[command.Command]()
 		done := make(chan struct{})
 		ctx := context.NewContext()
 
 		q.Start(ctx, done)
 		suite.Equal(lifecycle.LifecycleStateRunning, q.AsyncLifecycle().State())
+		suite.Equal(lifecycle.LifecycleStateRunning, q.LinearLifecycle().State())
 
 		q.Start(ctx, done)
 		suite.Equal(lifecycle.LifecycleStateRunning, q.AsyncLifecycle().State())
+		suite.Equal(lifecycle.LifecycleStateRunning, q.LinearLifecycle().State())
+
+		close(done)
+	})
+
+	suite.Run("start with nil context does not panic and linear lifecycle still runs", func() {
+		q := queue.NewQueue[command.Command]()
+		done := make(chan struct{})
+
+		suite.NotPanics(func() {
+			q.Start(nil, done)
+		})
+
+		suite.Equal(lifecycle.LifecycleStateRunning, q.AsyncLifecycle().State())
+		suite.Equal(lifecycle.LifecycleStateRunning, q.LinearLifecycle().State())
 
 		close(done)
 	})

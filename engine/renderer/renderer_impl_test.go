@@ -132,6 +132,30 @@ func (suite *rendererImplTest) TestRegisterPipelines() {
 		suite.Error(err)
 		suite.Nil(suite.r.Pipeline("render-key"))
 	})
+	suite.Run("should register multiple pipelines in one call", func() {
+		computePipe := pipeline_mocks.NewMockPipeline(suite.T())
+		computePipe.EXPECT().PipelineKey().Return("compute-key").Once()
+		computePipe.EXPECT().Type().Return(pipeline.PipelineTypeCompute).Once()
+		suite.backendMock.EXPECT().RegisterComputePipeline(computePipe).Return(nil).Once()
+
+		renderPipe := pipeline_mocks.NewMockPipeline(suite.T())
+		renderPipe.EXPECT().PipelineKey().Return("render-key").Once()
+		renderPipe.EXPECT().Type().Return(pipeline.PipelineTypeRender).Once()
+		suite.backendMock.EXPECT().RegisterRenderPipeline(renderPipe).Return(nil).Once()
+
+		err := suite.r.RegisterPipelines(computePipe, renderPipe)
+		suite.NoError(err)
+		suite.Equal(computePipe, suite.r.Pipeline("compute-key"))
+		suite.Equal(renderPipe, suite.r.Pipeline("render-key"))
+	})
+	suite.Run("should cache pipeline with unknown type without backend registration", func() {
+		mockPipeline := pipeline_mocks.NewMockPipeline(suite.T())
+		mockPipeline.EXPECT().PipelineKey().Return("unknown-key").Once()
+		mockPipeline.EXPECT().Type().Return(pipeline.PipelineType(99)).Once()
+		err := suite.r.RegisterPipelines(mockPipeline)
+		suite.NoError(err)
+		suite.Equal(mockPipeline, suite.r.Pipeline("unknown-key"))
+	})
 }
 
 // --- RegisterShadowDepthPipeline ---
@@ -241,6 +265,17 @@ func (suite *rendererImplTest) TestDispatchComputeBatch() {
 		})).Return().Once()
 		suite.r.DispatchComputeBatch([]renderer.ComputeDispatch{
 			{PipelineKey: "key", Providers: nil, WorkGroupCount: [3]uint32{1, 1, 1}},
+		})
+	})
+	suite.Run("should dispatch only found pipelines in a mixed batch", func() {
+		mockPipeline := pipeline_mocks.NewMockPipeline(suite.T())
+		suite.r.SetPipeline("found", mockPipeline)
+		suite.backendMock.EXPECT().DispatchComputeBatch(mock.MatchedBy(func(e []renderer.ComputeDispatchEntry) bool {
+			return len(e) == 1 && e[0].Pipeline == mockPipeline
+		})).Return().Once()
+		suite.r.DispatchComputeBatch([]renderer.ComputeDispatch{
+			{PipelineKey: "found", Providers: nil, WorkGroupCount: [3]uint32{1, 1, 1}},
+			{PipelineKey: "missing", Providers: nil, WorkGroupCount: [3]uint32{2, 2, 2}},
 		})
 	})
 }

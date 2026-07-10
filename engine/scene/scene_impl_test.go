@@ -1181,23 +1181,38 @@ func (suite *sceneImplTest) TestPrepareComposition() {
 }
 
 func (suite *sceneImplTest) TestBeginHDRFrame() {
+	suite.Run("composition not initialized returns error", func() {
+		err := suite.scene.BeginHDRFrame()
+		suite.Error(err)
+		suite.Contains(err.Error(), "composition not initialized")
+	})
+
 	suite.Run("no-MSAA path", func() {
 		suite.scene.compositionHandler.SetEnabled(true)
 
 		suite.rendererMock.EXPECT().SampleCount().Return(uint32(1)).Once()
-		suite.rendererMock.EXPECT().BeginHDRFrame(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().BeginHDRFrame(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Run(func(colorView, resolveView *wgpu.TextureView, depthView *wgpu.TextureView, sampleCount uint32) {
+			suite.Nil(resolveView)
+			suite.Equal(uint32(1), sampleCount)
+		}).Once()
 
-		suite.scene.BeginHDRFrame()
+		err := suite.scene.BeginHDRFrame()
+		suite.NoError(err)
 	})
 
 	suite.Run("MSAA path", func() {
 		suite.scene.compositionHandler.SetEnabled(true)
-		suite.scene.compositionHandler.SetMSAATextureView(&wgpu.TextureView{})
+		msaaView := &wgpu.TextureView{}
+		suite.scene.compositionHandler.SetMSAATextureView(msaaView)
 
 		suite.rendererMock.EXPECT().SampleCount().Return(uint32(4)).Once()
-		suite.rendererMock.EXPECT().BeginHDRFrame(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().BeginHDRFrame(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Run(func(colorView, resolveView *wgpu.TextureView, depthView *wgpu.TextureView, sampleCount uint32) {
+			suite.Equal(msaaView, colorView)
+			suite.Equal(uint32(4), sampleCount)
+		}).Once()
 
-		suite.scene.BeginHDRFrame()
+		err := suite.scene.BeginHDRFrame()
+		suite.NoError(err)
 	})
 }
 
@@ -12692,6 +12707,17 @@ func (suite *sceneImplTest) TestNewSceneMissingBranches() {
 			_ = NewScene("test_slot1_err", camMock, suite.rendererMock)
 		})
 	})
+
+	suite.Run("should skip InitBindGroup and still create Hi-Z fallback when camera BGP is nil", func() {
+		camMock := camera_mocks.NewMockCamera(suite.T())
+		camMock.EXPECT().BindGroupProvider().Return(nil).Once()
+		suite.rendererMock.EXPECT().SetInjections(mock.Anything).Return().Once()
+		suite.rendererMock.EXPECT().CreateHiZTextures(mock.Anything, mock.Anything).
+			Return(nil, nil, nil, nil, 0).Once()
+
+		result := NewScene("test_nil_bgp", camMock, suite.rendererMock)
+		suite.NotNil(result)
+	})
 }
 
 func (suite *sceneImplTest) TestInitBloomDisabledFallback() {
@@ -16051,5 +16077,122 @@ func (suite *sceneImplTest) TestBuilderOptions() {
 		opt := WithLODShadowBias(2)
 		opt(s)
 		suite.Equal(2, s.lodShadowBias)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Partial-coverage gap tests for the 9 init methods
+// ---------------------------------------------------------------------------
+
+func (suite *sceneImplTest) TestInitSSAOHalfResolutionTrue() {
+	suite.Run("creates SSAO textures at half resolution when HalfResolution is true", func() {
+		lhMock := light_mocks.NewMockLightingHandler(suite.T())
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
+		gbufMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
+		suite.scene.ssaoHandler = ssaoMock
+		suite.scene.gBufferHandler = gbufMock
+		suite.scene.lightHandler = lhMock
+		suite.scene.screenWidth = 800
+		suite.scene.screenHeight = 600
+		suite.scene.injections = map[string]string{"max_ssao_samples": "32u"}
+
+		gbufMock.EXPECT().Enabled().Return(true).Once()
+		ssaoMock.EXPECT().HalfResolution().Return(true).Once()
+		// Half of 800 = 400, half of 600 = 300
+		suite.rendererMock.EXPECT().CreateSSAOTextures(400, 300).
+			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
+				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil),
+				(*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Times(2)
+		ssaoMock.EXPECT().SetRawTexture(mock.Anything).Times(2)
+		ssaoMock.EXPECT().SetRawTextureView(mock.Anything).Times(2)
+		ssaoMock.EXPECT().SetBlurredTexture(mock.Anything).Times(2)
+		ssaoMock.EXPECT().SetBlurredTextureView(mock.Anything).Times(2)
+		ssaoMock.EXPECT().SetScratchTexture(mock.Anything).Times(2)
+		ssaoMock.EXPECT().SetScratchTextureView(mock.Anything).Times(2)
+		ssaoMock.EXPECT().SetSlot(mock.Anything).Maybe()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil)).Once()
+		ssaoMock.EXPECT().SetLinearSampler(mock.Anything).Once()
+		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Twice()
+		ssaoMock.EXPECT().SetPipelineKey(mock.Anything, mock.Anything).Times(2)
+		ssaoBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		blurHBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		blurVBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		ssaoMock.EXPECT().Bgp("ssao_compute").Return(ssaoBGPMock).Once()
+		ssaoMock.EXPECT().Bgp("ssao_blur_h").Return(blurHBGPMock).Once()
+		ssaoMock.EXPECT().Bgp("ssao_blur_v").Return(blurVBGPMock).Once()
+		ssaoBGPMock.EXPECT().SetTextureView(mock.Anything, mock.Anything).Maybe()
+		blurHBGPMock.EXPECT().SetTextureView(mock.Anything, mock.Anything).Maybe()
+		blurVBGPMock.EXPECT().SetTextureView(mock.Anything, mock.Anything).Maybe()
+		gbufMock.EXPECT().DepthTextureView().Return((*wgpu.TextureView)(nil)).Maybe()
+		gbufMock.EXPECT().NormalTextureView().Return((*wgpu.TextureView)(nil)).Once()
+		suite.rendererMock.EXPECT().InitBindGroup(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(3)
+		ssaoMock.EXPECT().SampleCount().Return(8).Once()
+		ssaoMock.EXPECT().MaxSamples().Return(32).Maybe()
+		suite.rendererMock.EXPECT().WriteBuffers(mock.Anything).Once()
+		ssaoMock.EXPECT().Resize(800, 600).Once()
+		ssaoMock.EXPECT().SetEnabled(true).Once()
+
+		suite.NotPanics(func() { suite.scene.initSSAO() })
+	})
+}
+
+func (suite *sceneImplTest) TestInitContactShadowsSlot1InitBindGroupError() {
+	suite.Run("panics when slot 1 InitBindGroup fails after slot 0 succeeds", func() {
+		lhMock := light_mocks.NewMockLightingHandler(suite.T())
+		csMock := light_mocks.NewMockContactShadowHandler(suite.T())
+		gbufMock := gbuffer_mocks.NewMockGBufferHandler(suite.T())
+		lhMock.EXPECT().ContactShadowHandler().Return(csMock).Once()
+		suite.scene.gBufferHandler = gbufMock
+		suite.scene.lightHandler = lhMock
+		suite.scene.screenWidth = 800
+		suite.scene.screenHeight = 600
+
+		gbufMock.EXPECT().Enabled().Return(true).Once()
+		suite.rendererMock.EXPECT().CreateContactShadowTextures(800, 600).
+			Return((*wgpu.TextureView)(nil), (*wgpu.Texture)(nil)).Times(2)
+		csMock.EXPECT().SetTexture(mock.Anything).Times(2)
+		csMock.EXPECT().SetTextureView(mock.Anything).Times(2)
+		csMock.EXPECT().SetSlot(mock.Anything).Maybe()
+		suite.rendererMock.EXPECT().CreateLinearSampler().Return((*wgpu.Sampler)(nil)).Once()
+		csMock.EXPECT().SetLinearSampler(mock.Anything).Once()
+		suite.rendererMock.EXPECT().RegisterPipelines(mock.Anything).Return(nil).Once()
+		csMock.EXPECT().SetPipelineKey("contact_shadow_compute", "contact_shadow_compute").Once()
+		csBGPMock := bgp_mocks.NewMockBindGroupProvider(suite.T())
+		csMock.EXPECT().Bgp("contact_shadow_compute").Return(csBGPMock).Once()
+		gbufMock.EXPECT().SetSlot(mock.Anything).Maybe()
+		csBGPMock.EXPECT().SetSlot(mock.Anything).Maybe()
+		gbufMock.EXPECT().DepthTextureView().Return((*wgpu.TextureView)(nil)).Times(2)
+		gbufMock.EXPECT().NormalTextureView().Return((*wgpu.TextureView)(nil)).Times(2)
+		gbufMock.EXPECT().AlbedoTextureView().Return((*wgpu.TextureView)(nil)).Times(2)
+		csBGPMock.EXPECT().SetTextureView(mock.Anything, mock.Anything).Maybe()
+		// Slot 0 succeeds
+		suite.rendererMock.EXPECT().InitBindGroup(csBGPMock, mock.Anything, mock.Anything, mock.Anything).
+			Return(nil).Once()
+		// Slot 1 fails
+		suite.rendererMock.EXPECT().InitBindGroup(csBGPMock, mock.Anything, mock.Anything, mock.Anything).
+			Return(errors.New("slot1 bgp err")).Once()
+
+		suite.Panics(func() { suite.scene.initContactShadows() })
+	})
+}
+
+func (suite *sceneImplTest) TestInitGBufferNilHandler() {
+	suite.Run("returns early when gBufferHandler is nil", func() {
+		suite.scene.gBufferHandler = nil
+		suite.scene.screenWidth = 800
+		suite.scene.screenHeight = 600
+		suite.NotPanics(func() { suite.scene.initGBuffer() })
+	})
+}
+
+func (suite *sceneImplTest) TestInitSSAONilGBuffer() {
+	suite.Run("returns early when gBufferHandler is nil even with valid ssaoHandler", func() {
+		ssaoMock := ssao_mocks.NewMockHandler(suite.T())
+		suite.scene.ssaoHandler = ssaoMock
+		suite.scene.gBufferHandler = nil
+		suite.scene.screenWidth = 800
+		suite.scene.screenHeight = 600
+		// No Enabled() call expected because nil gBufferHandler short-circuits
+		suite.NotPanics(func() { suite.scene.initSSAO() })
 	})
 }

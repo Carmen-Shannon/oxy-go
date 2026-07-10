@@ -134,6 +134,39 @@ func (suite *wgpuRendererBackendTest) TestComputeGuards() {
 			backend.DispatchComputeBatch([]ComputeDispatchEntry{})
 		})
 	})
+
+	suite.Run("end compute frame with gpu serialized profiling and nil encoder resets depth to zero", func() {
+		backend := newTestWGPURendererBackend()
+		backend.gpuSerializedProfiling = true
+		backend.computeFrameDepth = 4
+
+		backend.EndComputeFrame()
+
+		suite.Equal(0, backend.computeFrameDepth)
+	})
+
+	suite.Run("end compute frame with gpu serialized profiling and nested depth decrements and retains encoder", func() {
+		backend := newTestWGPURendererBackend()
+		backend.gpuSerializedProfiling = true
+		encoder := new(wgpu.CommandEncoder)
+		backend.computeFrameEncoder = encoder
+		backend.computeFrameDepth = 2
+
+		backend.EndComputeFrame()
+
+		suite.Equal(1, backend.computeFrameDepth)
+		suite.Equal(encoder, backend.computeFrameEncoder)
+	})
+
+	suite.Run("begin compute frame triple nested call increments depth to three", func() {
+		backend := newTestWGPURendererBackend()
+		backend.computeFrameDepth = 1
+
+		backend.BeginComputeFrame()
+		backend.BeginComputeFrame()
+
+		suite.Equal(3, backend.computeFrameDepth)
+	})
 }
 
 func (suite *wgpuRendererBackendTest) TestFrameAndPresentGuards() {
@@ -200,6 +233,26 @@ func (suite *wgpuRendererBackendTest) TestGeometryFrameGuards() {
 
 		suite.Equal(0, backend.geometryFrameDepth)
 		suite.Nil(backend.geometryFrameEncoder)
+	})
+
+	suite.Run("end geometry frame with gpu serialized profiling returns immediately when depth is non positive", func() {
+		backend := newTestWGPURendererBackend()
+		backend.gpuSerializedProfiling = true
+		backend.geometryFrameDepth = 0
+
+		backend.EndGeometryFrame()
+
+		suite.Equal(0, backend.geometryFrameDepth)
+	})
+
+	suite.Run("end geometry frame with gpu serialized profiling decrements and returns when depth remains positive", func() {
+		backend := newTestWGPURendererBackend()
+		backend.gpuSerializedProfiling = true
+		backend.geometryFrameDepth = 2
+
+		backend.EndGeometryFrame()
+
+		suite.Equal(1, backend.geometryFrameDepth)
 	})
 }
 
@@ -626,6 +679,43 @@ func (suite *wgpuRendererBackendTest) TestFlushAndTimingHelpers() {
 		backend.currentFrameSlot = 1
 
 		suite.Equal(1, backend.CurrentFrameSlot())
+	})
+
+	suite.Run("flush frame with no pending wraps slot from last index back to zero", func() {
+		backend := newTestWGPURendererBackend()
+		backend.frameInFlightCount = 2
+		backend.currentFrameSlot = 1
+
+		index := backend.FlushFrame()
+
+		suite.Equal(wgpu.SubmissionIndex(0), index)
+		suite.Equal(0, backend.currentFrameSlot)
+	})
+
+	suite.Run("flush frame with no pending advances slot from zero to one", func() {
+		backend := newTestWGPURendererBackend()
+		backend.frameInFlightCount = 2
+		backend.currentFrameSlot = 0
+
+		index := backend.FlushFrame()
+
+		suite.Equal(wgpu.SubmissionIndex(0), index)
+		suite.Equal(1, backend.currentFrameSlot)
+	})
+
+	suite.Run("flush frame with no pending leaves slot submit state untouched", func() {
+		backend := newTestWGPURendererBackend()
+		backend.frameInFlightCount = 2
+		backend.currentFrameSlot = 0
+		backend.slotSubmitValid = [2]bool{true, false}
+		backend.slotSubmitIndex = [2]wgpu.SubmissionIndex{42, 0}
+
+		backend.FlushFrame()
+
+		suite.True(backend.slotSubmitValid[0])
+		suite.Equal(wgpu.SubmissionIndex(42), backend.slotSubmitIndex[0])
+		suite.False(backend.slotSubmitValid[1])
+		suite.Equal(1, backend.currentFrameSlot)
 	})
 }
 
