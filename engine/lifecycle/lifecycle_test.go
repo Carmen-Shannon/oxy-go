@@ -4,8 +4,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/Carmen-Shannon/oxy-go/engine/lifecycle"
 )
 
 func TestRunLifecycleTests(t *testing.T) {

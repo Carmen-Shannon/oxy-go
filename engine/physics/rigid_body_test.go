@@ -3,8 +3,9 @@ package physics_test
 import (
 	"testing"
 
-	"github.com/Carmen-Shannon/oxy-go/engine/physics"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/Carmen-Shannon/oxy-go/engine/physics"
 )
 
 type rigidBodyTest struct {

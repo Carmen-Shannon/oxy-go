@@ -3,12 +3,13 @@ package game_object_test
 import (
 	"testing"
 
+	"github.com/stretchr/testify/suite"
+
 	"github.com/Carmen-Shannon/oxy-go/engine/game_object"
 	light_mocks "github.com/Carmen-Shannon/oxy-go/engine/light/mocks"
 	model_mocks "github.com/Carmen-Shannon/oxy-go/engine/model/mocks"
 	physics_mocks "github.com/Carmen-Shannon/oxy-go/engine/physics/mocks"
 	animator_mocks "github.com/Carmen-Shannon/oxy-go/engine/renderer/animator/mocks"
-	"github.com/stretchr/testify/suite"
 )
 
 func TestRunGameObjectTests(t *testing.T) {

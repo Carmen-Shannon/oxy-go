@@ -7,11 +7,12 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/oliverbestmann/webgpu/wgpu"
+
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
-	"github.com/cogentcore/webgpu/wgpu"
 )
 
 type wgpuRendererBackendImpl struct {
@@ -123,10 +124,7 @@ type wgpuRendererBackend interface {
 	// BeginComputeFrame creates a single command encoder for batching all compute dispatches
 	// within a frame into one GPU submission. Must be paired with EndComputeFrame after all
 	// DispatchComputeBatch calls for the frame.
-	//
-	// Returns:
-	//   - error: an error if the command encoder could not be created
-	BeginComputeFrame() error
+	BeginComputeFrame()
 
 	// EndComputeFrame finishes the batched compute command encoder and submits the resulting
 	// command buffer to the GPU queue. Must be called after BeginComputeFrame and all
@@ -214,8 +212,7 @@ type wgpuRendererBackend interface {
 	//
 	// Returns:
 	//   - *wgpu.Buffer: the created GPU buffer
-	//   - error: an error if buffer creation fails
-	CreateBuffer(label string, size uint64, usage wgpu.BufferUsage) (*wgpu.Buffer, error)
+	CreateBuffer(label string, size uint64, usage wgpu.BufferUsage) *wgpu.Buffer
 
 	// WriteRawBuffer writes data directly to a GPU buffer at the given byte offset
 	// using the device queue. This bypasses the BindGroupProvider lookup and is
@@ -312,10 +309,7 @@ type wgpuRendererBackend interface {
 	// render passes into a single GPU submission, reducing per-frame driver overhead.
 	// Uses reference counting so nested Begin/End pairs are safe. Must be paired with
 	// EndGeometryFrame after all shadow and G-Buffer passes.
-	//
-	// Returns:
-	//   - error: an error if the command encoder could not be created
-	BeginGeometryFrame() error
+	BeginGeometryFrame()
 
 	// EndGeometryFrame decrements the geometry frame reference count and, when it
 	// reaches zero, finishes the shared command encoder and submits the resulting
@@ -326,10 +320,7 @@ type wgpuRendererBackend interface {
 	// within a frame. Must be paired with EndShadowFrame after all shadow passes.
 	// When a geometry frame is active, the shadow encoder aliases the shared geometry
 	// encoder and EndShadowFrame becomes a no-op.
-	//
-	// Returns:
-	//   - error: an error if the command encoder could not be created
-	BeginShadowFrame() error
+	BeginShadowFrame()
 
 	// ShadowDrawCall encodes a single instanced draw command within the current shadow pass.
 	//
@@ -365,24 +356,21 @@ type wgpuRendererBackend interface {
 	// Returns:
 	//   - depthView: texture view for the shadow depth atlas
 	//   - depthTex: the underlying depth atlas texture
-	//   - err: an error if creation fails
-	CreateShadowDepthTexture(width, height int) (depthView *wgpu.TextureView, depthTex *wgpu.Texture, err error)
+	CreateShadowDepthTexture(width, height int) (depthView *wgpu.TextureView, depthTex *wgpu.Texture)
 
 	// CreateComparisonSampler creates a sampler_comparison for PCF shadow lookups.
 	// Uses LessEqual compare function with ClampToEdge addressing.
 	//
 	// Returns:
 	//   - *wgpu.Sampler: the comparison sampler
-	//   - error: an error if creation fails
-	CreateComparisonSampler() (*wgpu.Sampler, error)
+	CreateComparisonSampler() *wgpu.Sampler
 
 	// CreateLinearSampler creates a standard linear filtering sampler for
 	// post-processing passes (SSAO, SSR, composition).
 	//
 	// Returns:
 	//   - *wgpu.Sampler: the linear sampler
-	//   - error: an error if creation fails
-	CreateLinearSampler() (*wgpu.Sampler, error)
+	CreateLinearSampler() *wgpu.Sampler
 
 	// RegisterShadowDepthPipeline creates a depth-only render pipeline for shadow map
 	// generation. There is no fragment shader and no color target.
@@ -413,10 +401,7 @@ type wgpuRendererBackend interface {
 	// EndGBufferFrame after all G-Buffer passes. When a geometry frame is active,
 	// the G-Buffer encoder aliases the shared geometry encoder and EndGBufferFrame
 	// becomes a no-op.
-	//
-	// Returns:
-	//   - error: an error if the command encoder could not be created
-	BeginGBufferFrame() error
+	BeginGBufferFrame()
 
 	// BeginGBufferPass starts an MRT render pass targeting the G-Buffer textures:
 	// normal (RGBA16Float), albedo (RGBA8Unorm), and depth (Depth24Plus).
@@ -475,8 +460,7 @@ type wgpuRendererBackend interface {
 	//   - albedoTex: the underlying albedo texture
 	//   - depthView: texture view for the depth texture
 	//   - depthTex: the underlying depth texture
-	//   - err: an error if texture creation fails
-	CreateGBufferTextures(width, height int) (normView *wgpu.TextureView, normTex *wgpu.Texture, albedoView *wgpu.TextureView, albedoTex *wgpu.Texture, depthView *wgpu.TextureView, depthTex *wgpu.Texture, err error)
+	CreateGBufferTextures(width, height int) (normView *wgpu.TextureView, normTex *wgpu.Texture, albedoView *wgpu.TextureView, albedoTex *wgpu.Texture, depthView *wgpu.TextureView, depthTex *wgpu.Texture)
 
 	// RegisterGBufferPipeline creates a render pipeline for the G-Buffer geometry
 	// pre-pass. The pipeline writes to three MRT color targets (RGBA16Float,
@@ -506,8 +490,7 @@ type wgpuRendererBackend interface {
 	//   - blurredTex: the underlying blurred SSAO texture
 	//   - scratchView: texture view for the scratch blur texture
 	//   - scratchTex: the underlying scratch blur texture
-	//   - err: an error if texture creation fails
-	CreateSSAOTextures(width, height int) (rawView *wgpu.TextureView, rawTex *wgpu.Texture, blurredView *wgpu.TextureView, blurredTex *wgpu.Texture, scratchView *wgpu.TextureView, scratchTex *wgpu.Texture, err error)
+	CreateSSAOTextures(width, height int) (rawView *wgpu.TextureView, rawTex *wgpu.Texture, blurredView *wgpu.TextureView, blurredTex *wgpu.Texture, scratchView *wgpu.TextureView, scratchTex *wgpu.Texture)
 
 	// BeginHDRFrame creates a command encoder and begins a render pass targeting an
 	// offscreen RGBA16Float HDR texture instead of the swapchain. When MSAA is active,
@@ -522,10 +505,7 @@ type wgpuRendererBackend interface {
 	//   - resolveView: the HDR resolve target (nil when MSAA is off)
 	//   - depthView: the depth-stencil attachment texture view
 	//   - sampleCount: the MSAA sample count (1 when disabled)
-	//
-	// Returns:
-	//   - error: an error if the command encoder could not be created
-	BeginHDRFrame(colorView, resolveView, depthView *wgpu.TextureView, sampleCount uint32) error
+	BeginHDRFrame(colorView, resolveView, depthView *wgpu.TextureView, sampleCount uint32)
 
 	// CreateCompositionTextures creates the GPU textures required for the HDR
 	// composition pipeline: an RGBA16Float HDR texture (resolve target / direct
@@ -544,8 +524,7 @@ type wgpuRendererBackend interface {
 	//   - msaaTex: the underlying MSAA texture (nil when sampleCount <= 1)
 	//   - depthView: texture view for the depth texture
 	//   - depthTex: the underlying depth texture
-	//   - err: an error if texture creation fails
-	CreateCompositionTextures(width, height int, sampleCount uint32) (hdrView *wgpu.TextureView, hdrTex *wgpu.Texture, msaaView *wgpu.TextureView, msaaTex *wgpu.Texture, depthView *wgpu.TextureView, depthTex *wgpu.Texture, err error)
+	CreateCompositionTextures(width, height int, sampleCount uint32) (hdrView *wgpu.TextureView, hdrTex *wgpu.Texture, msaaView *wgpu.TextureView, msaaTex *wgpu.Texture, depthView *wgpu.TextureView, depthTex *wgpu.Texture)
 
 	// CreateSSRTextures creates the GPU texture required for screen-space
 	// reflection output: an RGBA16Float texture with StorageBinding for
@@ -558,8 +537,7 @@ type wgpuRendererBackend interface {
 	// Returns:
 	//   - ssrView: texture view for the SSR output texture
 	//   - ssrTex: the underlying SSR output texture
-	//   - err: an error if texture creation fails
-	CreateSSRTextures(width, height int) (ssrView *wgpu.TextureView, ssrTex *wgpu.Texture, err error)
+	CreateSSRTextures(width, height int) (ssrView *wgpu.TextureView, ssrTex *wgpu.Texture)
 
 	// CreateContactShadowTextures creates the GPU texture required for contact
 	// shadow output.
@@ -571,8 +549,7 @@ type wgpuRendererBackend interface {
 	// Returns:
 	//   - csView: texture view for the contact shadow output texture
 	//   - csTex: the underlying contact shadow output texture
-	//   - err: an error if texture creation fails
-	CreateContactShadowTextures(width, height int) (csView *wgpu.TextureView, csTex *wgpu.Texture, err error)
+	CreateContactShadowTextures(width, height int) (csView *wgpu.TextureView, csTex *wgpu.Texture)
 
 	// CreateTAATextures creates two full-resolution RGBA16Float textures for TAA
 	// ping-pong history/resolve. Each texture has TextureBinding and StorageBinding
@@ -588,8 +565,7 @@ type wgpuRendererBackend interface {
 	//   - tex0:  texture 0
 	//   - view1: texture view for texture 1
 	//   - tex1:  texture 1
-	//   - err:   non-nil on allocation failure
-	CreateTAATextures(width, height int) (view0 *wgpu.TextureView, tex0 *wgpu.Texture, view1 *wgpu.TextureView, tex1 *wgpu.Texture, err error)
+	CreateTAATextures(width, height int) (view0 *wgpu.TextureView, tex0 *wgpu.Texture, view1 *wgpu.TextureView, tex1 *wgpu.Texture)
 
 	// CreateSharpenTexture creates a single full-resolution RGBA16Float texture for the
 	// CAS post-TAA sharpening pass. Usage: TextureBinding | StorageBinding.
@@ -601,8 +577,7 @@ type wgpuRendererBackend interface {
 	// Returns:
 	//   - view: texture view
 	//   - tex:  texture
-	//   - err:  non-nil on allocation failure
-	CreateSharpenTexture(width, height int) (view *wgpu.TextureView, tex *wgpu.Texture, err error)
+	CreateSharpenTexture(width, height int) (view *wgpu.TextureView, tex *wgpu.Texture)
 
 	// CreateHiZTextures creates the R32Float Hi-Z depth pyramid texture with a
 	// full mip chain, plus per-mip read and storage texture views. The full-chain
@@ -619,8 +594,7 @@ type wgpuRendererBackend interface {
 	//   - mipReadViews: per-mip texture views for downsample input (texture_2d)
 	//   - mipStorageViews: per-mip storage texture views for downsample output (texture_storage_2d)
 	//   - mipCount: the number of mip levels generated
-	//   - err: an error if texture creation fails
-	CreateHiZTextures(width, height int) (hizView *wgpu.TextureView, hizTex *wgpu.Texture, mipReadViews []*wgpu.TextureView, mipStorageViews []*wgpu.TextureView, mipCount int, err error)
+	CreateHiZTextures(width, height int) (hizView *wgpu.TextureView, hizTex *wgpu.Texture, mipReadViews []*wgpu.TextureView, mipStorageViews []*wgpu.TextureView, mipCount int)
 
 	// CreateBloomTextures creates two RGBA16Float mip chain textures for bloom
 	// processing — a downsample chain and an upsample chain — each with per-mip
@@ -781,8 +755,8 @@ func newWGPURendererBackend(surfaceDescriptor *wgpu.SurfaceDescriptor, forceFall
 	// large CSM shadow atlases are permitted on capable hardware.
 	limits := wgpu.DefaultLimits()
 	limits.MaxBindGroups = 8
-	if adapterLimits.Limits.MaxTextureDimension2D > limits.MaxTextureDimension2D {
-		limits.MaxTextureDimension2D = adapterLimits.Limits.MaxTextureDimension2D
+	if adapterLimits.MaxTextureDimension2D > limits.MaxTextureDimension2D {
+		limits.MaxTextureDimension2D = adapterLimits.MaxTextureDimension2D
 	}
 
 	requiredFeatures := []wgpu.FeatureName{
@@ -799,9 +773,7 @@ func newWGPURendererBackend(surfaceDescriptor *wgpu.SurfaceDescriptor, forceFall
 	d, err := a.RequestDevice(&wgpu.DeviceDescriptor{
 		Label:            "Main Device",
 		RequiredFeatures: requiredFeatures,
-		RequiredLimits: &wgpu.RequiredLimits{
-			Limits: limits,
-		},
+		RequiredLimits:   &limits,
 	})
 	if err != nil {
 		panic(err)
@@ -812,24 +784,18 @@ func newWGPURendererBackend(surfaceDescriptor *wgpu.SurfaceDescriptor, forceFall
 
 	if timestampSupported {
 		const slotCount = 12
-		qs, qsErr := w.device.CreateQuerySet(&wgpu.QuerySetDescriptor{
+		w.timestampQuerySet = w.device.CreateQuerySet(&wgpu.QuerySetDescriptor{
 			Label: "Timestamp Query Set",
 			Type:  wgpu.QueryTypeTimestamp,
 			Count: slotCount,
 		})
-		if qsErr == nil {
-			resolveBuffer, rbErr := w.device.CreateBuffer(&wgpu.BufferDescriptor{
-				Label: "Timestamp Resolve Buffer",
-				Size:  slotCount * 8,
-				Usage: wgpu.BufferUsageQueryResolve | wgpu.BufferUsageCopySrc,
-			})
-			if rbErr == nil {
-				w.timestampQuerySet = qs
-				w.timestampResolveBuffer = resolveBuffer
-				w.timestampSlotCount = slotCount
-				w.timestampEnabled = true
-			}
-		}
+		w.timestampResolveBuffer = w.device.CreateBuffer(&wgpu.BufferDescriptor{
+			Label: "Timestamp Resolve Buffer",
+			Size:  slotCount * 8,
+			Usage: wgpu.BufferUsageQueryResolve | wgpu.BufferUsageCopySrc,
+		})
+		w.timestampSlotCount = slotCount
+		w.timestampEnabled = true
 	}
 
 	return w
@@ -845,7 +811,7 @@ func (b *wgpuRendererBackendImpl) ConfigureSurface(width, height int) {
 		b.renderTargetFormat = b.surfaceFormat
 	}
 
-	b.surface.Configure(b.adapter, b.device, &wgpu.SurfaceConfiguration{
+	b.surface.Configure(b.device, &wgpu.SurfaceConfiguration{
 		Usage:                      wgpu.TextureUsageRenderAttachment,
 		Format:                     *b.surfaceFormat,
 		Width:                      uint32(width),
@@ -861,7 +827,7 @@ func (b *wgpuRendererBackendImpl) ConfigureSurface(width, height int) {
 	if msaaEnabled {
 		// Create the MSAA texture that the render pass draws into; the resolved
 		// result is written to the swapchain view as the ResolveTarget.
-		msaaTexture, err := b.device.CreateTexture(&wgpu.TextureDescriptor{
+		msaaTexture := b.device.CreateTexture(&wgpu.TextureDescriptor{
 			Label: "MSAA Texture",
 			Size: wgpu.Extent3D{
 				Width:              uint32(width),
@@ -874,16 +840,10 @@ func (b *wgpuRendererBackendImpl) ConfigureSurface(width, height int) {
 			Format:        *b.surfaceFormat,
 			Usage:         wgpu.TextureUsageRenderAttachment,
 		})
-		if err != nil {
-			panic(err)
-		}
 		if b.msaaTextureView != nil {
 			b.msaaTextureView.Release()
 		}
-		b.msaaTextureView, err = msaaTexture.CreateView(nil)
-		if err != nil {
-			panic(err)
-		}
+		b.msaaTextureView = msaaTexture.CreateView(nil)
 	} else {
 		// No MSAA — the render pass draws directly to the swapchain view.
 		if b.msaaTextureView != nil {
@@ -893,7 +853,7 @@ func (b *wgpuRendererBackendImpl) ConfigureSurface(width, height int) {
 	}
 
 	// Depth texture sample count must match the color attachment.
-	depthTexture, err := b.device.CreateTexture(&wgpu.TextureDescriptor{
+	depthTexture := b.device.CreateTexture(&wgpu.TextureDescriptor{
 		Label: "Depth Texture",
 		Size: wgpu.Extent3D{
 			Width:              uint32(width),
@@ -906,16 +866,10 @@ func (b *wgpuRendererBackendImpl) ConfigureSurface(width, height int) {
 		Format:        wgpu.TextureFormatDepth24Plus,
 		Usage:         wgpu.TextureUsageRenderAttachment,
 	})
-	if err != nil {
-		panic(err)
-	}
 	if b.depthTextureView != nil {
 		b.depthTextureView.Release()
 	}
-	b.depthTextureView, err = depthTexture.CreateView(nil)
-	if err != nil {
-		panic(err)
-	}
+	b.depthTextureView = depthTexture.CreateView(nil)
 
 	// Build the cached render pass descriptor for the main render target.
 	// When MSAA is enabled, View is the MSAA texture and ResolveTarget is
@@ -962,7 +916,7 @@ func (b *wgpuRendererBackendImpl) SetPresentMode(mode PresentMode) {
 	}
 }
 
-func (b *wgpuRendererBackendImpl) CreateBuffer(label string, size uint64, usage wgpu.BufferUsage) (*wgpu.Buffer, error) {
+func (b *wgpuRendererBackendImpl) CreateBuffer(label string, size uint64, usage wgpu.BufferUsage) *wgpu.Buffer {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -980,67 +934,43 @@ func (b *wgpuRendererBackendImpl) CopyBufferToBuffer(src, dst *wgpu.Buffer, srcO
 	if b.computeFrameEncoder == nil {
 		return
 	}
-	_ = b.computeFrameEncoder.CopyBufferToBuffer(src, srcOffset, dst, dstOffset, size)
+	b.computeFrameEncoder.CopyBufferToBuffer(src, srcOffset, dst, dstOffset, size)
 }
 
 func (b *wgpuRendererBackendImpl) ReadMappedBuffer(buf *wgpu.Buffer, offset, size uint64) ([]byte, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	done := make(chan wgpu.BufferMapAsyncStatus, 1)
-	if err := buf.MapAsync(wgpu.MapModeRead, offset, size, func(status wgpu.BufferMapAsyncStatus) {
+	done := make(chan wgpu.MapAsyncStatus, 1)
+	if err := buf.TryMapAsync(wgpu.MapModeRead, offset, size, func(status wgpu.MapAsyncStatus) {
 		done <- status
 	}); err != nil {
 		return nil, err
 	}
 	b.device.Poll(true, nil)
 	status := <-done
-	if status != wgpu.BufferMapAsyncStatusSuccess {
+	if status != wgpu.MapAsyncStatusSuccess {
 		return nil, fmt.Errorf("buffer map failed with status %d", status)
 	}
 
 	mapped := buf.GetMappedRange(uint(offset), uint(size))
 	result := make([]byte, len(mapped))
 	copy(result, mapped)
-	_ = buf.Unmap()
+	buf.Unmap()
 	return result, nil
 }
 
-func (b *wgpuRendererBackendImpl) BeginComputeFrame() error {
+func (b *wgpuRendererBackendImpl) BeginComputeFrame() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// Support nested Begin/End pairs: only create a new encoder on the
-	// outermost call so that multiple Prepare* methods can be batched
-	// into a single GPU submission when wrapped by an outer Begin/End.
 	b.computeFrameDepth++
 	if b.computeFrameDepth > 1 {
-		return nil
+		return
 	}
 
-	// Track which compute frame invocation this is within the current render frame.
 	b.computeFrameCount++
-
-	encoder, err := b.device.CreateCommandEncoder(nil)
-	if err != nil {
-		b.computeFrameDepth--
-		b.computeFrameCount--
-		return err
-	}
-	b.computeFrameEncoder = encoder
-
-	if b.timestampEnabled {
-		switch b.computeFrameCount {
-		case 1:
-			_ = b.computeFrameEncoder.WriteTimestamp(b.timestampQuerySet, 0)
-		case 2:
-			_ = b.computeFrameEncoder.WriteTimestamp(b.timestampQuerySet, 4)
-		case 3:
-			_ = b.computeFrameEncoder.WriteTimestamp(b.timestampQuerySet, 8)
-		}
-	}
-
-	return nil
+	b.computeFrameEncoder = b.device.CreateCommandEncoder(nil)
 }
 
 func (b *wgpuRendererBackendImpl) EndComputeFrame() {
@@ -1052,37 +982,21 @@ func (b *wgpuRendererBackendImpl) EndComputeFrame() {
 		return
 	}
 
-	// Only submit on the outermost End call that balances the outermost Begin.
 	b.computeFrameDepth--
 	if b.computeFrameDepth > 0 {
 		return
 	}
 	b.computeFrameDepth = 0
 
-	if b.timestampEnabled {
-		switch b.computeFrameCount {
-		case 1:
-			_ = b.computeFrameEncoder.WriteTimestamp(b.timestampQuerySet, 1)
-		case 2:
-			_ = b.computeFrameEncoder.WriteTimestamp(b.timestampQuerySet, 5)
-		case 3:
-			_ = b.computeFrameEncoder.WriteTimestamp(b.timestampQuerySet, 9)
-		}
-	}
-
-	commandBuffer, err := b.computeFrameEncoder.Finish(nil)
-	if err != nil {
-		b.computeFrameEncoder.Release()
-		b.computeFrameEncoder = nil
-		return
-	}
+	commandBuffer := b.computeFrameEncoder.Finish(nil)
 
 	if b.gpuSerializedProfiling {
 		idx := b.queue.Submit(commandBuffer)
 		commandBuffer.Release()
 		b.computeFrameEncoder.Release()
 		b.computeFrameEncoder = nil
-		b.device.Poll(true, &wgpu.WrappedSubmissionIndex{Queue: b.queue, SubmissionIndex: idx})
+		idxU64 := uint64(idx)
+		b.device.Poll(true, &idxU64)
 		return
 	}
 
@@ -1129,24 +1043,18 @@ func (b *wgpuRendererBackendImpl) RegisterRenderPipeline(p pipeline.Pipeline) er
 	vertexShader := p.Shader(shader.ShaderTypeVertex)
 	fragmentShader := p.Shader(shader.ShaderTypeFragment)
 
-	vs, err := b.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
+	vs := b.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
 		Label: vertexShader.Key(),
-		WGSLDescriptor: &wgpu.ShaderModuleWGSLDescriptor{
+		WGSLSource: &wgpu.ShaderSourceWGSL{
 			Code: vertexShader.Source(),
 		},
 	})
-	if err != nil {
-		return err
-	}
-	fs, err := b.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
+	fs := b.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
 		Label: fragmentShader.Key(),
-		WGSLDescriptor: &wgpu.ShaderModuleWGSLDescriptor{
+		WGSLSource: &wgpu.ShaderSourceWGSL{
 			Code: fragmentShader.Source(),
 		},
 	})
-	if err != nil {
-		return err
-	}
 
 	merged := mergeBindGroupLayouts(vertexShader.BindGroupLayoutDescriptors(), fragmentShader.BindGroupLayoutDescriptors())
 	maxGroup := -1
@@ -1157,27 +1065,21 @@ func (b *wgpuRendererBackendImpl) RegisterRenderPipeline(p pipeline.Pipeline) er
 	}
 	bindGroupLayouts := make([]*wgpu.BindGroupLayout, maxGroup+1)
 	for g, desc := range merged {
-		layout, layoutErr := b.device.CreateBindGroupLayout(&desc)
-		if layoutErr != nil {
-			return fmt.Errorf("failed to create bind group layout for group %d: %w", g, layoutErr)
-		}
+		layout := b.device.CreateBindGroupLayout(&desc)
 		bindGroupLayouts[g] = layout
 	}
 
-	pipelineLayout, err := b.device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
+	pipelineLayout := b.device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
 		Label:            p.PipelineKey(),
 		BindGroupLayouts: bindGroupLayouts,
 	})
-	if err != nil {
-		return err
-	}
 
 	vertexLayouts := make([]wgpu.VertexBufferLayout, 0, len(vertexShader.VertexLayouts()))
 	for i := range vertexShader.VertexLayouts() {
 		vertexLayouts = append(vertexLayouts, vertexShader.VertexLayout(i)...)
 	}
 
-	created, err := b.device.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
+	created := b.device.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
 		Label:  p.PipelineKey() + " Render Pipeline",
 		Layout: pipelineLayout,
 		Vertex: wgpu.VertexState{
@@ -1218,9 +1120,15 @@ func (b *wgpuRendererBackendImpl) RegisterRenderPipeline(p pipeline.Pipeline) er
 					depthCompare = wgpu.CompareFunctionAlways
 				}
 			}
+			var depthWriteEnabled wgpu.OptionalBool
+			if p.DepthWriteEnabled() {
+				depthWriteEnabled = wgpu.OptionalBoolTrue
+			} else {
+				depthWriteEnabled = wgpu.OptionalBoolFalse
+			}
 			return &wgpu.DepthStencilState{
 				Format:              wgpu.TextureFormatDepth24Plus,
-				DepthWriteEnabled:   p.DepthWriteEnabled(),
+				DepthWriteEnabled:   depthWriteEnabled,
 				DepthCompare:        depthCompare,
 				DepthBias:           p.DepthBias(),
 				DepthBiasSlopeScale: p.DepthBiasSlopeScale(),
@@ -1233,9 +1141,6 @@ func (b *wgpuRendererBackendImpl) RegisterRenderPipeline(p pipeline.Pipeline) er
 			}
 		}(),
 	})
-	if err != nil {
-		return err
-	}
 
 	p.SetRenderPipeline(created)
 
@@ -1248,15 +1153,12 @@ func (b *wgpuRendererBackendImpl) RegisterComputePipeline(p pipeline.Pipeline) e
 	}
 
 	computeShader := p.Shader(shader.ShaderTypeCompute)
-	s, err := b.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
+	s := b.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
 		Label: computeShader.Key(),
-		WGSLDescriptor: &wgpu.ShaderModuleWGSLDescriptor{
+		WGSLSource: &wgpu.ShaderSourceWGSL{
 			Code: computeShader.Source(),
 		},
 	})
-	if err != nil {
-		return err
-	}
 
 	descriptors := computeShader.BindGroupLayoutDescriptors()
 	maxGroup := -1
@@ -1267,22 +1169,16 @@ func (b *wgpuRendererBackendImpl) RegisterComputePipeline(p pipeline.Pipeline) e
 	}
 	bindGroupLayouts := make([]*wgpu.BindGroupLayout, maxGroup+1)
 	for g, desc := range descriptors {
-		bgl, bglErr := b.device.CreateBindGroupLayout(&desc)
-		if bglErr != nil {
-			return fmt.Errorf("failed to create bind group layout for group %d: %w", g, bglErr)
-		}
+		bgl := b.device.CreateBindGroupLayout(&desc)
 		bindGroupLayouts[g] = bgl
 	}
 
-	layout, err := b.device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
+	layout := b.device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
 		Label:            p.PipelineKey(),
 		BindGroupLayouts: bindGroupLayouts,
 	})
-	if err != nil {
-		return err
-	}
 
-	created, err := b.device.CreateComputePipeline(&wgpu.ComputePipelineDescriptor{
+	created := b.device.CreateComputePipeline(&wgpu.ComputePipelineDescriptor{
 		Label:  p.PipelineKey() + " Compute Pipeline",
 		Layout: layout,
 		Compute: wgpu.ProgrammableStageDescriptor{
@@ -1290,9 +1186,6 @@ func (b *wgpuRendererBackendImpl) RegisterComputePipeline(p pipeline.Pipeline) e
 			EntryPoint: computeShader.EntryPoint(),
 		},
 	})
-	if err != nil {
-		return err
-	}
 
 	p.SetComputePipeline(created)
 
@@ -1304,29 +1197,23 @@ func (b *wgpuRendererBackendImpl) InitMeshBuffers(provider bind_group_provider.B
 	defer b.mu.Unlock()
 
 	if len(vertexData) > 0 {
-		buf, err := b.device.CreateBuffer(&wgpu.BufferDescriptor{
+		buf := b.device.CreateBuffer(&wgpu.BufferDescriptor{
 			Label:            provider.Label() + " Vertex Buffer",
 			Size:             uint64(len(vertexData)),
 			Usage:            wgpu.BufferUsageVertex | wgpu.BufferUsageCopyDst,
 			MappedAtCreation: false,
 		})
-		if err != nil {
-			return err
-		}
 		b.queue.WriteBuffer(buf, 0, vertexData)
 		provider.SetVertexBuffer(buf)
 	}
 
 	if len(indexData) > 0 {
-		buf, err := b.device.CreateBuffer(&wgpu.BufferDescriptor{
+		buf := b.device.CreateBuffer(&wgpu.BufferDescriptor{
 			Label:            provider.Label() + " Index Buffer",
 			Size:             uint64(len(indexData)),
 			Usage:            wgpu.BufferUsageIndex | wgpu.BufferUsageCopyDst,
 			MappedAtCreation: false,
 		})
-		if err != nil {
-			return err
-		}
 		b.queue.WriteBuffer(buf, 0, indexData)
 		provider.SetIndexBuffer(buf)
 	}
@@ -1346,11 +1233,7 @@ func (b *wgpuRendererBackendImpl) InitBindGroup(provider bind_group_provider.Bin
 
 	layout := provider.BindGroupLayout()
 	if layout == nil {
-		var err error
-		layout, err = b.device.CreateBindGroupLayout(&descriptor)
-		if err != nil {
-			return err
-		}
+		layout = b.device.CreateBindGroupLayout(&descriptor)
 		provider.SetBindGroupLayout(layout)
 	}
 
@@ -1358,9 +1241,9 @@ func (b *wgpuRendererBackendImpl) InitBindGroup(provider bind_group_provider.Bin
 	for i, entry := range descriptor.Entries {
 		binding := int(entry.Binding)
 
-		isTexture := entry.Texture.SampleType != wgpu.TextureSampleTypeUndefined
+		isTexture := entry.Texture.SampleType != wgpu.TextureSampleTypeBindingNotUsed
 		isStorageTexture := entry.StorageTexture.Access != 0
-		isSampler := entry.Sampler.Type != wgpu.SamplerBindingTypeUndefined
+		isSampler := entry.Sampler.Type != wgpu.SamplerBindingTypeBindingNotUsed
 
 		if isTexture || isStorageTexture {
 			tv := provider.TextureView(binding)
@@ -1397,19 +1280,15 @@ func (b *wgpuRendererBackendImpl) InitBindGroup(provider bind_group_provider.Bin
 
 			buf := provider.Buffer(binding)
 			if buf == nil {
-				var bufErr error
 				bufSize := entry.Buffer.MinBindingSize
 				if overrideSize, ok := bufferSizeOverrides[binding]; ok {
 					bufSize = overrideSize
 				}
-				buf, bufErr = b.device.CreateBuffer(&wgpu.BufferDescriptor{
+				buf = b.device.CreateBuffer(&wgpu.BufferDescriptor{
 					Label: provider.Label() + " Buffer",
 					Size:  bufSize,
 					Usage: usage,
 				})
-				if bufErr != nil {
-					return bufErr
-				}
 				provider.SetBuffer(binding, buf)
 			}
 			bindGroupEntries[i] = wgpu.BindGroupEntry{
@@ -1421,14 +1300,11 @@ func (b *wgpuRendererBackendImpl) InitBindGroup(provider bind_group_provider.Bin
 		}
 	}
 
-	bindGroup, err := b.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
+	bindGroup := b.device.CreateBindGroup(&wgpu.BindGroupDescriptor{
 		Label:   provider.Label() + " Bind Group",
 		Layout:  layout,
 		Entries: bindGroupEntries,
 	})
-	if err != nil {
-		return err
-	}
 	provider.SetBindGroup(bindGroup)
 
 	return nil
@@ -1452,7 +1328,7 @@ func (b *wgpuRendererBackendImpl) InitTextureView(provider bind_group_provider.B
 		format = wgpu.TextureFormatRGBA8Unorm
 	}
 
-	tex, err := b.device.CreateTexture(&wgpu.TextureDescriptor{
+	tex := b.device.CreateTexture(&wgpu.TextureDescriptor{
 		Label:     provider.Label() + " Texture",
 		Usage:     wgpu.TextureUsageTextureBinding | wgpu.TextureUsageCopyDst,
 		Dimension: wgpu.TextureDimension2D,
@@ -1465,9 +1341,6 @@ func (b *wgpuRendererBackendImpl) InitTextureView(provider bind_group_provider.B
 		MipLevelCount: mipLevelCount,
 		SampleCount:   1,
 	})
-	if err != nil {
-		return err
-	}
 
 	levelPixels := stagingData.Pixels
 	levelWidth := stagingData.Width
@@ -1475,14 +1348,14 @@ func (b *wgpuRendererBackendImpl) InitTextureView(provider bind_group_provider.B
 
 	for level := uint32(0); level < mipLevelCount; level++ {
 		b.queue.WriteTexture(
-			&wgpu.ImageCopyTexture{
+			&wgpu.TexelCopyTextureInfo{
 				Texture:  tex,
 				MipLevel: level,
 				Origin:   wgpu.Origin3D{},
 				Aspect:   wgpu.TextureAspectAll,
 			},
 			levelPixels,
-			&wgpu.TextureDataLayout{
+			&wgpu.TexelCopyBufferLayout{
 				Offset:       0,
 				BytesPerRow:  levelWidth * 4,
 				RowsPerImage: levelHeight,
@@ -1549,10 +1422,7 @@ func (b *wgpuRendererBackendImpl) InitTextureView(provider bind_group_provider.B
 		levelHeight = nextHeight
 	}
 
-	view, err := tex.CreateView(nil)
-	if err != nil {
-		return err
-	}
+	view := tex.CreateView(nil)
 	provider.SetTextureView(bindingKey, view)
 
 	return nil
@@ -1562,7 +1432,7 @@ func (b *wgpuRendererBackendImpl) InitSampler(provider bind_group_provider.BindG
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	samp, err := b.device.CreateSampler(&wgpu.SamplerDescriptor{
+	samp := b.device.CreateSampler(&wgpu.SamplerDescriptor{
 		Label:         provider.Label() + " Sampler",
 		AddressModeU:  common.Coalesce(samplerStagingData.AddressModeU, wgpu.AddressModeRepeat),
 		AddressModeV:  common.Coalesce(samplerStagingData.AddressModeV, wgpu.AddressModeRepeat),
@@ -1575,9 +1445,6 @@ func (b *wgpuRendererBackendImpl) InitSampler(provider bind_group_provider.BindG
 		MaxAnisotropy: common.Coalesce(samplerStagingData.MaxAnisotropy, 1),
 		Compare:       samplerStagingData.Compare,
 	})
-	if err != nil {
-		return err
-	}
 	provider.SetSampler(bindingKey, samp)
 
 	return nil
@@ -1611,14 +1478,14 @@ func (b *wgpuRendererBackendImpl) WriteTexture(tex *wgpu.Texture, data []byte, w
 	defer b.mu.Unlock()
 
 	b.queue.WriteTexture(
-		&wgpu.ImageCopyTexture{
+		&wgpu.TexelCopyTextureInfo{
 			Texture:  tex,
 			MipLevel: 0,
 			Origin:   wgpu.Origin3D{},
 			Aspect:   wgpu.TextureAspectAll,
 		},
 		data,
-		&wgpu.TextureDataLayout{
+		&wgpu.TexelCopyBufferLayout{
 			Offset:       0,
 			BytesPerRow:  bytesPerRow,
 			RowsPerImage: height,
@@ -1642,23 +1509,9 @@ func (b *wgpuRendererBackendImpl) BeginFrame() error {
 		return fmt.Errorf("previous frame surface not yet presented")
 	}
 
-	surfaceTexture, err := b.surface.GetCurrentTexture()
-	if err != nil {
-		return err
-	}
-
-	view, err := surfaceTexture.CreateView(nil)
-	if err != nil {
-		surfaceTexture.Release()
-		return err
-	}
-
-	encoder, err := b.device.CreateCommandEncoder(nil)
-	if err != nil {
-		view.Release()
-		surfaceTexture.Release()
-		return err
-	}
+	surfaceTexture := b.surface.GetCurrentTexture()
+	view := surfaceTexture.Texture.CreateView(nil)
+	encoder := b.device.CreateCommandEncoder(nil)
 
 	// When MSAA is enabled, the MSAA texture is the color attachment View and
 	// the swapchain view is the ResolveTarget. When MSAA is off, the swapchain
@@ -1672,7 +1525,7 @@ func (b *wgpuRendererBackendImpl) BeginFrame() error {
 
 	b.frameEncoder = encoder
 	b.framePass = pass
-	b.frameSurface = surfaceTexture
+	b.frameSurface = surfaceTexture.Texture
 	b.frameView = view
 	b.isHDRFrame = false
 
@@ -1727,25 +1580,7 @@ func (b *wgpuRendererBackendImpl) EndFrame() {
 
 	b.framePass.End()
 
-	if b.timestampEnabled && b.isHDRFrame {
-		_ = b.frameEncoder.WriteTimestamp(b.timestampQuerySet, 7)
-	}
-
-	commandBuffer, err := b.frameEncoder.Finish(nil)
-	if err != nil {
-		b.frameEncoder.Release()
-		if b.frameView != nil {
-			b.frameView.Release()
-		}
-		if b.frameSurface != nil {
-			b.frameSurface.Release()
-		}
-		b.frameEncoder = nil
-		b.framePass = nil
-		b.frameSurface = nil
-		b.frameView = nil
-		return
-	}
+	commandBuffer := b.frameEncoder.Finish(nil)
 
 	if b.gpuSerializedProfiling {
 		idx := b.queue.Submit(commandBuffer)
@@ -1753,7 +1588,8 @@ func (b *wgpuRendererBackendImpl) EndFrame() {
 		b.frameEncoder.Release()
 		b.frameEncoder = nil
 		b.framePass = nil
-		b.device.Poll(true, &wgpu.WrappedSubmissionIndex{Queue: b.queue, SubmissionIndex: idx})
+		idxU64 := uint64(idx)
+		b.device.Poll(true, &idxU64)
 		return
 	}
 
@@ -1798,26 +1634,16 @@ func (b *wgpuRendererBackendImpl) Present() {
 	}
 }
 
-func (b *wgpuRendererBackendImpl) BeginGeometryFrame() error {
+func (b *wgpuRendererBackendImpl) BeginGeometryFrame() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	b.geometryFrameDepth++
 	if b.geometryFrameDepth > 1 {
-		return nil
+		return
 	}
 
-	encoder, err := b.device.CreateCommandEncoder(nil)
-	if err != nil {
-		b.geometryFrameDepth--
-		return err
-	}
-	b.geometryFrameEncoder = encoder
-	if b.timestampEnabled {
-		_ = b.geometryFrameEncoder.WriteTimestamp(b.timestampQuerySet, 2)
-	}
-
-	return nil
+	b.geometryFrameEncoder = b.device.CreateCommandEncoder(nil)
 }
 
 func (b *wgpuRendererBackendImpl) EndGeometryFrame() {
@@ -1837,23 +1663,15 @@ func (b *wgpuRendererBackendImpl) EndGeometryFrame() {
 		return
 	}
 
-	if b.timestampEnabled {
-		_ = b.geometryFrameEncoder.WriteTimestamp(b.timestampQuerySet, 3)
-	}
-
-	commandBuffer, err := b.geometryFrameEncoder.Finish(nil)
-	if err != nil {
-		b.geometryFrameEncoder.Release()
-		b.geometryFrameEncoder = nil
-		return
-	}
+	commandBuffer := b.geometryFrameEncoder.Finish(nil)
 
 	if b.gpuSerializedProfiling {
 		idx := b.queue.Submit(commandBuffer)
 		commandBuffer.Release()
 		b.geometryFrameEncoder.Release()
 		b.geometryFrameEncoder = nil
-		b.device.Poll(true, &wgpu.WrappedSubmissionIndex{Queue: b.queue, SubmissionIndex: idx})
+		idxU64 := uint64(idx)
+		b.device.Poll(true, &idxU64)
 		return
 	}
 
@@ -1862,22 +1680,17 @@ func (b *wgpuRendererBackendImpl) EndGeometryFrame() {
 	b.geometryFrameEncoder = nil
 }
 
-func (b *wgpuRendererBackendImpl) BeginShadowFrame() error {
+func (b *wgpuRendererBackendImpl) BeginShadowFrame() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	// When a geometry frame is active, alias the shared encoder instead of creating a new one.
 	if b.geometryFrameEncoder != nil {
 		b.shadowFrameEncoder = b.geometryFrameEncoder
-		return nil
+		return
 	}
 
-	encoder, err := b.device.CreateCommandEncoder(nil)
-	if err != nil {
-		return err
-	}
-	b.shadowFrameEncoder = encoder
-	return nil
+	b.shadowFrameEncoder = b.device.CreateCommandEncoder(nil)
 }
 
 func (b *wgpuRendererBackendImpl) ShadowDrawCall(
@@ -1944,13 +1757,7 @@ func (b *wgpuRendererBackendImpl) EndShadowFrame() {
 		return
 	}
 
-	commandBuffer, err := b.shadowFrameEncoder.Finish(nil)
-	if err != nil {
-		b.shadowFrameEncoder.Release()
-		b.shadowFrameEncoder = nil
-		return
-	}
-
+	commandBuffer := b.shadowFrameEncoder.Finish(nil)
 	b.queue.Submit(commandBuffer)
 	commandBuffer.Release()
 	b.shadowFrameEncoder.Release()
@@ -1958,7 +1765,7 @@ func (b *wgpuRendererBackendImpl) EndShadowFrame() {
 }
 
 func (b *wgpuRendererBackendImpl) CreateShadowDepthTexture(width, height int) (
-	depthView *wgpu.TextureView, depthTex *wgpu.Texture, err error,
+	depthView *wgpu.TextureView, depthTex *wgpu.Texture,
 ) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -1966,7 +1773,7 @@ func (b *wgpuRendererBackendImpl) CreateShadowDepthTexture(width, height int) (
 	w := uint32(width)
 	h := uint32(height)
 
-	depthTex, err = b.device.CreateTexture(&wgpu.TextureDescriptor{
+	depthTex = b.device.CreateTexture(&wgpu.TextureDescriptor{
 		Label: "Shadow Depth Atlas",
 		Size: wgpu.Extent3D{
 			Width:              w,
@@ -1979,24 +1786,15 @@ func (b *wgpuRendererBackendImpl) CreateShadowDepthTexture(width, height int) (
 		Format:        wgpu.TextureFormatDepth32Float,
 		Usage:         wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageTextureBinding,
 	})
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create shadow depth atlas: %w", err)
-	}
 
-	depthView, err = depthTex.CreateView(nil)
-	if err != nil {
-		depthTex.Release()
-		return nil, nil, fmt.Errorf("failed to create shadow depth atlas view: %w", err)
-	}
-
-	return depthView, depthTex, nil
+	return depthTex.CreateView(nil), depthTex
 }
 
-func (b *wgpuRendererBackendImpl) CreateComparisonSampler() (*wgpu.Sampler, error) {
+func (b *wgpuRendererBackendImpl) CreateComparisonSampler() *wgpu.Sampler {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	samp, err := b.device.CreateSampler(&wgpu.SamplerDescriptor{
+	return b.device.CreateSampler(&wgpu.SamplerDescriptor{
 		Label:         "Shadow Comparison Sampler",
 		AddressModeU:  wgpu.AddressModeClampToEdge,
 		AddressModeV:  wgpu.AddressModeClampToEdge,
@@ -2007,18 +1805,13 @@ func (b *wgpuRendererBackendImpl) CreateComparisonSampler() (*wgpu.Sampler, erro
 		MaxAnisotropy: 1,
 		Compare:       wgpu.CompareFunctionLessEqual,
 	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create comparison sampler: %w", err)
-	}
-
-	return samp, nil
 }
 
-func (b *wgpuRendererBackendImpl) CreateLinearSampler() (*wgpu.Sampler, error) {
+func (b *wgpuRendererBackendImpl) CreateLinearSampler() *wgpu.Sampler {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	samp, err := b.device.CreateSampler(&wgpu.SamplerDescriptor{
+	return b.device.CreateSampler(&wgpu.SamplerDescriptor{
 		Label:         "Linear Sampler",
 		AddressModeU:  wgpu.AddressModeClampToEdge,
 		AddressModeV:  wgpu.AddressModeClampToEdge,
@@ -2028,11 +1821,6 @@ func (b *wgpuRendererBackendImpl) CreateLinearSampler() (*wgpu.Sampler, error) {
 		MipmapFilter:  wgpu.MipmapFilterModeNearest,
 		MaxAnisotropy: 1,
 	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create linear sampler: %w", err)
-	}
-
-	return samp, nil
 }
 
 func (b *wgpuRendererBackendImpl) RegisterShadowDepthPipeline(p pipeline.Pipeline) error {
@@ -2041,15 +1829,12 @@ func (b *wgpuRendererBackendImpl) RegisterShadowDepthPipeline(p pipeline.Pipelin
 		return errors.New("vertex shader must be set to create a shadow depth pipeline")
 	}
 
-	vs, err := b.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
+	vs := b.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
 		Label: vertexShader.Key(),
-		WGSLDescriptor: &wgpu.ShaderModuleWGSLDescriptor{
+		WGSLSource: &wgpu.ShaderSourceWGSL{
 			Code: vertexShader.Source(),
 		},
 	})
-	if err != nil {
-		return fmt.Errorf("shadow depth: failed to create vertex shader module: %w", err)
-	}
 
 	mergedDescriptors := mergeBindGroupLayouts(
 		vertexShader.BindGroupLayoutDescriptors(),
@@ -2064,27 +1849,21 @@ func (b *wgpuRendererBackendImpl) RegisterShadowDepthPipeline(p pipeline.Pipelin
 	}
 	bindGroupLayouts := make([]*wgpu.BindGroupLayout, maxGroup+1)
 	for g, desc := range mergedDescriptors {
-		layout, layoutErr := b.device.CreateBindGroupLayout(&desc)
-		if layoutErr != nil {
-			return fmt.Errorf("shadow depth: failed to create bind group layout for group %d: %w", g, layoutErr)
-		}
+		layout := b.device.CreateBindGroupLayout(&desc)
 		bindGroupLayouts[g] = layout
 	}
 
-	pipelineLayout, err := b.device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
+	pipelineLayout := b.device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
 		Label:            p.PipelineKey(),
 		BindGroupLayouts: bindGroupLayouts,
 	})
-	if err != nil {
-		return fmt.Errorf("shadow depth: failed to create pipeline layout: %w", err)
-	}
 
 	vertexLayouts := make([]wgpu.VertexBufferLayout, 0, len(vertexShader.VertexLayouts()))
 	for i := range vertexShader.VertexLayouts() {
 		vertexLayouts = append(vertexLayouts, vertexShader.VertexLayout(i)...)
 	}
 
-	created, err := b.device.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
+	created := b.device.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
 		Label:  p.PipelineKey() + " Shadow Depth Pipeline",
 		Layout: pipelineLayout,
 		Vertex: wgpu.VertexState{
@@ -2103,7 +1882,7 @@ func (b *wgpuRendererBackendImpl) RegisterShadowDepthPipeline(p pipeline.Pipelin
 		},
 		DepthStencil: &wgpu.DepthStencilState{
 			Format:              wgpu.TextureFormatDepth32Float,
-			DepthWriteEnabled:   true,
+			DepthWriteEnabled:   wgpu.OptionalBoolTrue,
 			DepthCompare:        wgpu.CompareFunctionLess,
 			DepthBias:           2,
 			DepthBiasSlopeScale: 2.0,
@@ -2115,9 +1894,6 @@ func (b *wgpuRendererBackendImpl) RegisterShadowDepthPipeline(p pipeline.Pipelin
 			},
 		},
 	})
-	if err != nil {
-		return fmt.Errorf("shadow depth: failed to create render pipeline: %w", err)
-	}
 
 	p.SetRenderPipeline(created)
 	return nil
@@ -2164,22 +1940,18 @@ func (b *wgpuRendererBackendImpl) EndShadowAtlasPass() {
 	b.shadowPass = nil
 }
 
-func (b *wgpuRendererBackendImpl) BeginGBufferFrame() error {
+func (b *wgpuRendererBackendImpl) BeginGBufferFrame() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	// When a geometry frame is active, alias the shared encoder instead of creating a new one.
 	if b.geometryFrameEncoder != nil {
 		b.gbufferFrameEncoder = b.geometryFrameEncoder
-		return nil
+		return
 	}
 
-	encoder, err := b.device.CreateCommandEncoder(nil)
-	if err != nil {
-		return err
-	}
+	encoder := b.device.CreateCommandEncoder(nil)
 	b.gbufferFrameEncoder = encoder
-	return nil
 }
 
 func (b *wgpuRendererBackendImpl) BeginGBufferPass(normView, albedoView, depthView *wgpu.TextureView) {
@@ -2291,12 +2063,7 @@ func (b *wgpuRendererBackendImpl) EndGBufferFrame() {
 		return
 	}
 
-	commandBuffer, err := b.gbufferFrameEncoder.Finish(nil)
-	if err != nil {
-		b.gbufferFrameEncoder.Release()
-		b.gbufferFrameEncoder = nil
-		return
-	}
+	commandBuffer := b.gbufferFrameEncoder.Finish(nil)
 
 	b.queue.Submit(commandBuffer)
 	commandBuffer.Release()
@@ -2308,7 +2075,6 @@ func (b *wgpuRendererBackendImpl) CreateGBufferTextures(width, height int) (
 	normView *wgpu.TextureView, normTex *wgpu.Texture,
 	albedoView *wgpu.TextureView, albedoTex *wgpu.Texture,
 	depthView *wgpu.TextureView, depthTex *wgpu.Texture,
-	err error,
 ) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -2317,7 +2083,7 @@ func (b *wgpuRendererBackendImpl) CreateGBufferTextures(width, height int) (
 	h := uint32(height)
 
 	// Normal MRT: RGBA16Float for packed normals [0,1] XYZ + roughness W.
-	normTex, err = b.device.CreateTexture(&wgpu.TextureDescriptor{
+	normTex = b.device.CreateTexture(&wgpu.TextureDescriptor{
 		Label: "GBuffer Normal Texture",
 		Size: wgpu.Extent3D{
 			Width:              w,
@@ -2330,18 +2096,11 @@ func (b *wgpuRendererBackendImpl) CreateGBufferTextures(width, height int) (
 		Format:        wgpu.TextureFormatRGBA16Float,
 		Usage:         wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageTextureBinding,
 	})
-	if err != nil {
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to create G-Buffer normal texture: %w", err)
-	}
 
-	normView, err = normTex.CreateView(nil)
-	if err != nil {
-		normTex.Release()
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to create G-Buffer normal texture view: %w", err)
-	}
+	normView = normTex.CreateView(nil)
 
 	// Albedo MRT: RGBA8Unorm for albedo RGB + metallic A.
-	albedoTex, err = b.device.CreateTexture(&wgpu.TextureDescriptor{
+	albedoTex = b.device.CreateTexture(&wgpu.TextureDescriptor{
 		Label: "GBuffer Albedo Texture",
 		Size: wgpu.Extent3D{
 			Width:              w,
@@ -2354,23 +2113,12 @@ func (b *wgpuRendererBackendImpl) CreateGBufferTextures(width, height int) (
 		Format:        wgpu.TextureFormatRGBA8Unorm,
 		Usage:         wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageTextureBinding,
 	})
-	if err != nil {
-		normView.Release()
-		normTex.Release()
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to create G-Buffer albedo texture: %w", err)
-	}
 
-	albedoView, err = albedoTex.CreateView(nil)
-	if err != nil {
-		albedoTex.Release()
-		normView.Release()
-		normTex.Release()
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to create G-Buffer albedo texture view: %w", err)
-	}
+	albedoView = albedoTex.CreateView(nil)
 
 	// Depth for hardware z-testing during the G-Buffer pass.
 	// TextureBinding is required so SSR and SSAO compute shaders can sample it.
-	depthTex, err = b.device.CreateTexture(&wgpu.TextureDescriptor{
+	depthTex = b.device.CreateTexture(&wgpu.TextureDescriptor{
 		Label: "GBuffer Depth Texture",
 		Size: wgpu.Extent3D{
 			Width:              w,
@@ -2383,25 +2131,10 @@ func (b *wgpuRendererBackendImpl) CreateGBufferTextures(width, height int) (
 		Format:        wgpu.TextureFormatDepth24Plus,
 		Usage:         wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageTextureBinding,
 	})
-	if err != nil {
-		albedoView.Release()
-		albedoTex.Release()
-		normView.Release()
-		normTex.Release()
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to create G-Buffer depth texture: %w", err)
-	}
 
-	depthView, err = depthTex.CreateView(nil)
-	if err != nil {
-		depthTex.Release()
-		albedoView.Release()
-		albedoTex.Release()
-		normView.Release()
-		normTex.Release()
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to create G-Buffer depth texture view: %w", err)
-	}
+	depthView = depthTex.CreateView(nil)
 
-	return normView, normTex, albedoView, albedoTex, depthView, depthTex, nil
+	return normView, normTex, albedoView, albedoTex, depthView, depthTex
 }
 
 func (b *wgpuRendererBackendImpl) RegisterGBufferPipeline(p pipeline.Pipeline) error {
@@ -2415,25 +2148,19 @@ func (b *wgpuRendererBackendImpl) RegisterGBufferPipeline(p pipeline.Pipeline) e
 		return errors.New("fragment shader must be set to create a G-Buffer pipeline")
 	}
 
-	vs, err := b.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
+	vs := b.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
 		Label: vertexShader.Key(),
-		WGSLDescriptor: &wgpu.ShaderModuleWGSLDescriptor{
+		WGSLSource: &wgpu.ShaderSourceWGSL{
 			Code: vertexShader.Source(),
 		},
 	})
-	if err != nil {
-		return fmt.Errorf("gbuffer: failed to create vertex shader module: %w", err)
-	}
 
-	fs, err := b.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
+	fs := b.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
 		Label: fragmentShader.Key(),
-		WGSLDescriptor: &wgpu.ShaderModuleWGSLDescriptor{
+		WGSLSource: &wgpu.ShaderSourceWGSL{
 			Code: fragmentShader.Source(),
 		},
 	})
-	if err != nil {
-		return fmt.Errorf("gbuffer: failed to create fragment shader module: %w", err)
-	}
 
 	mergedDescriptors := mergeBindGroupLayouts(
 		vertexShader.BindGroupLayoutDescriptors(),
@@ -2448,27 +2175,21 @@ func (b *wgpuRendererBackendImpl) RegisterGBufferPipeline(p pipeline.Pipeline) e
 	}
 	bindGroupLayouts := make([]*wgpu.BindGroupLayout, maxGroup+1)
 	for g, desc := range mergedDescriptors {
-		layout, layoutErr := b.device.CreateBindGroupLayout(&desc)
-		if layoutErr != nil {
-			return fmt.Errorf("gbuffer: failed to create bind group layout for group %d: %w", g, layoutErr)
-		}
+		layout := b.device.CreateBindGroupLayout(&desc)
 		bindGroupLayouts[g] = layout
 	}
 
-	pipelineLayout, err := b.device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
+	pipelineLayout := b.device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
 		Label:            p.PipelineKey(),
 		BindGroupLayouts: bindGroupLayouts,
 	})
-	if err != nil {
-		return fmt.Errorf("gbuffer: failed to create pipeline layout: %w", err)
-	}
 
 	vertexLayouts := make([]wgpu.VertexBufferLayout, 0, len(vertexShader.VertexLayouts()))
 	for i := range vertexShader.VertexLayouts() {
 		vertexLayouts = append(vertexLayouts, vertexShader.VertexLayout(i)...)
 	}
 
-	created, err := b.device.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
+	created := b.device.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
 		Label:  p.PipelineKey() + " GBuffer Pipeline",
 		Layout: pipelineLayout,
 		Vertex: wgpu.VertexState{
@@ -2501,7 +2222,7 @@ func (b *wgpuRendererBackendImpl) RegisterGBufferPipeline(p pipeline.Pipeline) e
 		},
 		DepthStencil: &wgpu.DepthStencilState{
 			Format:            wgpu.TextureFormatDepth24Plus,
-			DepthWriteEnabled: true,
+			DepthWriteEnabled: wgpu.OptionalBoolTrue,
 			DepthCompare:      wgpu.CompareFunctionLess,
 			StencilFront: wgpu.StencilFaceState{
 				Compare: wgpu.CompareFunctionAlways,
@@ -2511,9 +2232,6 @@ func (b *wgpuRendererBackendImpl) RegisterGBufferPipeline(p pipeline.Pipeline) e
 			},
 		},
 	})
-	if err != nil {
-		return fmt.Errorf("gbuffer: failed to create render pipeline: %w", err)
-	}
 
 	p.SetRenderPipeline(created)
 	return nil
@@ -2523,7 +2241,6 @@ func (b *wgpuRendererBackendImpl) CreateSSAOTextures(width, height int) (
 	rawView *wgpu.TextureView, rawTex *wgpu.Texture,
 	blurredView *wgpu.TextureView, blurredTex *wgpu.Texture,
 	scratchView *wgpu.TextureView, scratchTex *wgpu.Texture,
-	err error,
 ) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -2534,7 +2251,7 @@ func (b *wgpuRendererBackendImpl) CreateSSAOTextures(width, height int) (
 	// Raw SSAO output: R32Float, written by the SSAO compute shader.
 	// StorageBinding for compute writes, TextureBinding for blur reads.
 	// R32Float is used instead of R8Unorm because R8Unorm does not support StorageBinding.
-	rawTex, err = b.device.CreateTexture(&wgpu.TextureDescriptor{
+	rawTex = b.device.CreateTexture(&wgpu.TextureDescriptor{
 		Label: "SSAO Raw Texture",
 		Size: wgpu.Extent3D{
 			Width:              w,
@@ -2547,19 +2264,12 @@ func (b *wgpuRendererBackendImpl) CreateSSAOTextures(width, height int) (
 		Format:        wgpu.TextureFormatR32Float,
 		Usage:         wgpu.TextureUsageStorageBinding | wgpu.TextureUsageTextureBinding,
 	})
-	if err != nil {
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to create SSAO raw texture: %w", err)
-	}
 
-	rawView, err = rawTex.CreateView(nil)
-	if err != nil {
-		rawTex.Release()
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to create SSAO raw texture view: %w", err)
-	}
+	rawView = rawTex.CreateView(nil)
 
 	// Blurred SSAO output: R32Float, bound to the lit fragment shader.
 	// R32Float is used instead of R8Unorm because R8Unorm does not support StorageBinding.
-	blurredTex, err = b.device.CreateTexture(&wgpu.TextureDescriptor{
+	blurredTex = b.device.CreateTexture(&wgpu.TextureDescriptor{
 		Label: "SSAO Blurred Texture",
 		Size: wgpu.Extent3D{
 			Width:              w,
@@ -2572,23 +2282,12 @@ func (b *wgpuRendererBackendImpl) CreateSSAOTextures(width, height int) (
 		Format:        wgpu.TextureFormatR32Float,
 		Usage:         wgpu.TextureUsageStorageBinding | wgpu.TextureUsageTextureBinding,
 	})
-	if err != nil {
-		rawView.Release()
-		rawTex.Release()
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to create SSAO blurred texture: %w", err)
-	}
 
-	blurredView, err = blurredTex.CreateView(nil)
-	if err != nil {
-		blurredTex.Release()
-		rawView.Release()
-		rawTex.Release()
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to create SSAO blurred texture view: %w", err)
-	}
+	blurredView = blurredTex.CreateView(nil)
 
 	// Scratch texture for the separable bilateral blur intermediate step.
 	// R32Float is used instead of R8Unorm because R8Unorm does not support StorageBinding.
-	scratchTex, err = b.device.CreateTexture(&wgpu.TextureDescriptor{
+	scratchTex = b.device.CreateTexture(&wgpu.TextureDescriptor{
 		Label: "SSAO Scratch Texture",
 		Size: wgpu.Extent3D{
 			Width:              w,
@@ -2601,38 +2300,16 @@ func (b *wgpuRendererBackendImpl) CreateSSAOTextures(width, height int) (
 		Format:        wgpu.TextureFormatR32Float,
 		Usage:         wgpu.TextureUsageStorageBinding | wgpu.TextureUsageTextureBinding,
 	})
-	if err != nil {
-		blurredView.Release()
-		blurredTex.Release()
-		rawView.Release()
-		rawTex.Release()
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to create SSAO scratch texture: %w", err)
-	}
 
-	scratchView, err = scratchTex.CreateView(nil)
-	if err != nil {
-		scratchTex.Release()
-		blurredView.Release()
-		blurredTex.Release()
-		rawView.Release()
-		rawTex.Release()
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to create SSAO scratch texture view: %w", err)
-	}
-
-	return rawView, rawTex, blurredView, blurredTex, scratchView, scratchTex, nil
+	scratchView = scratchTex.CreateView(nil)
+	return rawView, rawTex, blurredView, blurredTex, scratchView, scratchTex
 }
 
-func (b *wgpuRendererBackendImpl) BeginHDRFrame(colorView, resolveView, depthView *wgpu.TextureView, sampleCount uint32) error {
+func (b *wgpuRendererBackendImpl) BeginHDRFrame(colorView, resolveView, depthView *wgpu.TextureView, sampleCount uint32) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	encoder, err := b.device.CreateCommandEncoder(nil)
-	if err != nil {
-		return err
-	}
-	if b.timestampEnabled {
-		_ = encoder.WriteTimestamp(b.timestampQuerySet, 6)
-	}
+	encoder := b.device.CreateCommandEncoder(nil)
 
 	colorAttachment := wgpu.RenderPassColorAttachment{
 		LoadOp:     wgpu.LoadOpClear,
@@ -2660,14 +2337,12 @@ func (b *wgpuRendererBackendImpl) BeginHDRFrame(colorView, resolveView, depthVie
 	b.frameEncoder = encoder
 	b.framePass = pass
 	b.isHDRFrame = true
-	return nil
 }
 
 func (b *wgpuRendererBackendImpl) CreateCompositionTextures(width, height int, sampleCount uint32) (
 	hdrView *wgpu.TextureView, hdrTex *wgpu.Texture,
 	msaaView *wgpu.TextureView, msaaTex *wgpu.Texture,
 	depthView *wgpu.TextureView, depthTex *wgpu.Texture,
-	err error,
 ) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -2678,7 +2353,7 @@ func (b *wgpuRendererBackendImpl) CreateCompositionTextures(width, height int, s
 	// RGBA16Float HDR texture: resolve target when MSAA is active, direct
 	// render target otherwise. TextureBinding for downstream SSR compute
 	// and the composition fragment reads.
-	hdrTex, err = b.device.CreateTexture(&wgpu.TextureDescriptor{
+	hdrTex = b.device.CreateTexture(&wgpu.TextureDescriptor{
 		Label: "Composition HDR Texture",
 		Size: wgpu.Extent3D{
 			Width:              w,
@@ -2691,20 +2366,13 @@ func (b *wgpuRendererBackendImpl) CreateCompositionTextures(width, height int, s
 		Format:        wgpu.TextureFormatRGBA16Float,
 		Usage:         wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageTextureBinding,
 	})
-	if err != nil {
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to create composition HDR texture: %w", err)
-	}
 
-	hdrView, err = hdrTex.CreateView(nil)
-	if err != nil {
-		hdrTex.Release()
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to create composition HDR texture view: %w", err)
-	}
+	hdrView = hdrTex.CreateView(nil)
 
 	// MSAA texture: only created when sampleCount > 1, used as the View in
 	// the HDR render pass with the HDR texture as ResolveTarget.
 	if sampleCount > 1 {
-		msaaTex, err = b.device.CreateTexture(&wgpu.TextureDescriptor{
+		msaaTex = b.device.CreateTexture(&wgpu.TextureDescriptor{
 			Label: "Composition MSAA Texture",
 			Size: wgpu.Extent3D{
 				Width:              w,
@@ -2717,23 +2385,12 @@ func (b *wgpuRendererBackendImpl) CreateCompositionTextures(width, height int, s
 			Format:        wgpu.TextureFormatRGBA16Float,
 			Usage:         wgpu.TextureUsageRenderAttachment,
 		})
-		if err != nil {
-			hdrView.Release()
-			hdrTex.Release()
-			return nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to create composition MSAA texture: %w", err)
-		}
 
-		msaaView, err = msaaTex.CreateView(nil)
-		if err != nil {
-			msaaTex.Release()
-			hdrView.Release()
-			hdrTex.Release()
-			return nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to create composition MSAA texture view: %w", err)
-		}
+		msaaView = msaaTex.CreateView(nil)
 	}
 
 	// Depth texture matching the MSAA sample count of the lit pass.
-	depthTex, err = b.device.CreateTexture(&wgpu.TextureDescriptor{
+	depthTex = b.device.CreateTexture(&wgpu.TextureDescriptor{
 		Label: "Composition Depth Texture",
 		Size: wgpu.Extent3D{
 			Width:              w,
@@ -2746,37 +2403,14 @@ func (b *wgpuRendererBackendImpl) CreateCompositionTextures(width, height int, s
 		Format:        wgpu.TextureFormatDepth24Plus,
 		Usage:         wgpu.TextureUsageRenderAttachment,
 	})
-	if err != nil {
-		if msaaView != nil {
-			msaaView.Release()
-		}
-		if msaaTex != nil {
-			msaaTex.Release()
-		}
-		hdrView.Release()
-		hdrTex.Release()
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to create composition depth texture: %w", err)
-	}
 
-	depthView, err = depthTex.CreateView(nil)
-	if err != nil {
-		depthTex.Release()
-		if msaaView != nil {
-			msaaView.Release()
-		}
-		if msaaTex != nil {
-			msaaTex.Release()
-		}
-		hdrView.Release()
-		hdrTex.Release()
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to create composition depth texture view: %w", err)
-	}
+	depthView = depthTex.CreateView(nil)
 
-	return hdrView, hdrTex, msaaView, msaaTex, depthView, depthTex, nil
+	return hdrView, hdrTex, msaaView, msaaTex, depthView, depthTex
 }
 
 func (b *wgpuRendererBackendImpl) CreateSSRTextures(width, height int) (
-	ssrView *wgpu.TextureView, ssrTex *wgpu.Texture, err error,
+	ssrView *wgpu.TextureView, ssrTex *wgpu.Texture,
 ) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -2786,7 +2420,7 @@ func (b *wgpuRendererBackendImpl) CreateSSRTextures(width, height int) (
 
 	// RGBA16Float SSR output: written by the SSR compute shader (StorageBinding),
 	// read by the composition fragment shader (TextureBinding).
-	ssrTex, err = b.device.CreateTexture(&wgpu.TextureDescriptor{
+	ssrTex = b.device.CreateTexture(&wgpu.TextureDescriptor{
 		Label: "SSR Output Texture",
 		Size: wgpu.Extent3D{
 			Width:              w,
@@ -2799,34 +2433,12 @@ func (b *wgpuRendererBackendImpl) CreateSSRTextures(width, height int) (
 		Format:        wgpu.TextureFormatRGBA16Float,
 		Usage:         wgpu.TextureUsageStorageBinding | wgpu.TextureUsageTextureBinding,
 	})
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create SSR output texture: %w", err)
-	}
 
-	ssrView, err = ssrTex.CreateView(nil)
-	if err != nil {
-		ssrTex.Release()
-		return nil, nil, fmt.Errorf("failed to create SSR output texture view: %w", err)
-	}
-
-	return ssrView, ssrTex, nil
+	return ssrTex.CreateView(nil), ssrTex
 }
 
-// CreateContactShadowTextures creates the R32Float texture used as the output
-// of the contact shadow compute shader. The texture is bound as a storage
-// texture (write) by the compute shader and as a regular texture (read) by the
-// lit fragment shader.
-//
-// Parameters:
-//   - width: texture width in pixels
-//   - height: texture height in pixels
-//
-// Returns:
-//   - csView: texture view for the contact shadow output texture
-//   - csTex: the underlying contact shadow output texture
-//   - err: an error if texture creation fails
 func (b *wgpuRendererBackendImpl) CreateContactShadowTextures(width, height int) (
-	csView *wgpu.TextureView, csTex *wgpu.Texture, err error,
+	csView *wgpu.TextureView, csTex *wgpu.Texture,
 ) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -2834,7 +2446,7 @@ func (b *wgpuRendererBackendImpl) CreateContactShadowTextures(width, height int)
 	w := uint32(width)
 	h := uint32(height)
 
-	csTex, err = b.device.CreateTexture(&wgpu.TextureDescriptor{
+	csTex = b.device.CreateTexture(&wgpu.TextureDescriptor{
 		Label: "Contact Shadow Output Texture",
 		Size: wgpu.Extent3D{
 			Width:              w,
@@ -2847,28 +2459,19 @@ func (b *wgpuRendererBackendImpl) CreateContactShadowTextures(width, height int)
 		Format:        wgpu.TextureFormatR32Float,
 		Usage:         wgpu.TextureUsageStorageBinding | wgpu.TextureUsageTextureBinding,
 	})
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create contact shadow output texture: %w", err)
-	}
 
-	csView, err = csTex.CreateView(nil)
-	if err != nil {
-		csTex.Release()
-		return nil, nil, fmt.Errorf("failed to create contact shadow output texture view: %w", err)
-	}
-
-	return csView, csTex, nil
+	return csTex.CreateView(nil), csTex
 }
 
 func (b *wgpuRendererBackendImpl) CreateTAATextures(width, height int) (
 	view0 *wgpu.TextureView, tex0 *wgpu.Texture,
-	view1 *wgpu.TextureView, tex1 *wgpu.Texture, err error,
+	view1 *wgpu.TextureView, tex1 *wgpu.Texture,
 ) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	createOne := func(label string) (*wgpu.TextureView, *wgpu.Texture, error) {
-		t, e := b.device.CreateTexture(&wgpu.TextureDescriptor{
+	createOne := func(label string) (*wgpu.TextureView, *wgpu.Texture) {
+		t := b.device.CreateTexture(&wgpu.TextureDescriptor{
 			Label: label,
 			Size: wgpu.Extent3D{
 				Width:              uint32(width),
@@ -2881,39 +2484,22 @@ func (b *wgpuRendererBackendImpl) CreateTAATextures(width, height int) (
 			Format:        wgpu.TextureFormatRGBA16Float,
 			Usage:         wgpu.TextureUsageTextureBinding | wgpu.TextureUsageStorageBinding,
 		})
-		if e != nil {
-			return nil, nil, fmt.Errorf("failed to create TAA texture %q: %w", label, e)
-		}
-		v, e := t.CreateView(nil)
-		if e != nil {
-			t.Release()
-			return nil, nil, fmt.Errorf("failed to create TAA texture view %q: %w", label, e)
-		}
-		return v, t, nil
+		v := t.CreateView(nil)
+		return v, t
 	}
 
-	view0, tex0, err = createOne("taa_texture_0")
-	if err != nil {
-		return
-	}
-	view1, tex1, err = createOne("taa_texture_1")
-	if err != nil {
-		view0.Release()
-		tex0.Release()
-		view0 = nil
-		tex0 = nil
-		return
-	}
-	return
+	view0, tex0 = createOne("taa_texture_0")
+	view1, tex1 = createOne("taa_texture_1")
+	return view0, tex0, view1, tex1
 }
 
 func (b *wgpuRendererBackendImpl) CreateSharpenTexture(width, height int) (
-	view *wgpu.TextureView, tex *wgpu.Texture, err error,
+	view *wgpu.TextureView, tex *wgpu.Texture,
 ) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	t, e := b.device.CreateTexture(&wgpu.TextureDescriptor{
+	t := b.device.CreateTexture(&wgpu.TextureDescriptor{
 		Label: "taa_sharpen_texture",
 		Size: wgpu.Extent3D{
 			Width:              uint32(width),
@@ -2926,21 +2512,14 @@ func (b *wgpuRendererBackendImpl) CreateSharpenTexture(width, height int) (
 		Format:        wgpu.TextureFormatRGBA16Float,
 		Usage:         wgpu.TextureUsageTextureBinding | wgpu.TextureUsageStorageBinding,
 	})
-	if e != nil {
-		return nil, nil, fmt.Errorf("failed to create TAA sharpen texture: %w", e)
-	}
-	v, ve := t.CreateView(nil)
-	if ve != nil {
-		t.Release()
-		return nil, nil, fmt.Errorf("failed to create TAA sharpen texture view: %w", ve)
-	}
-	return v, t, nil
+	v := t.CreateView(nil)
+	return v, t
 }
 
 func (b *wgpuRendererBackendImpl) CreateHiZTextures(width, height int) (
 	hizView *wgpu.TextureView, hizTex *wgpu.Texture,
 	mipReadViews []*wgpu.TextureView, mipStorageViews []*wgpu.TextureView,
-	mipCount int, err error,
+	mipCount int,
 ) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -2960,7 +2539,7 @@ func (b *wgpuRendererBackendImpl) CreateHiZTextures(width, height int) (
 
 	// R32Float Hi-Z pyramid: written by the Hi-Z init+downsample compute shaders
 	// (StorageBinding per mip), read by the SSR compute shader (TextureBinding).
-	hizTex, err = b.device.CreateTexture(&wgpu.TextureDescriptor{
+	hizTex = b.device.CreateTexture(&wgpu.TextureDescriptor{
 		Label: "Hi-Z Depth Pyramid",
 		Size: wgpu.Extent3D{
 			Width:              w,
@@ -2973,21 +2552,14 @@ func (b *wgpuRendererBackendImpl) CreateHiZTextures(width, height int) (
 		Format:        wgpu.TextureFormatR32Float,
 		Usage:         wgpu.TextureUsageStorageBinding | wgpu.TextureUsageTextureBinding,
 	})
-	if err != nil {
-		return nil, nil, nil, nil, 0, fmt.Errorf("failed to create Hi-Z texture: %w", err)
-	}
 
 	// Full mip chain view for SSR shader reads.
-	hizView, err = hizTex.CreateView(nil)
-	if err != nil {
-		hizTex.Release()
-		return nil, nil, nil, nil, 0, fmt.Errorf("failed to create Hi-Z full view: %w", err)
-	}
+	hizView = hizTex.CreateView(nil)
 
 	// Per-mip read views (texture_2d<f32>) for downsample input.
 	mipReadViews = make([]*wgpu.TextureView, mipCount)
 	for i := 0; i < mipCount; i++ {
-		view, viewErr := hizTex.CreateView(&wgpu.TextureViewDescriptor{
+		view := hizTex.CreateView(&wgpu.TextureViewDescriptor{
 			Label:           fmt.Sprintf("Hi-Z Mip %d Read", i),
 			Format:          wgpu.TextureFormatR32Float,
 			Dimension:       wgpu.TextureViewDimension2D,
@@ -2996,22 +2568,13 @@ func (b *wgpuRendererBackendImpl) CreateHiZTextures(width, height int) (
 			BaseArrayLayer:  0,
 			ArrayLayerCount: 1,
 		})
-		if viewErr != nil {
-			// Release already-created views on error.
-			for j := 0; j < i; j++ {
-				mipReadViews[j].Release()
-			}
-			hizView.Release()
-			hizTex.Release()
-			return nil, nil, nil, nil, 0, fmt.Errorf("failed to create Hi-Z mip %d read view: %w", i, viewErr)
-		}
 		mipReadViews[i] = view
 	}
 
 	// Per-mip storage views (texture_storage_2d<r32float, write>) for downsample output.
 	mipStorageViews = make([]*wgpu.TextureView, mipCount)
 	for i := 0; i < mipCount; i++ {
-		view, viewErr := hizTex.CreateView(&wgpu.TextureViewDescriptor{
+		view := hizTex.CreateView(&wgpu.TextureViewDescriptor{
 			Label:           fmt.Sprintf("Hi-Z Mip %d Storage", i),
 			Format:          wgpu.TextureFormatR32Float,
 			Dimension:       wgpu.TextureViewDimension2D,
@@ -3020,21 +2583,10 @@ func (b *wgpuRendererBackendImpl) CreateHiZTextures(width, height int) (
 			BaseArrayLayer:  0,
 			ArrayLayerCount: 1,
 		})
-		if viewErr != nil {
-			for j := 0; j < i; j++ {
-				mipStorageViews[j].Release()
-			}
-			for j := 0; j < mipCount; j++ {
-				mipReadViews[j].Release()
-			}
-			hizView.Release()
-			hizTex.Release()
-			return nil, nil, nil, nil, 0, fmt.Errorf("failed to create Hi-Z mip %d storage view: %w", i, viewErr)
-		}
 		mipStorageViews[i] = view
 	}
 
-	return hizView, hizTex, mipReadViews, mipStorageViews, mipCount, nil
+	return hizView, hizTex, mipReadViews, mipStorageViews, mipCount
 }
 
 func (b *wgpuRendererBackendImpl) CreateBloomTextures(width, height int) (
@@ -3073,8 +2625,8 @@ func (b *wgpuRendererBackendImpl) CreateBloomTextures(width, height int) (
 
 	// createChain creates a single RGBA16Float mip chain texture with per-mip
 	// read views (texture_2d<f32>) and storage views (texture_storage_2d<rgba16float, write>).
-	createChain := func(label string) (*wgpu.Texture, []*wgpu.TextureView, []*wgpu.TextureView, error) {
-		tex, texErr := b.device.CreateTexture(&wgpu.TextureDescriptor{
+	createChain := func(label string) (*wgpu.Texture, []*wgpu.TextureView, []*wgpu.TextureView) {
+		tex := b.device.CreateTexture(&wgpu.TextureDescriptor{
 			Label: label,
 			Size: wgpu.Extent3D{
 				Width:              w,
@@ -3087,14 +2639,11 @@ func (b *wgpuRendererBackendImpl) CreateBloomTextures(width, height int) (
 			Format:        wgpu.TextureFormatRGBA16Float,
 			Usage:         wgpu.TextureUsageStorageBinding | wgpu.TextureUsageTextureBinding,
 		})
-		if texErr != nil {
-			return nil, nil, nil, fmt.Errorf("failed to create %s texture: %w", label, texErr)
-		}
 
 		rv := make([]*wgpu.TextureView, mipCount)
 		sv := make([]*wgpu.TextureView, mipCount)
 		for i := 0; i < mipCount; i++ {
-			readView, rvErr := tex.CreateView(&wgpu.TextureViewDescriptor{
+			readView := tex.CreateView(&wgpu.TextureViewDescriptor{
 				Label:           fmt.Sprintf("%s Mip %d Read", label, i),
 				Format:          wgpu.TextureFormatRGBA16Float,
 				Dimension:       wgpu.TextureViewDimension2D,
@@ -3103,17 +2652,9 @@ func (b *wgpuRendererBackendImpl) CreateBloomTextures(width, height int) (
 				BaseArrayLayer:  0,
 				ArrayLayerCount: 1,
 			})
-			if rvErr != nil {
-				for j := 0; j < i; j++ {
-					rv[j].Release()
-					sv[j].Release()
-				}
-				tex.Release()
-				return nil, nil, nil, fmt.Errorf("failed to create %s mip %d read view: %w", label, i, rvErr)
-			}
 			rv[i] = readView
 
-			storageView, svErr := tex.CreateView(&wgpu.TextureViewDescriptor{
+			storageView := tex.CreateView(&wgpu.TextureViewDescriptor{
 				Label:           fmt.Sprintf("%s Mip %d Storage", label, i),
 				Format:          wgpu.TextureFormatRGBA16Float,
 				Dimension:       wgpu.TextureViewDimension2D,
@@ -3122,43 +2663,17 @@ func (b *wgpuRendererBackendImpl) CreateBloomTextures(width, height int) (
 				BaseArrayLayer:  0,
 				ArrayLayerCount: 1,
 			})
-			if svErr != nil {
-				readView.Release()
-				for j := 0; j < i; j++ {
-					rv[j].Release()
-					sv[j].Release()
-				}
-				tex.Release()
-				return nil, nil, nil, fmt.Errorf("failed to create %s mip %d storage view: %w", label, i, svErr)
-			}
 			sv[i] = storageView
 		}
-		return tex, rv, sv, nil
+		return tex, rv, sv
 	}
 
-	downTex, downReadViews, downStorageViews, err = createChain("Bloom Down")
-	if err != nil {
-		return
-	}
+	downTex, downReadViews, downStorageViews = createChain("Bloom Down")
 
-	upTex, upReadViews, upStorageViews, err = createChain("Bloom Up")
-	if err != nil {
-		for _, v := range downReadViews {
-			v.Release()
-		}
-		for _, v := range downStorageViews {
-			v.Release()
-		}
-		downTex.Release()
-		downTex = nil
-		downReadViews = nil
-		downStorageViews = nil
-		return
-	}
-
+	upTex, upReadViews, upStorageViews = createChain("Bloom Up")
 	upMip0View = upReadViews[0]
 
-	return
+	return downTex, downReadViews, downStorageViews, upTex, upReadViews, upStorageViews, upMip0View, mipCount, nil
 }
 
 func (b *wgpuRendererBackendImpl) RegisterCompositionPipeline(p pipeline.Pipeline) error {
@@ -3172,25 +2687,19 @@ func (b *wgpuRendererBackendImpl) RegisterCompositionPipeline(p pipeline.Pipelin
 		return errors.New("fragment shader must be set to create a composition pipeline")
 	}
 
-	vs, err := b.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
+	vs := b.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
 		Label: vertexShader.Key(),
-		WGSLDescriptor: &wgpu.ShaderModuleWGSLDescriptor{
+		WGSLSource: &wgpu.ShaderSourceWGSL{
 			Code: vertexShader.Source(),
 		},
 	})
-	if err != nil {
-		return fmt.Errorf("composition: failed to create vertex shader module: %w", err)
-	}
 
-	fs, err := b.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
+	fs := b.device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
 		Label: fragmentShader.Key(),
-		WGSLDescriptor: &wgpu.ShaderModuleWGSLDescriptor{
+		WGSLSource: &wgpu.ShaderSourceWGSL{
 			Code: fragmentShader.Source(),
 		},
 	})
-	if err != nil {
-		return fmt.Errorf("composition: failed to create fragment shader module: %w", err)
-	}
 
 	mergedDescriptors := mergeBindGroupLayouts(
 		vertexShader.BindGroupLayoutDescriptors(),
@@ -3205,24 +2714,18 @@ func (b *wgpuRendererBackendImpl) RegisterCompositionPipeline(p pipeline.Pipelin
 	}
 	bindGroupLayouts := make([]*wgpu.BindGroupLayout, maxGroup+1)
 	for g, desc := range mergedDescriptors {
-		layout, layoutErr := b.device.CreateBindGroupLayout(&desc)
-		if layoutErr != nil {
-			return fmt.Errorf("composition: failed to create bind group layout for group %d: %w", g, layoutErr)
-		}
+		layout := b.device.CreateBindGroupLayout(&desc)
 		bindGroupLayouts[g] = layout
 	}
 
-	pipelineLayout, err := b.device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
+	pipelineLayout := b.device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
 		Label:            p.PipelineKey(),
 		BindGroupLayouts: bindGroupLayouts,
 	})
-	if err != nil {
-		return fmt.Errorf("composition: failed to create pipeline layout: %w", err)
-	}
 
 	// Full-screen triangle: no vertex buffers needed. The vertex shader
 	// generates positions and UVs from the built-in vertex_index.
-	created, err := b.device.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
+	created := b.device.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
 		Label:  p.PipelineKey() + " Composition Pipeline",
 		Layout: pipelineLayout,
 		Vertex: wgpu.VertexState{
@@ -3249,9 +2752,6 @@ func (b *wgpuRendererBackendImpl) RegisterCompositionPipeline(p pipeline.Pipelin
 			Mask:  0xFFFFFFFF,
 		},
 	})
-	if err != nil {
-		return fmt.Errorf("composition: failed to create render pipeline: %w", err)
-	}
 
 	p.SetRenderPipeline(created)
 	return nil
@@ -3265,31 +2765,13 @@ func (b *wgpuRendererBackendImpl) BeginCompositionFrame() error {
 		return fmt.Errorf("previous composition frame surface not yet presented")
 	}
 
-	surfaceTexture, err := b.surface.GetCurrentTexture()
-	if err != nil {
-		return err
-	}
-
-	view, err := surfaceTexture.CreateView(nil)
-	if err != nil {
-		surfaceTexture.Release()
-		return err
-	}
-
-	encoder, err := b.device.CreateCommandEncoder(nil)
-	if err != nil {
-		view.Release()
-		surfaceTexture.Release()
-		return err
-	}
+	surfaceTexture := b.surface.GetCurrentTexture()
+	view := surfaceTexture.Texture.CreateView(nil)
+	encoder := b.device.CreateCommandEncoder(nil)
 
 	b.compositionFrameEncoder = encoder
-	b.compositionSurface = surfaceTexture
+	b.compositionSurface = surfaceTexture.Texture
 	b.compositionView = view
-	if b.timestampEnabled {
-		_ = b.compositionFrameEncoder.WriteTimestamp(b.timestampQuerySet, 10)
-	}
-
 	return nil
 }
 
@@ -3357,16 +2839,10 @@ func (b *wgpuRendererBackendImpl) EndCompositionFrame() {
 	}
 
 	if b.timestampEnabled {
-		_ = b.compositionFrameEncoder.WriteTimestamp(b.timestampQuerySet, 11)
-		_ = b.compositionFrameEncoder.ResolveQuerySet(b.timestampQuerySet, 0, uint32(b.timestampSlotCount), b.timestampResolveBuffer, 0)
+		b.compositionFrameEncoder.ResolveQuerySet(b.timestampQuerySet, 0, uint32(b.timestampSlotCount), b.timestampResolveBuffer, 0)
 	}
 
-	commandBuffer, err := b.compositionFrameEncoder.Finish(nil)
-	if err != nil {
-		b.compositionFrameEncoder.Release()
-		b.compositionFrameEncoder = nil
-		return
-	}
+	commandBuffer := b.compositionFrameEncoder.Finish(nil)
 
 	b.pendingCommandBuffers = append(b.pendingCommandBuffers, commandBuffer)
 	b.compositionFrameEncoder.Release()
@@ -3420,10 +2896,8 @@ func (b *wgpuRendererBackendImpl) SyncGPUTimestamps() {
 	if !b.slotSubmitValid[slot] {
 		return
 	}
-	b.device.Poll(true, &wgpu.WrappedSubmissionIndex{
-		Queue:           b.queue,
-		SubmissionIndex: b.slotSubmitIndex[slot],
-	})
+	index := uint64(b.slotSubmitIndex[slot])
+	b.device.Poll(true, &index)
 }
 
 func (b *wgpuRendererBackendImpl) CurrentFrameSlot() int {

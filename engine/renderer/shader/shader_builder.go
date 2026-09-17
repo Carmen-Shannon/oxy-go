@@ -3,7 +3,7 @@ package shader
 import (
 	"fmt"
 
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/oliverbestmann/webgpu/wgpu"
 )
 
 // ShaderBuilderOption is a functional option for configuring a Shader during construction.

@@ -7,6 +7,8 @@ import (
 	"log"
 	"math"
 
+	"github.com/oliverbestmann/webgpu/wgpu"
+
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine"
 	"github.com/Carmen-Shannon/oxy-go/engine/camera"
@@ -18,10 +20,10 @@ import (
 	bgp "github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/material"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/postprocessing/taa"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	"github.com/Carmen-Shannon/oxy-go/engine/window"
-	"github.com/cogentcore/webgpu/wgpu"
 )
 
 func main() {
@@ -47,7 +49,7 @@ func main() {
 	cam := camera.NewCamera(
 		camera.WithFov(float32(45.0*math.Pi/180.0)),
 		camera.WithAspect(float32(eng.Window().Width())/float32(eng.Window().Height())),
-		camera.WithNear(0.01),
+		camera.WithNear(0.5),
 		camera.WithFar(10000),
 		camera.WithController(camera.NewCameraController(
 			camera.WithRadius(200),
@@ -62,7 +64,12 @@ func main() {
 	)
 
 	// ── Scene ───────────────────────────────────────────────────────────
-	sc := scene.NewScene("Fox Animation Test", cam, r)
+	sc := scene.NewScene("Fox Animation Test", cam, r,
+		scene.WithTAAHandler(taa.NewHandler(
+			taa.WithTAAHistoryRectificationScale(0.1),
+			taa.WithTAAJitterScale(0.6),
+		)),
+	)
 
 	// ── Load Fox Model ──────────────────────────────────────────────────
 	ldr := loader.NewLoader(loader.BackendTypeGLTF)

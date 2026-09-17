@@ -21,6 +21,7 @@ func WithState(state LifecycleState) LifecycleBuilderOption {
 //
 // Parameters:
 //   - opts: variadic options for configuring the lifecycle instance, such as setting the initial state.
+//
 // Returns:
 //   - Lifecycle: a new instance of the Lifecycle interface configured with the provided options.
 func NewLifecycle(opts ...LifecycleBuilderOption) Lifecycle {

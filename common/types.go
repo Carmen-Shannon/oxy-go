@@ -11,7 +11,7 @@ import (
 	_ "image/png"
 	"os"
 
-	"github.com/cogentcore/webgpu/wgpu"
+	"github.com/oliverbestmann/webgpu/wgpu"
 )
 
 // TextureStagingData holds RGBA pixel data for a texture binding pending GPU upload.

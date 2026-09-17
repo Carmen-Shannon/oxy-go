@@ -5,8 +5,9 @@ import (
 	"math"
 	"testing"
 
-	"github.com/Carmen-Shannon/oxy-go/engine/renderer/animator"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/Carmen-Shannon/oxy-go/engine/renderer/animator"
 )
 
 func TestRunAnimatorTests(t *testing.T) {

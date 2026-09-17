@@ -3,8 +3,9 @@ package light_test
 import (
 	"testing"
 
-	"github.com/Carmen-Shannon/oxy-go/engine/light"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/Carmen-Shannon/oxy-go/engine/light"
 )
 
 func TestRunLightTests(t *testing.T) {

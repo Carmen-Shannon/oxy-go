@@ -2,8 +2,9 @@
 package ssr
 
 import (
+	"github.com/oliverbestmann/webgpu/wgpu"
+
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/bind_group_provider"
-	"github.com/cogentcore/webgpu/wgpu"
 )
 
 // Handler defines the interface for the scene's screen-space reflections subsystem.

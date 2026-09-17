@@ -4,7 +4,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Carmen-Shannon/oxy-go/engine/command"
+	"github.com/Carmen-Shannon/oxy-go/engine/context"
 	"github.com/Carmen-Shannon/oxy-go/engine/profiler"
+	"github.com/Carmen-Shannon/oxy-go/engine/queue"
 	"github.com/Carmen-Shannon/oxy-go/engine/scene"
 	"github.com/Carmen-Shannon/oxy-go/engine/window"
 )
@@ -105,6 +108,8 @@ func NewEngine(options ...EngineBuilderOption) Engine {
 		profiler:         profiler.NewProfiler(),
 		profilingEnabled: false,
 		engineTickRate:   time.Second / 60,
+		cmdCtx:           context.NewContext(),
+		cmdQueue:         queue.NewQueue[command.Command](),
 	}
 	for _, opt := range options {
 		opt(e)

@@ -240,7 +240,7 @@ fn sample_shadow_spot(frag_pos: vec3<f32>, entry: LightShadowEntry, normal: vec3
     var shadow = 0.0;
     for (var i = 0u; i < PCF_SAMPLES_SPOT; i = i + 1u) {
         let offset = POISSON_DISK[i] * pcf_scale;
-        let sample_local = local_uv + offset;
+        let sample_local = clamp(local_uv + offset, vec2<f32>(0.0), vec2<f32>(1.0));
         let atlas_uv = vec2<f32>(
             entry.atlas_rect.x + sample_local.x * entry.atlas_rect.z,
             entry.atlas_rect.y + sample_local.y * entry.atlas_rect.w,

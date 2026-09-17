@@ -5,9 +5,10 @@
 package pipeline
 
 import (
+	"github.com/oliverbestmann/webgpu/wgpu"
+
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
-	"github.com/cogentcore/webgpu/wgpu"
 )
 
 // PipelineType identifies whether a pipeline is a compute pipeline or a render pipeline.

@@ -1,9 +1,10 @@
 package pipeline
 
 import (
+	"github.com/oliverbestmann/webgpu/wgpu"
+
 	"github.com/Carmen-Shannon/oxy-go/common"
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/shader"
-	"github.com/cogentcore/webgpu/wgpu"
 )
 
 // pipeline is the implementation of the Pipeline interface.
