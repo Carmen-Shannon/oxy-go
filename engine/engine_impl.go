@@ -21,6 +21,7 @@ import (
 type engine struct {
 	tickRateChannel chan time.Duration
 	resizeEvents    chan [2]int
+	frameRequestCh  chan struct{}
 	cmdCtx          context.Context
 	cmdQueue        queue.Queue[command.Command]
 
@@ -152,6 +153,7 @@ func (e *engine) handle() {
 	go e.handleEngine()
 	go e.handleRender()
 	go e.handleQuit()
+	e.startRenderProducer()
 }
 
 // handleEngine runs the fixed-rate engine tick loop in its own goroutine.
@@ -184,9 +186,10 @@ func (e *engine) handleEngine() {
 	}
 }
 
-// handleRender runs the uncapped (or frame-limited) render loop in its own goroutine.
-// Iterates scenes in ascending z-index order using lifecycle state filters:
-// Running scenes execute the full frame pipeline, and Paused scenes execute compute-only phases.
+// handleRender renders one frame per frame request in its own goroutine.
+// Frame requests are produced by the build-specific producer: a native
+// rate-limited pump goroutine, or the browser requestAnimationFrame loop
+// under GOOS=js. Exits when the quit channel is closed.
 // Recovers from panics to avoid crashing the process and signals quit on recovery.
 func (e *engine) handleRender() {
 	defer e.wg.Done()
@@ -203,259 +206,254 @@ func (e *engine) handleRender() {
 		select {
 		case <-e.quitChannel:
 			return
-		default:
+		case <-e.frameRequestCh:
 			now := time.Now()
 			dt := float32(now.Sub(lastRender).Seconds())
 			lastRender = now
+			e.renderFrame(dt)
+		}
+	}
+}
 
-			select {
-			case dims := <-e.resizeEvents:
-				for _, s := range e.scenes {
-					s.Resize(dims[0], dims[1])
+// renderFrame executes one full frame pipeline pass across all registered scenes.
+// Iterates scenes in ascending z-index order using lifecycle state filters:
+// Running scenes execute the full frame pipeline, and Paused scenes execute
+// compute-only phases.
+//
+// Parameters:
+//   - dt: elapsed seconds since the previous rendered frame
+func (e *engine) renderFrame(dt float32) {
+	select {
+	case dims := <-e.resizeEvents:
+		for _, s := range e.scenes {
+			s.Resize(dims[0], dims[1])
+		}
+	default:
+	}
+
+	keys := make([]int, 0, len(e.scenes))
+	for k := range e.scenes {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+
+	var computeScenes []scene.Scene
+	var frameScenes []scene.Scene
+	for _, k := range keys {
+		s := e.scenes[k]
+		if s == nil || s.Lifecycle() == nil {
+			continue
+		}
+
+		switch s.Lifecycle().State() {
+		case lifecycle.LifecycleStateRunning:
+			computeScenes = append(computeScenes, s)
+			frameScenes = append(frameScenes, s)
+		case lifecycle.LifecycleStatePaused:
+			computeScenes = append(computeScenes, s)
+		}
+	}
+
+	var driverScene scene.Scene
+	if len(frameScenes) > 0 {
+		driverScene = frameScenes[0]
+	} else if len(computeScenes) > 0 {
+		driverScene = computeScenes[0]
+	}
+
+	if driverScene != nil {
+		frameRenderer := driverScene.Renderer()
+		if frameRenderer != nil {
+			computePrepared := false
+
+			if len(computeScenes) > 0 {
+				stopGPUSync := func() {}
+				if e.profilingEnabled && e.profiler != nil {
+					stopGPUSync = e.profiler.Section("GPU_Sync")
 				}
-			default:
+				frameRenderer.SyncGPUTimestamps()
+				stopGPUSync()
+
+				currentSlot := frameRenderer.CurrentFrameSlot()
+				for _, s := range computeScenes {
+					s.SyncFrameSlot(currentSlot)
+				}
+
+				frameRenderer.BeginComputeFrame()
+				stopPrepareCompute := func() {}
+				if e.profilingEnabled && e.profiler != nil {
+					stopPrepareCompute = e.profiler.Section("PrepareCompute")
+				}
+				for _, s := range computeScenes {
+					s.PrepareCompute(dt)
+				}
+				frameRenderer.EndComputeFrame()
+				stopPrepareCompute()
+				computePrepared = true
 			}
 
-			keys := make([]int, 0, len(e.scenes))
-			for k := range e.scenes {
-				keys = append(keys, k)
-			}
-			sort.Ints(keys)
-
-			var computeScenes []scene.Scene
-			var frameScenes []scene.Scene
-			for _, k := range keys {
-				s := e.scenes[k]
-				if s == nil || s.Lifecycle() == nil {
-					continue
-				}
-
-				switch s.Lifecycle().State() {
-				case lifecycle.LifecycleStateRunning:
-					computeScenes = append(computeScenes, s)
-					frameScenes = append(frameScenes, s)
-				case lifecycle.LifecycleStatePaused:
-					computeScenes = append(computeScenes, s)
-				}
-			}
-
-			var driverScene scene.Scene
 			if len(frameScenes) > 0 {
-				driverScene = frameScenes[0]
-			} else if len(computeScenes) > 0 {
-				driverScene = computeScenes[0]
-			}
-
-			if driverScene != nil {
-				frameRenderer := driverScene.Renderer()
-				if frameRenderer != nil {
-					computePrepared := false
-
-					if len(computeScenes) > 0 {
-						stopGPUSync := func() {}
-						if e.profilingEnabled && e.profiler != nil {
-							stopGPUSync = e.profiler.Section("GPU_Sync")
-						}
-						frameRenderer.SyncGPUTimestamps()
-						stopGPUSync()
-
-						currentSlot := frameRenderer.CurrentFrameSlot()
-						for _, s := range computeScenes {
-							s.SyncFrameSlot(currentSlot)
-						}
-
-						frameRenderer.BeginComputeFrame()
-						stopPrepareCompute := func() {}
-						if e.profilingEnabled && e.profiler != nil {
-							stopPrepareCompute = e.profiler.Section("PrepareCompute")
-						}
-						for _, s := range computeScenes {
-							s.PrepareCompute(dt)
-						}
-						frameRenderer.EndComputeFrame()
-						stopPrepareCompute()
-						computePrepared = true
-					}
-
-					if len(frameScenes) > 0 {
-						frameRenderer.BeginGeometryFrame()
-						stopPrepareShadows := func() {}
-						if e.profilingEnabled && e.profiler != nil {
-							stopPrepareShadows = e.profiler.Section("PrepareShadows")
-						}
-						for _, s := range frameScenes {
-							s.PrepareShadows()
-						}
-						stopPrepareShadows()
-
-						stopPrepareLights := func() {}
-						if e.profilingEnabled && e.profiler != nil {
-							stopPrepareLights = e.profiler.Section("PrepareLights")
-						}
-						for _, s := range frameScenes {
-							s.PrepareLights()
-						}
-						stopPrepareLights()
-
-						stopPrepareGBuffer := func() {}
-						if e.profilingEnabled && e.profiler != nil {
-							stopPrepareGBuffer = e.profiler.Section("PrepareGBuffer")
-						}
-						for _, s := range frameScenes {
-							s.PrepareGBuffer()
-						}
-						frameRenderer.EndGeometryFrame()
-						stopPrepareGBuffer()
-						frameRenderer.BeginComputeFrame()
-						stopPrepareLightCulling := func() {}
-						if e.profilingEnabled && e.profiler != nil {
-							stopPrepareLightCulling = e.profiler.Section("PrepareLightCulling")
-						}
-						for _, s := range frameScenes {
-							s.PrepareLightCulling()
-						}
-						stopPrepareLightCulling()
-
-						stopPrepareSSAO := func() {}
-						if e.profilingEnabled && e.profiler != nil {
-							stopPrepareSSAO = e.profiler.Section("PrepareSSAO")
-						}
-						for _, s := range frameScenes {
-							s.PrepareSSAO()
-						}
-						stopPrepareSSAO()
-
-						stopPrepareContactShadows := func() {}
-						if e.profilingEnabled && e.profiler != nil {
-							stopPrepareContactShadows = e.profiler.Section("PrepareContactShadows")
-						}
-						for _, s := range frameScenes {
-							s.PrepareContactShadows()
-						}
-						stopPrepareContactShadows()
-
-						frameRenderer.EndComputeFrame()
-						if err := frameScenes[0].BeginHDRFrame(); err == nil {
-							stopDrawCalls := func() {}
-							if e.profilingEnabled && e.profiler != nil {
-								stopDrawCalls = e.profiler.Section("DrawCalls")
-							}
-							for _, s := range frameScenes {
-								_ = s.DrawCalls()
-							}
-							frameRenderer.EndFrame()
-							stopDrawCalls()
-
-							frameRenderer.BeginComputeFrame()
-							stopPrepareSSR := func() {}
-							if e.profilingEnabled && e.profiler != nil {
-								stopPrepareSSR = e.profiler.Section("PrepareSSR")
-							}
-							for _, s := range frameScenes {
-								s.PrepareSSR()
-							}
-							stopPrepareSSR()
-
-							stopPrepareLuminance := func() {}
-							if e.profilingEnabled && e.profiler != nil {
-								stopPrepareLuminance = e.profiler.Section("PrepareLuminance")
-							}
-							for _, s := range frameScenes {
-								s.PrepareLuminance(dt)
-							}
-							stopPrepareLuminance()
-
-							stopPrepareBloom := func() {}
-							if e.profilingEnabled && e.profiler != nil {
-								stopPrepareBloom = e.profiler.Section("PrepareBloom")
-							}
-							for _, s := range frameScenes {
-								s.PrepareBloom()
-							}
-							stopPrepareBloom()
-							stopPrepareTAA := func() {}
-							if e.profilingEnabled && e.profiler != nil {
-								stopPrepareTAA = e.profiler.Section("PrepareTAA")
-							}
-							for _, s := range frameScenes {
-								s.PrepareTAA()
-							}
-							stopPrepareTAA()
-							frameRenderer.EndComputeFrame()
-
-							stopAcquireFrame := func() {}
-							if e.profilingEnabled && e.profiler != nil {
-								stopAcquireFrame = e.profiler.Section("AcquireFrame")
-							}
-							acquireErr := frameScenes[0].AcquireCompositionFrame()
-							stopAcquireFrame()
-
-							if acquireErr == nil {
-								stopPrepareComposition := func() {}
-								if e.profilingEnabled && e.profiler != nil {
-									stopPrepareComposition = e.profiler.Section("PrepareComposition")
-								}
-								for _, s := range frameScenes {
-									s.PrepareComposition()
-								}
-								stopPrepareComposition()
-							}
-
-							stopFlushFrame := func() {}
-							if e.profilingEnabled && e.profiler != nil {
-								stopFlushFrame = e.profiler.Section("FlushFrame")
-							}
-							frameRenderer.FlushFrame()
-							stopFlushFrame()
-
-							stopPresent := func() {}
-							if e.profilingEnabled && e.profiler != nil {
-								stopPresent = e.profiler.Section("Present")
-							}
-							frameRenderer.Present()
-							stopPresent()
-						} else if err := frameRenderer.BeginFrame(); err == nil {
-							for _, s := range frameScenes {
-								_ = s.DrawCalls()
-							}
-							frameRenderer.EndFrame()
-							frameRenderer.FlushFrame()
-							frameRenderer.Present()
-						}
-					} else if computePrepared {
-						stopFlushFrame := func() {}
-						if e.profilingEnabled && e.profiler != nil {
-							stopFlushFrame = e.profiler.Section("FlushFrame")
-						}
-						frameRenderer.FlushFrame()
-						stopFlushFrame()
-					}
+				frameRenderer.BeginGeometryFrame()
+				stopPrepareShadows := func() {}
+				if e.profilingEnabled && e.profiler != nil {
+					stopPrepareShadows = e.profiler.Section("PrepareShadows")
 				}
-			}
-
-			if e.renderCallback != nil {
-				e.renderCallback(dt)
-			}
-
-			if e.profilingEnabled && e.profiler != nil {
-				e.profiler.Tick()
-			}
-
-			// Frame rate limiting
-			if e.renderFrameLimit > 0 {
-				elapsed := time.Since(lastRender)
-				if remaining := e.renderFrameLimit - elapsed; remaining > 0 {
-					timer := time.NewTimer(remaining)
-					select {
-					case <-e.quitChannel:
-						timer.Stop()
-						return
-					case <-timer.C:
-					}
-					timer.Stop()
+				for _, s := range frameScenes {
+					s.PrepareShadows()
 				}
+				stopPrepareShadows()
+
+				stopPrepareLights := func() {}
+				if e.profilingEnabled && e.profiler != nil {
+					stopPrepareLights = e.profiler.Section("PrepareLights")
+				}
+				for _, s := range frameScenes {
+					s.PrepareLights()
+				}
+				stopPrepareLights()
+
+				stopPrepareGBuffer := func() {}
+				if e.profilingEnabled && e.profiler != nil {
+					stopPrepareGBuffer = e.profiler.Section("PrepareGBuffer")
+				}
+				for _, s := range frameScenes {
+					s.PrepareGBuffer()
+				}
+				frameRenderer.EndGeometryFrame()
+				stopPrepareGBuffer()
+				frameRenderer.BeginComputeFrame()
+				stopPrepareLightCulling := func() {}
+				if e.profilingEnabled && e.profiler != nil {
+					stopPrepareLightCulling = e.profiler.Section("PrepareLightCulling")
+				}
+				for _, s := range frameScenes {
+					s.PrepareLightCulling()
+				}
+				stopPrepareLightCulling()
+
+				stopPrepareSSAO := func() {}
+				if e.profilingEnabled && e.profiler != nil {
+					stopPrepareSSAO = e.profiler.Section("PrepareSSAO")
+				}
+				for _, s := range frameScenes {
+					s.PrepareSSAO()
+				}
+				stopPrepareSSAO()
+
+				stopPrepareContactShadows := func() {}
+				if e.profilingEnabled && e.profiler != nil {
+					stopPrepareContactShadows = e.profiler.Section("PrepareContactShadows")
+				}
+				for _, s := range frameScenes {
+					s.PrepareContactShadows()
+				}
+				stopPrepareContactShadows()
+
+				frameRenderer.EndComputeFrame()
+				if err := frameScenes[0].BeginHDRFrame(); err == nil {
+					stopDrawCalls := func() {}
+					if e.profilingEnabled && e.profiler != nil {
+						stopDrawCalls = e.profiler.Section("DrawCalls")
+					}
+					for _, s := range frameScenes {
+						_ = s.DrawCalls()
+					}
+					frameRenderer.EndFrame()
+					stopDrawCalls()
+
+					frameRenderer.BeginComputeFrame()
+					stopPrepareSSR := func() {}
+					if e.profilingEnabled && e.profiler != nil {
+						stopPrepareSSR = e.profiler.Section("PrepareSSR")
+					}
+					for _, s := range frameScenes {
+						s.PrepareSSR()
+					}
+					stopPrepareSSR()
+
+					stopPrepareLuminance := func() {}
+					if e.profilingEnabled && e.profiler != nil {
+						stopPrepareLuminance = e.profiler.Section("PrepareLuminance")
+					}
+					for _, s := range frameScenes {
+						s.PrepareLuminance(dt)
+					}
+					stopPrepareLuminance()
+
+					stopPrepareBloom := func() {}
+					if e.profilingEnabled && e.profiler != nil {
+						stopPrepareBloom = e.profiler.Section("PrepareBloom")
+					}
+					for _, s := range frameScenes {
+						s.PrepareBloom()
+					}
+					stopPrepareBloom()
+					stopPrepareTAA := func() {}
+					if e.profilingEnabled && e.profiler != nil {
+						stopPrepareTAA = e.profiler.Section("PrepareTAA")
+					}
+					for _, s := range frameScenes {
+						s.PrepareTAA()
+					}
+					stopPrepareTAA()
+					frameRenderer.EndComputeFrame()
+
+					stopAcquireFrame := func() {}
+					if e.profilingEnabled && e.profiler != nil {
+						stopAcquireFrame = e.profiler.Section("AcquireFrame")
+					}
+					acquireErr := frameScenes[0].AcquireCompositionFrame()
+					stopAcquireFrame()
+
+					if acquireErr == nil {
+						stopPrepareComposition := func() {}
+						if e.profilingEnabled && e.profiler != nil {
+							stopPrepareComposition = e.profiler.Section("PrepareComposition")
+						}
+						for _, s := range frameScenes {
+							s.PrepareComposition()
+						}
+						stopPrepareComposition()
+					}
+
+					stopFlushFrame := func() {}
+					if e.profilingEnabled && e.profiler != nil {
+						stopFlushFrame = e.profiler.Section("FlushFrame")
+					}
+					frameRenderer.FlushFrame()
+					stopFlushFrame()
+
+					stopPresent := func() {}
+					if e.profilingEnabled && e.profiler != nil {
+						stopPresent = e.profiler.Section("Present")
+					}
+					frameRenderer.Present()
+					stopPresent()
+				} else if err := frameRenderer.BeginFrame(); err == nil {
+					for _, s := range frameScenes {
+						_ = s.DrawCalls()
+					}
+					frameRenderer.EndFrame()
+					frameRenderer.FlushFrame()
+					frameRenderer.Present()
+				}
+			} else if computePrepared {
+				stopFlushFrame := func() {}
+				if e.profilingEnabled && e.profiler != nil {
+					stopFlushFrame = e.profiler.Section("FlushFrame")
+				}
+				frameRenderer.FlushFrame()
+				stopFlushFrame()
 			}
 		}
+	}
+
+	if e.renderCallback != nil {
+		e.renderCallback(dt)
+	}
+
+	if e.profilingEnabled && e.profiler != nil {
+		e.profiler.Tick()
 	}
 }
 

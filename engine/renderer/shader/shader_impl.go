@@ -2,9 +2,8 @@ package shader
 
 import (
 	"fmt"
-	"os"
 
-	"github.com/oliverbestmann/webgpu/wgpu"
+	"github.com/Carmen-Shannon/webgpu/wgpu"
 
 	"github.com/Carmen-Shannon/oxy-go/common"
 )
@@ -33,7 +32,7 @@ type shader struct {
 // Vertex shaders get vertex buffer layouts parsed. Compute shaders get workgroup size
 // parsed. All shader types get bind group layout descriptors parsed.
 func (s *shader) parseSourceFromPath(path string, injections map[string]string) {
-	data, err := os.ReadFile(path)
+	data, err := common.ReadFile(path)
 	if err != nil {
 		panic(fmt.Sprintf("shader: failed to read source file %q: %v", path, err))
 	}

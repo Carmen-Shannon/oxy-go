@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oliverbestmann/webgpu/wgpu"
+	"github.com/Carmen-Shannon/webgpu/wgpu"
 
 	"github.com/Carmen-Shannon/automation/tools/worker"
 	"github.com/stretchr/testify/mock"
@@ -3509,6 +3509,20 @@ func (suite *sceneImplTest) TestPruneAnimator() {
 		mockAnimator.EXPECT().Release().Once()
 
 		suite.NotPanics(func() { suite.scene.pruneAnimator(mockAnimator) })
+	})
+
+	suite.Run("shadow animation provider released and removed from map", func() {
+		mockAnimator := animator_mocks.NewMockAnimator(suite.T())
+		mockAnimator.EXPECT().Model().Return(nil).Once()
+		mockAnimator.EXPECT().Release().Once()
+
+		provider := bind_group_provider.NewBindGroupProvider("shadow_anim_provider")
+		suite.scene.shadowAnimationProviders = map[animator.Animator]bind_group_provider.BindGroupProvider{mockAnimator: provider}
+
+		suite.NotPanics(func() { suite.scene.pruneAnimator(mockAnimator) })
+
+		_, exists := suite.scene.shadowAnimationProviders[mockAnimator]
+		suite.False(exists)
 	})
 }
 
@@ -11320,6 +11334,21 @@ func (suite *sceneImplTest) TestCreateAnimator() {
 		suite.Contains(suite.scene.shadowIndirectBuffers, anim)
 		suite.NotNil(suite.scene.shadowIndirectBuffers[anim])
 	})
+
+	suite.Run("removed transition triggers prune hook", func() {
+		mdl := model_mocks.NewMockModel(suite.T())
+		mdl.EXPECT().Skinned().Return(false).Maybe()
+		mdl.EXPECT().BoundingRadius().Return(float32(1.0)).Once()
+		mdl.EXPECT().BoundingMin().Return([3]float32{}).Once()
+		mdl.EXPECT().BoundingMax().Return([3]float32{}).Once()
+
+		anim := suite.scene.createAnimator(mdl, nil, nil, nil)
+		suite.NotNil(anim)
+
+		suite.NoError(anim.Lifecycle().SetState(lifecycle.LifecycleStateStopped))
+		suite.NoError(anim.Lifecycle().SetState(lifecycle.LifecycleStateRemoved))
+		suite.Equal(lifecycle.LifecycleStateRemoved, anim.Lifecycle().State())
+	})
 }
 
 func (suite *sceneImplTest) TestAcquireCompositionFrame() {
@@ -11513,6 +11542,40 @@ func (suite *sceneImplTest) TestTransitionChildLifecycle() {
 		lc := lifecycle.NewLifecycle(lifecycle.WithState(lifecycle.LifecycleStateRunning))
 		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleState(999)))
 		suite.Equal(lifecycle.LifecycleStateRunning, lc.State())
+	})
+
+	suite.Run("stopped target running leaves state unchanged when draining transition does not stick", func() {
+		lc := &lifecycleStub{
+			state: lifecycle.LifecycleStateRunning,
+			setStateFn: func(lifecycle.LifecycleState) error {
+				return nil
+			},
+		}
+		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleStateStopped))
+		suite.Equal(lifecycle.LifecycleStateRunning, lc.State())
+	})
+
+	suite.Run("stopped target errored returns error when draining transition fails", func() {
+		lc := &lifecycleStub{
+			state: lifecycle.LifecycleStateErrored,
+			setStateFn: func(lifecycle.LifecycleState) error {
+				return errors.New("drain failed")
+			},
+		}
+		err := transitionChildLifecycle(lc, lifecycle.LifecycleStateStopped)
+		suite.Error(err)
+		suite.Equal(lifecycle.LifecycleStateErrored, lc.State())
+	})
+
+	suite.Run("stopped target errored leaves state unchanged when draining transition does not stick", func() {
+		lc := &lifecycleStub{
+			state: lifecycle.LifecycleStateErrored,
+			setStateFn: func(lifecycle.LifecycleState) error {
+				return nil
+			},
+		}
+		suite.NoError(transitionChildLifecycle(lc, lifecycle.LifecycleStateStopped))
+		suite.Equal(lifecycle.LifecycleStateErrored, lc.State())
 	})
 }
 
@@ -11789,6 +11852,20 @@ func (suite *sceneImplTest) TestReleasePhysicsResources() {
 			suite.Nil(bgp)
 		}
 	})
+
+	suite.Run("skips nil bgp entries in physics bgps map", func() {
+		ph := physics.NewPhysics()
+		ph.Bgps()["nil_provider"] = nil
+
+		suite.scene.physicsHandler = ph
+
+		suite.NotPanics(func() { suite.scene.releasePhysicsResources() })
+
+		suite.Nil(suite.scene.physicsHandler)
+		bgp, present := ph.Bgps()["nil_provider"]
+		suite.True(present)
+		suite.Nil(bgp)
+	})
 }
 
 func (suite *sceneImplTest) TestReleaseLightingResources() {
@@ -11815,6 +11892,18 @@ func (suite *sceneImplTest) TestReleaseLightingResources() {
 		suite.Nil(suite.scene.lightHandler.Bgp("ssao_lit"))
 		suite.Nil(shadowHandler.Bgp("csm_shadow_lit"))
 		suite.Nil(shadowHandler.Bgp("spot_shadow"))
+	})
+
+	suite.Run("skips nil bgp entries in contact shadow bgps map", func() {
+		lh := light.NewLightingHandler()
+		csHandler := lh.ContactShadowHandler()
+		csHandler.Bgps()["nil_provider"] = nil
+
+		suite.scene.lightHandler = lh
+
+		suite.NotPanics(func() { suite.scene.releaseLightingResources() })
+
+		suite.False(lh.Enabled())
 	})
 }
 
@@ -16195,4 +16284,31 @@ func (suite *sceneImplTest) TestInitSSAONilGBuffer() {
 		// No Enabled() call expected because nil gBufferHandler short-circuits
 		suite.NotPanics(func() { suite.scene.initSSAO() })
 	})
+}
+
+var _ lifecycle.Lifecycle = (*lifecycleStub)(nil)
+
+type lifecycleStub struct {
+	state      lifecycle.LifecycleState
+	setStateFn func(lifecycle.LifecycleState) error
+}
+
+func (s *lifecycleStub) State() lifecycle.LifecycleState {
+	return s.state
+}
+
+func (s *lifecycleStub) SetState(state lifecycle.LifecycleState) error {
+	if s.setStateFn != nil {
+		return s.setStateFn(state)
+	}
+	s.state = state
+	return nil
+}
+
+func (s *lifecycleStub) OnTransitionTo(lifecycle.LifecycleState, lifecycle.Hook) func() {
+	return func() {}
+}
+
+func (s *lifecycleStub) OnTransitionFrom(lifecycle.LifecycleState, lifecycle.Hook) func() {
+	return func() {}
 }

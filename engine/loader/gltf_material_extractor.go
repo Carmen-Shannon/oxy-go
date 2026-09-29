@@ -3,13 +3,12 @@ package loader
 import (
 	"encoding/base64"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/Carmen-Shannon/oxy-go/common"
 
-	"github.com/oliverbestmann/webgpu/wgpu"
+	"github.com/Carmen-Shannon/webgpu/wgpu"
 )
 
 // gltfMaterialExtractorImpl is the implementation of the gltfMaterialExtractor interface.
@@ -217,7 +216,7 @@ func (e *gltfMaterialExtractorImpl) loadTexture(textureIndex int) (*common.Impor
 		result.Path = absPath
 
 		// Attempt to load file contents
-		data, err := os.ReadFile(absPath)
+		data, err := common.ReadFile(absPath)
 		if err != nil {
 			// File may not be available yet; return path only
 			return result, absPath, nil

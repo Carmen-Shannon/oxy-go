@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oliverbestmann/webgpu/wgpu"
+	"github.com/Carmen-Shannon/webgpu/wgpu"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
@@ -102,6 +102,15 @@ func (suite *engineTest) TearDownSubTest() {
 	eImpl := suite.engine.(*engine)
 	eImpl.signalQuit()
 	eImpl.wg.Wait()
+}
+
+// startRenderLoop launches the render producer and consumer goroutines exactly
+// as the running engine does in handle().
+func (suite *engineTest) startRenderLoop() {
+	eImpl := suite.engine.(*engine)
+	eImpl.startRenderProducer()
+	eImpl.wg.Add(1)
+	go eImpl.handleRender()
 }
 
 func (suite *engineTest) TestNewEngine() {
@@ -449,8 +458,7 @@ func (suite *engineTest) TestHandleRender() {
 		sceneMock.EXPECT().PrepareComposition().Return().Maybe()
 		rendererMock.EXPECT().FlushFrame().Return(wgpu.SubmissionIndex(0)).Maybe()
 
-		eImpl.wg.Add(1)
-		go eImpl.handleRender()
+		suite.startRenderLoop()
 
 		select {
 		case <-rendered:
@@ -489,8 +497,7 @@ func (suite *engineTest) TestHandleRender() {
 		sceneMock.EXPECT().PrepareCompute(mock.AnythingOfType("float32")).Return().Maybe()
 		rendererMock.EXPECT().EndComputeFrame().Return().Maybe()
 
-		eImpl.wg.Add(1)
-		go eImpl.handleRender()
+		suite.startRenderLoop()
 
 		select {
 		case <-flushed:
@@ -531,8 +538,7 @@ func (suite *engineTest) TestHandleRender() {
 			once.Do(func() { called <- struct{}{} })
 		}
 
-		eImpl.wg.Add(1)
-		go eImpl.handleRender()
+		suite.startRenderLoop()
 
 		select {
 		case <-called:
@@ -563,8 +569,7 @@ func (suite *engineTest) TestHandleRender() {
 
 		suite.NotNil(eImpl.renderCallback)
 
-		eImpl.wg.Add(1)
-		go eImpl.handleRender()
+		suite.startRenderLoop()
 
 		select {
 		case <-called:
@@ -608,8 +613,7 @@ func (suite *engineTest) TestHandleRender() {
 			panic("test render panic")
 		}).Maybe()
 
-		eImpl.wg.Add(1)
-		go eImpl.handleRender()
+		suite.startRenderLoop()
 
 		done := make(chan struct{})
 		go func() { eImpl.wg.Wait(); close(done) }()
@@ -635,8 +639,7 @@ func (suite *engineTest) TestHandleRender() {
 			once.Do(func() { called <- struct{}{} })
 		}
 
-		eImpl.wg.Add(1)
-		go eImpl.handleRender()
+		suite.startRenderLoop()
 
 		select {
 		case <-called:
@@ -673,8 +676,7 @@ func (suite *engineTest) TestHandleRender() {
 			}
 		}
 
-		eImpl.wg.Add(1)
-		go eImpl.handleRender()
+		suite.startRenderLoop()
 
 		select {
 		case <-second:
@@ -733,8 +735,7 @@ func (suite *engineTest) TestHandleRender() {
 		sceneMock.EXPECT().PrepareComposition().Return().Maybe()
 		rendererMock.EXPECT().FlushFrame().Return(wgpu.SubmissionIndex(0)).Maybe()
 
-		eImpl.wg.Add(1)
-		go eImpl.handleRender()
+		suite.startRenderLoop()
 
 		select {
 		case <-rendered:
@@ -766,8 +767,7 @@ func (suite *engineTest) TestHandleRender() {
 			once.Do(func() { called <- struct{}{} })
 		}
 
-		eImpl.wg.Add(1)
-		go eImpl.handleRender()
+		suite.startRenderLoop()
 
 		select {
 		case <-called:
@@ -822,8 +822,7 @@ func (suite *engineTest) TestHandleRender() {
 		sceneMock.EXPECT().AcquireCompositionFrame().Return(fmt.Errorf("surface lost")).Maybe()
 		rendererMock.EXPECT().FlushFrame().Return(wgpu.SubmissionIndex(0)).Maybe()
 
-		eImpl.wg.Add(1)
-		go eImpl.handleRender()
+		suite.startRenderLoop()
 
 		select {
 		case <-rendered:
@@ -855,8 +854,7 @@ func (suite *engineTest) TestHandleRender() {
 			once.Do(func() { called <- struct{}{} })
 		}
 
-		eImpl.wg.Add(1)
-		go eImpl.handleRender()
+		suite.startRenderLoop()
 
 		select {
 		case <-called:
@@ -886,8 +884,7 @@ func (suite *engineTest) TestHandleRender() {
 			once.Do(func() { firstFrame <- struct{}{} })
 		}
 
-		eImpl.wg.Add(1)
-		go eImpl.handleRender()
+		suite.startRenderLoop()
 
 		select {
 		case <-firstFrame:
@@ -1127,8 +1124,7 @@ func (suite *engineTest) TestHandleRenderLifecycleFilteringBranches() {
 			once.Do(func() { called <- struct{}{} })
 		}
 
-		eImpl.wg.Add(1)
-		go eImpl.handleRender()
+		suite.startRenderLoop()
 
 		select {
 		case <-called:
@@ -1158,8 +1154,7 @@ func (suite *engineTest) TestHandleRenderLifecycleFilteringBranches() {
 			once.Do(func() { called <- struct{}{} })
 		}
 
-		eImpl.wg.Add(1)
-		go eImpl.handleRender()
+		suite.startRenderLoop()
 
 		select {
 		case <-called:

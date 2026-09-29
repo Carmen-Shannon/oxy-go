@@ -81,7 +81,9 @@ type Engine interface {
 	//   - map[int]scene.Scene: a copy of the scenes map
 	Scenes() map[int]scene.Scene
 
-	// Run starts the main engine loop (blocks until window closes).
+	// Run starts the main engine loop and blocks until the engine quits.
+	// Blocking behavior is build-specific: native builds run the window message
+	// loop, while GOOS=js builds wait on the quit channel.
 	Run()
 
 	// Quit signals all engine goroutines to stop and shuts down the engine.
@@ -137,7 +139,7 @@ func (e *engine) RemoveScene(key int) {
 
 func (e *engine) Run() {
 	e.handle()
-	e.window.ProcessMessages()
+	e.runWindowLoop()
 }
 
 func (e *engine) SetTickRate(fps float64) {
