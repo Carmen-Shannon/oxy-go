@@ -3,7 +3,7 @@ package shader
 import (
 	"fmt"
 
-	"github.com/oliverbestmann/webgpu/wgpu"
+	"github.com/Carmen-Shannon/webgpu/wgpu"
 )
 
 // ShaderBuilderOption is a functional option for configuring a Shader during construction.

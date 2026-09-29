@@ -7,9 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Carmen-Shannon/oxy-go/common"
 )
 
 // Common errors returned by the parser
@@ -160,7 +161,7 @@ func (p *gltfParserImpl) BaseDir() string {
 func (p *gltfParserImpl) Parse(path string) error {
 	p.baseDir = filepath.Dir(path)
 
-	data, err := os.ReadFile(path)
+	data, err := common.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("failed to read file: %w", err)
 	}
@@ -298,7 +299,7 @@ func (p *gltfParserImpl) loadBufferURI(uri string) ([]byte, error) {
 	}
 
 	fullPath := filepath.Join(p.baseDir, uri)
-	data, err := os.ReadFile(fullPath)
+	data, err := common.ReadFile(fullPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load buffer file %q: %w", uri, err)
 	}

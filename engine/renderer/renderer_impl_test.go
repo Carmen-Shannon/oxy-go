@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/oliverbestmann/webgpu/wgpu"
+	"github.com/Carmen-Shannon/webgpu/wgpu"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 

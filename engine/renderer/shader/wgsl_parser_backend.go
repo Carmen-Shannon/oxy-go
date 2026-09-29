@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/oliverbestmann/webgpu/wgpu"
+	"github.com/Carmen-Shannon/webgpu/wgpu"
 )
 
 // wgslPrimitiveLayoutMap maps WGSL primitive, vector, matrix, and atomic type names

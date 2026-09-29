@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/oliverbestmann/webgpu/wgpu"
+	"github.com/Carmen-Shannon/webgpu/wgpu"
 )
 
 // wgslVertexFormatMap maps WGSL type names to their corresponding wgpu vertex format and byte size

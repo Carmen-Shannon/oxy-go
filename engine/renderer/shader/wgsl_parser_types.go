@@ -1,6 +1,6 @@
 package shader
 
-import "github.com/oliverbestmann/webgpu/wgpu"
+import "github.com/Carmen-Shannon/webgpu/wgpu"
 
 // vertexFormatInfo holds the wgpu vertex format and its byte size for offset calculation
 type vertexFormatInfo struct {

@@ -1,6 +1,6 @@
 package gbuffer
 
-import "github.com/oliverbestmann/webgpu/wgpu"
+import "github.com/Carmen-Shannon/webgpu/wgpu"
 
 // handlerImpl is the implementation of the Handler interface.
 type handlerImpl struct {

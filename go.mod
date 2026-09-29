@@ -4,8 +4,8 @@ go 1.25.6
 
 require (
 	github.com/Carmen-Shannon/automation v1.1.1
+	github.com/Carmen-Shannon/webgpu v1.0.3
 	github.com/go-gl/glfw/v3.4/glfw v0.1.0-pre.1.0.20260628091122-0bd588dc30cf
-	github.com/oliverbestmann/webgpu v1.34.0
 	github.com/stretchr/testify v1.11.1
 )
 
@@ -20,5 +20,3 @@ require (
 	github.com/stretchr/objx v0.5.2 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/oliverbestmann/webgpu => github.com/Carmen-Shannon/webgpu v1.0.1

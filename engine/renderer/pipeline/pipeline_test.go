@@ -3,7 +3,7 @@ package pipeline_test
 import (
 	"testing"
 
-	"github.com/oliverbestmann/webgpu/wgpu"
+	"github.com/Carmen-Shannon/webgpu/wgpu"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/Carmen-Shannon/oxy-go/engine/renderer/pipeline"
