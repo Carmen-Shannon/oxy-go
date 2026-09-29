@@ -174,7 +174,7 @@ Test mocks are generated with [vektra/mockery](https://github.com/vektra/mockery
 Install mockery:
 
 ```bash
-go install github.com/vektra/mockery/v2@v2.53.5
+go install github.com/vektra/mockery/v3@v3.8.0
 ```
 
 Then regenerate all mocks from the project root:
