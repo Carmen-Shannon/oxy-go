@@ -1,19 +1,18 @@
-with-expecter: true
-dir: "{{.InterfaceDir}}/mocks"
-mockname: "Mock{{.InterfaceName}}"
+dir: '{{.InterfaceDir}}/mocks'
+structname: Mock{{.InterfaceName}}
 filename: "mock_{{.InterfaceName | snakecase}}.go"
-outpkg: "mocks"
-resolve-type-alias: false
-disable-version-string: true
-issue-845-fix: true
+pkgname: mocks
+template: testify
+template-data:
+  unroll-variadic: true
 packages:
   github.com/Carmen-Shannon/oxy-go/common:
     config:
+      exclude-interface-regex: Option$
+      include-interface-regex: ^[A-Z]
       recursive: true
-      include-regex: "^[A-Z]"
-      exclude-regex: "Option$"
   github.com/Carmen-Shannon/oxy-go/engine:
     config:
+      exclude-interface-regex: Option$
+      include-interface-regex: ^[A-Z]
       recursive: true
-      include-regex: "^[A-Z]"
-      exclude-regex: "Option$"

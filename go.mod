@@ -1,6 +1,6 @@
 module github.com/Carmen-Shannon/oxy-go
 
-go 1.25.6
+go 1.27
 
 require (
 	github.com/Carmen-Shannon/automation v1.1.1
